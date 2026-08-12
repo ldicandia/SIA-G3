@@ -88,8 +88,21 @@ LABEL_CAR = "Car"
 LABEL_CONTROLS = "Controls"
 NO_CAR_SELECTED = "—"
 
+CONTROL_LEGEND_ARROW_ROW = 0
+"""Index of the legend row whose arrows are drawn rather than typeset.
+
+``01-UI-SPEC.md`` specifies the row as ``← ↑ → ↓  move``, but pygame's
+bundled ``freesansbold.ttf`` carries no glyph for U+2190-U+2193: all four
+render the identical ``.notdef`` box. Substituting a system font that does
+carry them (DejaVu Sans) would only move the failure to whichever machine
+lacks it. So the arrows are drawn with ``pygame.draw`` primitives by
+``sprites.arrow_row_surface`` -- the same no-asset, no-font-dependency rule
+the car and flag sprites already follow. The SPEC's visual intent is
+preserved exactly; only the mechanism differs.
+"""
+
 CONTROL_LEGEND: tuple[str, str, str, str] = (
-    "← ↑ → ↓" + "  " + "move",
+    "move",
     "1-9" + "  " + "select car",
     "R" + "  " + "reset",
     "Esc" + "  " + "quit",

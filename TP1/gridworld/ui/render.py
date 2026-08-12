@@ -13,10 +13,11 @@ import pygame
 from gridworld.engine.board import Board
 from gridworld.engine.rules import is_solved
 from gridworld.engine.state import GameState
-from gridworld.ui.sprites import SpriteSet
+from gridworld.ui.sprites import SpriteSet, arrow_row_surface
 from gridworld.ui.theme import (
     BOARD_SIZE,
     CONTROL_LEGEND,
+    CONTROL_LEGEND_ARROW_ROW,
     COLOR_BOARD_BG,
     COLOR_DESTRUCTIVE,
     COLOR_GRID_LINE,
@@ -43,6 +44,8 @@ from gridworld.ui.theme import (
     SPACING_3XL,
     SPACING_LG,
     SPACING_MD,
+    SPACING_SM,
+    SPACING_XS,
     WIN_BODY,
     WINDOW_SIZE,
     car_hue,
@@ -166,8 +169,14 @@ def draw_hud(surface: pygame.Surface, fonts: Fonts, moves: int, selected: int | 
     _blit_text(surface, fonts.label, LABEL_CONTROLS, (x, y), COLOR_TEXT)
     y += fonts.label.get_height() + SPACING_MD
     line_height = round(FONT_BODY * 1.4)
-    for line in CONTROL_LEGEND:
-        _blit_text(surface, fonts.body, line, (x, y), COLOR_TEXT)
+    for index, line in enumerate(CONTROL_LEGEND):
+        line_x = x
+        if index == CONTROL_LEGEND_ARROW_ROW:
+            arrows = arrow_row_surface(FONT_BODY, SPACING_XS, COLOR_TEXT)
+            arrow_y = y + (fonts.body.get_height() - arrows.get_height()) // 2
+            surface.blit(arrows, (line_x, arrow_y))
+            line_x += arrows.get_width() + SPACING_SM
+        _blit_text(surface, fonts.body, line, (line_x, y), COLOR_TEXT)
         y += line_height
     y += SPACING_LG
 
