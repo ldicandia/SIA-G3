@@ -1,9 +1,7 @@
-"""Plain-rectangle pygame window for the Grid World walking skeleton.
+"""Game loop wiring the key map, move counter and flash timer to the renderer.
 
-Deliberately unstyled: plain `pygame.draw.rect` primitives and the
-default font only. The sprite factory, Okabe-Ito palette, HUD styling,
-illegal-move flash, and win overlay scrim from `01-UI-SPEC.md` are owned
-by plan 01-03 and are out of scope here.
+Every board change is rebound from ``apply_move``'s ``MoveResult`` -- this
+layer never constructs or hand-edits a ``GameState`` directly.
 """
 
 from __future__ import annotations
@@ -12,29 +10,13 @@ from dataclasses import dataclass
 
 import pygame
 
-from gridworld.engine.board import Board
+from gridworld.engine.board import Board, Position
 from gridworld.engine.rules import apply_move, is_solved
 from gridworld.engine.state import Direction, GameState
 from gridworld.levels import built_in_level
-
-WINDOW_WIDTH = 960
-WINDOW_HEIGHT = 640
-BOARD_AREA_SIZE = 640
-HUD_PANEL_WIDTH = 320
-WINDOW_TITLE = "Grid World — TP1"
-
-COLOR_EMPTY = (217, 217, 217)  # grid line color; empty cell fill is white
-COLOR_WHITE = (255, 255, 255)
-COLOR_OBSTACLE = (26, 26, 26)
-COLOR_HUD_BG = (242, 242, 242)
-COLOR_TEXT = (26, 26, 26)
-COLOR_SELECTED_OUTLINE = (26, 26, 26)
-
-CAR_COLORS = {
-    1: (230, 159, 0),
-    2: (86, 180, 233),
-    3: (0, 158, 115),
-}
+from gridworld.ui.render import Fonts, build_fonts, draw_frame
+from gridworld.ui.sprites import SpriteSet, build_sprites
+from gridworld.ui.theme import FLASH_MS, WINDOW_SIZE, WINDOW_TITLE, cell_size, grid_origin
 
 KEY_TO_CAR = {
     pygame.K_1: 1,
@@ -64,151 +46,82 @@ class Session:
     state: GameState
     selected: int | None = None
     moves: int = 0
+    flash_cell: Position | None = None
+    flash_until_ms: int = 0
 
 
-def _cell_size(board: Board) -> int:
-    return max(24, (BOARD_AREA_SIZE - 64) // max(board.cols, board.rows))
-
-
-def _car_color(car: int) -> tuple[int, int, int]:
-    return CAR_COLORS.get(((car - 1) % len(CAR_COLORS)) + 1, (140, 140, 140))
+def _flash(session: Session, cell: Position) -> None:
+    session.flash_cell = cell
+    session.flash_until_ms = pygame.time.get_ticks() + FLASH_MS
 
 
 def _handle_keydown(session: Session, key: int) -> None:
-    solved = is_solved(session.board, session.state)
-
     if key == pygame.K_r:
         board, state = built_in_level()
         session.board = board
         session.state = state
         session.selected = None
         session.moves = 0
+        session.flash_cell = None
+        session.flash_until_ms = 0
         return
 
-    if solved:
+    if is_solved(session.board, session.state):
+        # Only R and Esc respond once solved; movement and selection are
+        # ignored so the win overlay cannot be dismissed by an arrow key.
         return
 
     if key in KEY_TO_CAR:
         car = KEY_TO_CAR[key]
-        if car in session.board.car_numbers() and not session.state.is_parked(car):
-            session.selected = car
+        if car not in session.board.car_numbers():
+            return
+        if session.state.is_parked(car):
+            # Selecting a parked car is refused: selection is unchanged and
+            # the parked cell flashes destructive.
+            _flash(session, session.state.position_of(car))
+            return
+        session.selected = car
         return
 
-    if key in KEY_TO_DIRECTION and session.selected is not None:
+    if key in KEY_TO_DIRECTION:
+        if session.selected is None:
+            # No car selected: arrow keys do nothing and never reach apply_move.
+            return
         direction = KEY_TO_DIRECTION[key]
+        row, col = session.state.position_of(session.selected)
+        drow, dcol = direction.delta
+        target = (row + drow, col + dcol)
         result = apply_move(session.board, session.state, session.selected, direction)
-        session.state = result.state
         if result.accepted:
+            session.state = result.state
             session.moves += 1
-
-
-def _draw_board(surface: pygame.Surface, session: Session, font: pygame.font.Font) -> None:
-    board = session.board
-    cell = _cell_size(board)
-    grid_width = board.cols * cell
-    grid_height = board.rows * cell
-    origin_x = max(0, (BOARD_AREA_SIZE - grid_width) // 2)
-    origin_y = max(0, (BOARD_AREA_SIZE - grid_height) // 2)
-
-    surface.fill(COLOR_WHITE, pygame.Rect(0, 0, BOARD_AREA_SIZE, BOARD_AREA_SIZE))
-
-    for row in range(board.rows):
-        for col in range(board.cols):
-            rect = pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
-            if rect.right > BOARD_AREA_SIZE or rect.bottom > BOARD_AREA_SIZE:
-                continue
-            pos = (row, col)
-            if board.is_obstacle(pos):
-                pygame.draw.rect(surface, COLOR_OBSTACLE, rect)
-            else:
-                pygame.draw.rect(surface, COLOR_WHITE, rect)
-            pygame.draw.rect(surface, COLOR_EMPTY, rect, width=1)
-
-    for car in board.car_numbers():
-        flag_pos = board.flag_for(car)
-        if car in session.state.parked:
-            continue
-        row, col = flag_pos
-        rect = pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
-        pygame.draw.rect(surface, _car_color(car), rect.inflate(-8, -8))
-        _blit_numeral(surface, font, str(car), rect.center)
-
-    for car in board.car_numbers():
-        row, col = session.state.position_of(car)
-        rect = pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
-        color = _car_color(car)
-        if session.state.is_parked(car):
-            pygame.draw.rect(surface, color, rect, width=3)
-            pygame.draw.rect(surface, color, rect.inflate(-8, -8))
         else:
-            pygame.draw.rect(surface, color, rect.inflate(-8, -8))
-            if session.selected == car:
-                pygame.draw.rect(surface, COLOR_SELECTED_OUTLINE, rect, width=3)
-        _blit_numeral(surface, font, str(car), rect.center)
+            _flash(session, target)
 
 
-def _blit_numeral(
-    surface: pygame.Surface, font: pygame.font.Font, text: str, center: tuple[int, int]
-) -> None:
-    label = font.render(text, True, COLOR_WHITE)
-    label_rect = label.get_rect(center=center)
-    surface.blit(label, label_rect)
-
-
-def _draw_hud(
-    surface: pygame.Surface,
-    session: Session,
-    label_font: pygame.font.Font,
-    value_font: pygame.font.Font,
-) -> None:
-    panel_rect = pygame.Rect(BOARD_AREA_SIZE, 0, HUD_PANEL_WIDTH, WINDOW_HEIGHT)
-    surface.fill(COLOR_HUD_BG, panel_rect)
-
-    x = BOARD_AREA_SIZE + 24
-    y = 24
-
-    moves_label = label_font.render("Moves", True, COLOR_TEXT)
-    surface.blit(moves_label, (x, y))
-    y += 20
-    moves_value = value_font.render(str(session.moves), True, COLOR_TEXT)
-    surface.blit(moves_value, (x, y))
-    y += 48
-
-    car_label = label_font.render("Car", True, COLOR_TEXT)
-    surface.blit(car_label, (x, y))
-    y += 20
-    car_text = str(session.selected) if session.selected is not None else "—"
-    car_value = value_font.render(car_text, True, COLOR_TEXT)
-    surface.blit(car_value, (x, y))
-    y += 48
-
-    controls_label = label_font.render("Controls", True, COLOR_TEXT)
-    surface.blit(controls_label, (x, y))
-    y += 24
-    for line in ("Arrows  move", "1-9  select car", "R  reset", "Esc  quit"):
-        line_surface = label_font.render(line, True, COLOR_TEXT)
-        surface.blit(line_surface, (x, y))
-        y += 20
-
-    if is_solved(session.board, session.state):
-        heading = f"Solved in {session.moves} move" + ("" if session.moves == 1 else "s")
-        heading_surface = value_font.render(heading, True, COLOR_TEXT)
-        surface.blit(heading_surface, (x, y + 20))
+def _current_flash_rect(session: Session, cell: int) -> pygame.Rect | None:
+    if session.flash_cell is None:
+        return None
+    if pygame.time.get_ticks() >= session.flash_until_ms:
+        session.flash_cell = None
+        return None
+    origin_x, origin_y = grid_origin(session.board.cols, session.board.rows)
+    row, col = session.flash_cell
+    return pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
 
 
 def run() -> None:
     """Open the window and run the game loop until the player quits."""
     pygame.init()
     pygame.display.set_caption(WINDOW_TITLE)
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+    screen = pygame.display.set_mode(WINDOW_SIZE)
     clock = pygame.time.Clock()
 
-    label_font = pygame.font.Font(pygame.font.get_default_font(), 13)
-    value_font = pygame.font.Font(pygame.font.get_default_font(), 24)
-    numeral_font = pygame.font.Font(pygame.font.get_default_font(), 16)
+    fonts: Fonts = build_fonts()
 
     board, state = built_in_level()
     session = Session(board=board, state=state)
+    sprites: SpriteSet = build_sprites(board, cell_size(board.cols, board.rows))
 
     running = True
     while running:
@@ -221,8 +134,20 @@ def run() -> None:
                 else:
                     _handle_keydown(session, event.key)
 
-        _draw_board(screen, session, numeral_font)
-        _draw_hud(screen, session, label_font, value_font)
+        current_cell = cell_size(session.board.cols, session.board.rows)
+        if current_cell != sprites.cell:
+            sprites = build_sprites(session.board, current_cell)
+
+        draw_frame(
+            screen,
+            fonts,
+            session.board,
+            session.state,
+            session.selected,
+            session.moves,
+            sprites,
+            flash_rect=_current_flash_rect(session, current_cell),
+        )
         pygame.display.flip()
         clock.tick(60)
 
