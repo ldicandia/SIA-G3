@@ -15,7 +15,8 @@ import pygame
 
 from gridworld.engine.board import Board, Position
 from gridworld.engine.rules import apply_move, is_solved
-from gridworld.engine.state import Direction, GameState
+from gridworld.engine.state import Direction
+from gridworld.history import MoveHistory
 from gridworld.levelfile import Level, LevelEntry, LevelError, discover_levels, load_level
 from gridworld.ui.render import Fonts, build_fonts, draw_frame, draw_load_error, draw_picker
 from gridworld.ui.sprites import SpriteSet, build_sprites
@@ -52,7 +53,14 @@ KEY_TO_DIRECTION = {
 
 @dataclass
 class Session:
-    """Session-local, presentation-only state -- never fed back into the engine."""
+    """Session-local, presentation-only state -- never fed back into the engine.
+
+    ``history`` is the session's source of truth for both the board
+    position and the move count: there is no standalone current-state
+    field and no standalone move-counter field, so the two cannot
+    disagree. ``history.current`` is the board position; ``history.depth``
+    is the move count.
+    """
 
     screen: Screen = Screen.CHOICE
     entries: tuple[LevelEntry, ...] = ()
@@ -60,9 +68,8 @@ class Session:
     error_detail: str = ""
     level: Level | None = None
     board: Board | None = None
-    state: GameState | None = None
+    history: MoveHistory | None = None
     selected: int | None = None
-    moves: int = 0
     flash_cell: Position | None = None
     flash_until_ms: int = 0
 
@@ -73,31 +80,42 @@ def _flash(session: Session, cell: Position) -> None:
 
 
 def _handle_keydown(session: Session, key: int) -> None:
-    if session.board is None or session.state is None or session.level is None:
+    if session.board is None or session.history is None or session.level is None:
         return
 
     if key == pygame.K_r:
-        session.board = session.level.board
-        session.state = session.level.state
+        # The initial position already lives at the head of the history --
+        # reset never reloads the level or touches session.level.
+        session.history = session.history.reset()
         session.selected = None
-        session.moves = 0
         session.flash_cell = None
         session.flash_until_ms = 0
         return
 
-    if is_solved(session.board, session.state):
-        # Only R and Esc respond once solved; movement and selection are
-        # ignored so the win overlay cannot be dismissed by an arrow key.
+    if is_solved(session.board, session.history.current):
+        # Only R and Esc respond once solved; movement, selection and undo
+        # are ignored so the win overlay cannot be dismissed by any of them.
+        return
+
+    if key == pygame.K_u:
+        undone = session.history.undo()
+        if undone is session.history:
+            # Nothing to undo: no-op, no flash. The selection is
+            # deliberately left untouched.
+            return
+        session.history = undone
+        session.flash_cell = None
+        session.flash_until_ms = 0
         return
 
     if key in KEY_TO_CAR:
         car = KEY_TO_CAR[key]
         if car not in session.board.car_numbers():
             return
-        if session.state.is_parked(car):
+        if session.history.current.is_parked(car):
             # Selecting a parked car is refused: selection is unchanged and
             # the parked cell flashes destructive.
-            _flash(session, session.state.position_of(car))
+            _flash(session, session.history.current.position_of(car))
             return
         session.selected = car
         return
@@ -107,13 +125,12 @@ def _handle_keydown(session: Session, key: int) -> None:
             # No car selected: arrow keys do nothing and never reach apply_move.
             return
         direction = KEY_TO_DIRECTION[key]
-        row, col = session.state.position_of(session.selected)
+        row, col = session.history.current.position_of(session.selected)
         drow, dcol = direction.delta
         target = (row + drow, col + dcol)
-        result = apply_move(session.board, session.state, session.selected, direction)
+        result = apply_move(session.board, session.history.current, session.selected, direction)
         if result.accepted:
-            session.state = result.state
-            session.moves += 1
+            session.history = session.history.push(result.state)
         else:
             _flash(session, target)
 
@@ -132,9 +149,8 @@ def _current_flash_rect(session: Session, cell: int) -> pygame.Rect | None:
 def _start_level(session: Session, level: Level) -> None:
     session.level = level
     session.board = level.board
-    session.state = level.state
+    session.history = MoveHistory.start(level.state)
     session.selected = None
-    session.moves = 0
     session.flash_cell = None
     session.flash_until_ms = 0
     session.screen = Screen.GAME
@@ -202,7 +218,7 @@ def run(level_path: str | Path | None = None) -> None:
             draw_picker(screen, fonts, session.entries)
         elif session.screen == Screen.ERROR:
             draw_load_error(screen, fonts, session.error_file, session.error_detail)
-        elif session.screen == Screen.GAME and session.board is not None and session.state is not None:
+        elif session.screen == Screen.GAME and session.board is not None and session.history is not None:
             current_cell = cell_size(session.board.cols, session.board.rows)
             if sprites is None or sprites.cell != current_cell or len(sprites.cars) != len(session.board.car_numbers()):
                 sprites = build_sprites(session.board, current_cell)
@@ -211,9 +227,9 @@ def run(level_path: str | Path | None = None) -> None:
                 screen,
                 fonts,
                 session.board,
-                session.state,
+                session.history.current,
                 session.selected,
-                session.moves,
+                session.history.depth,
                 sprites,
                 flash_rect=_current_flash_rect(session, current_cell),
             )

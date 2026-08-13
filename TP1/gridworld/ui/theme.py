@@ -107,9 +107,10 @@ the car and flag sprites already follow. The SPEC's visual intent is
 preserved exactly; only the mechanism differs.
 """
 
-CONTROL_LEGEND: tuple[str, str, str, str] = (
+CONTROL_LEGEND: tuple[str, ...] = (
     "move",
     "1-9" + "  " + "select car",
+    "U" + "  " + "undo",
     "R" + "  " + "reset",
     "Esc" + "  " + "quit",
 )
