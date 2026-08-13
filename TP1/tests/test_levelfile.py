@@ -1,5 +1,6 @@
 """Tests for level file loading, validation, and execution."""
 
+import json
 from pathlib import Path
 import tempfile
 from typing import Any
@@ -10,8 +11,11 @@ from gridworld.engine.rules import apply_move, is_solved
 from gridworld.engine.state import Direction
 from gridworld.levelfile import (
     DEFAULT_LEVEL_PATH,
+    DEFAULT_LEVELS_DIR,
+    LevelEntry,
     LevelError,
     LevelProblem,
+    discover_levels,
     load_level,
     parse_level,
 )
@@ -353,3 +357,65 @@ def test_valid_level_dict_parses_without_error(valid_level_dict: dict[str, Any])
     assert level.board.rows == 3
     assert level.board.cols == 3
     assert len(level.state.cars) == 2
+
+
+def test_discover_levels_finds_shipped_levels() -> None:
+    entries = discover_levels(DEFAULT_LEVELS_DIR)
+    assert len(entries) == 3
+
+    assert entries[0].name == "Warmup"
+    assert entries[0].rows == 5
+    assert entries[0].cols == 5
+    assert entries[0].cars == 2
+    assert entries[0].problem is None
+
+    assert entries[1].name == "Classic"
+    assert entries[1].rows == 7
+    assert entries[1].cols == 7
+    assert entries[1].cars == 3
+    assert entries[1].problem is None
+
+    assert entries[2].name == "Gridlock"
+    assert entries[2].rows == 9
+    assert entries[2].cols == 9
+    assert entries[2].cars == 4
+    assert entries[2].problem is None
+
+
+def test_discover_levels_is_sorted_by_filename() -> None:
+    entries = discover_levels(DEFAULT_LEVELS_DIR)
+    filenames = [e.path.name for e in entries]
+    assert filenames == ["01-warmup.json", "02-classic.json", "03-gridlock.json"]
+
+
+def test_discover_levels_reports_a_broken_file_without_raising(
+    tmp_path: Path, valid_level_dict: dict[str, Any]
+) -> None:
+    good_path = tmp_path / "01-good.json"
+    good_path.write_text(json.dumps(valid_level_dict), encoding="utf-8")
+
+    bad_dict = dict(valid_level_dict)
+    bad_dict["cars"] = [
+        {"number": 1, "at": [1, 1]},  # Car 1 placed on obstacle
+        {"number": 2, "at": [0, 2]},
+    ]
+    bad_path = tmp_path / "02-bad.json"
+    bad_path.write_text(json.dumps(bad_dict), encoding="utf-8")
+
+    entries = discover_levels(tmp_path)
+    assert len(entries) == 2
+
+    assert entries[0].name == "Fixture Level"
+    assert entries[0].problem is None
+
+    assert entries[1].name == "02-bad"
+    assert entries[1].rows == 0
+    assert entries[1].cols == 0
+    assert entries[1].cars == 0
+    assert entries[1].problem is not None
+    assert "car 1" in entries[1].problem and "obstacle" in entries[1].problem
+
+
+def test_discover_levels_returns_empty_for_a_missing_directory(tmp_path: Path) -> None:
+    missing = tmp_path / "non_existent_folder"
+    assert discover_levels(missing) == ()

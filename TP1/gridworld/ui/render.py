@@ -13,6 +13,7 @@ import pygame
 from gridworld.engine.board import Board
 from gridworld.engine.rules import is_solved
 from gridworld.engine.state import GameState
+from gridworld.levelfile import LevelEntry
 from gridworld.ui.sprites import SpriteSet, arrow_row_surface
 from gridworld.ui.theme import (
     BOARD_SIZE,
@@ -25,19 +26,29 @@ from gridworld.ui.theme import (
     COLOR_OBSTACLE,
     COLOR_SCRIM,
     COLOR_TEXT,
+    COLOR_TEXT_MUTED,
     FLASH_ALPHA,
     FONT_BODY,
+    FONT_DISPLAY,
     FONT_HEADING,
     FONT_LABEL,
-    FONT_DISPLAY,
     GRID_LINE_WIDTH,
     HUD_WARNING_BLOCK_HEIGHT,
     HUD_WIDTH,
     LABEL_CAR,
     LABEL_CONTROLS,
     LABEL_MOVES,
+    LOAD_ERROR_HEADING,
+    LOAD_ERROR_HINT,
+    LOAD_ERROR_MAX_LINES,
     NO_CAR_SELECTED,
     PARKED_FILL_ALPHA,
+    PICKER_EMPTY,
+    PICKER_HEADING,
+    PICKER_HINT,
+    PICKER_MAX_CHOICES,
+    PICKER_NAME_MAX_CHARS,
+    PICKER_UNSELECTABLE,
     SCRIM_ALPHA,
     SELECTION_OUTLINE_WIDTH,
     SPACING_2XL,
@@ -51,6 +62,7 @@ from gridworld.ui.theme import (
     car_hue,
     cell_size,
     grid_origin,
+    picker_entry_detail,
     win_heading,
 )
 
@@ -239,3 +251,82 @@ def draw_frame(
     draw_hud(surface, fonts, moves, selected)
     if is_solved(board, state):
         draw_win_overlay(surface, fonts, moves)
+
+
+def _wrap_text(font: pygame.font.Font, text: str, max_width: int) -> list[str]:
+    """Break text into lines splitting on spaces, never exceeding max_width."""
+    words = text.split(" ")
+    lines: list[str] = []
+    current_line: list[str] = []
+    for word in words:
+        test_line = " ".join(current_line + [word])
+        if font.size(test_line)[0] <= max_width or not current_line:
+            current_line.append(word)
+        else:
+            lines.append(" ".join(current_line))
+            current_line = [word]
+    if current_line:
+        lines.append(" ".join(current_line))
+    return lines
+
+
+def draw_picker(
+    surface: pygame.Surface,
+    fonts: Fonts,
+    entries: tuple[LevelEntry, ...] | list[LevelEntry],
+) -> None:
+    """Render the level choice screen composed entirely of theme tokens."""
+    surface.fill(COLOR_BOARD_BG)
+    _blit_text(surface, fonts.heading, PICKER_HEADING, (SPACING_3XL, SPACING_3XL), COLOR_TEXT)
+
+    if not entries:
+        y_empty = SPACING_3XL + fonts.heading.get_height() + SPACING_2XL
+        _blit_text(surface, fonts.body, PICKER_EMPTY, (SPACING_3XL, y_empty), COLOR_TEXT_MUTED)
+    else:
+        y = SPACING_3XL + fonts.heading.get_height() + SPACING_2XL
+        row_gap = fonts.body.get_height() + SPACING_MD
+        x_num = SPACING_3XL
+        x_name = x_num + SPACING_2XL
+        x_detail = x_name + 320
+
+        for idx, entry in enumerate(entries):
+            num_str = f"{idx + 1}." if idx < PICKER_MAX_CHOICES else PICKER_UNSELECTABLE
+            display_name = entry.name[:PICKER_NAME_MAX_CHARS]
+
+            if entry.problem is not None:
+                _blit_text(surface, fonts.body, num_str, (x_num, y), COLOR_DESTRUCTIVE)
+                prob_str = f"{display_name}" + "  " + "—" + "  " + f"{entry.problem}"
+                _blit_text(surface, fonts.body, prob_str, (x_name, y), COLOR_DESTRUCTIVE)
+            else:
+                _blit_text(surface, fonts.body, num_str, (x_num, y), COLOR_TEXT)
+                _blit_text(surface, fonts.body, display_name, (x_name, y), COLOR_TEXT)
+                detail_str = picker_entry_detail(entry.cols, entry.rows, entry.cars)
+                _blit_text(surface, fonts.body, detail_str, (x_detail, y), COLOR_TEXT_MUTED)
+            y += row_gap
+
+    y_hint = WINDOW_SIZE[1] - SPACING_3XL - fonts.body.get_height()
+    _blit_text(surface, fonts.body, PICKER_HINT, (SPACING_3XL, y_hint), COLOR_TEXT_MUTED)
+
+
+def draw_load_error(
+    surface: pygame.Surface,
+    fonts: Fonts,
+    file_name: str,
+    detail: str,
+) -> None:
+    """Render the level load error screen composed entirely of theme tokens."""
+    surface.fill(COLOR_BOARD_BG)
+    _blit_text(surface, fonts.heading, LOAD_ERROR_HEADING, (SPACING_3XL, SPACING_3XL), COLOR_DESTRUCTIVE)
+
+    y = SPACING_3XL + fonts.heading.get_height() + SPACING_MD
+    _blit_text(surface, fonts.body, file_name, (SPACING_3XL, y), COLOR_TEXT)
+
+    y += fonts.body.get_height() + SPACING_LG
+    max_width = WINDOW_SIZE[0] - 2 * SPACING_3XL
+    lines = _wrap_text(fonts.body, detail, max_width)[:LOAD_ERROR_MAX_LINES]
+    for line in lines:
+        _blit_text(surface, fonts.body, line, (SPACING_3XL, y), COLOR_DESTRUCTIVE)
+        y += fonts.body.get_height() + SPACING_SM
+
+    y_hint = WINDOW_SIZE[1] - SPACING_3XL - fonts.body.get_height()
+    _blit_text(surface, fonts.body, LOAD_ERROR_HINT, (SPACING_3XL, y_hint), COLOR_TEXT_MUTED)

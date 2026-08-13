@@ -79,8 +79,85 @@ class Level:
     state: GameState
 
 
+@dataclass(frozen=True, slots=True)
+class LevelEntry:
+    """A level catalogue entry listing metadata or load problem for a level file.
+
+    Exists so a caller can render a level choice screen without loading every board
+    twice and without a broken level file taking down the whole list.
+    """
+
+    path: Path
+    name: str
+    rows: int = 0
+    cols: int = 0
+    cars: int = 0
+    problem: str | None = None
+
+
 DEFAULT_LEVELS_DIR = Path(__file__).resolve().parent.parent / "levels"
 DEFAULT_LEVEL_PATH = DEFAULT_LEVELS_DIR / "01-warmup.json"
+
+
+def discover_levels(directory: str | Path | None = None) -> tuple[LevelEntry, ...]:
+    """Discover and summarize level files in a directory.
+
+    Defaults to DEFAULT_LEVELS_DIR. Returns an empty tuple when the directory
+    does not exist or is not a directory. Considers only .json files sitting directly
+    inside the directory, sorted by filename.
+
+    Attempts to load each file. On success, returns an entry with the level's
+    name and metadata. On LevelError, returns an entry with the filename stem,
+    zeroed metadata, and the error detail in `problem`. Never lets LevelError
+    escape.
+    """
+    if directory is None:
+        directory = DEFAULT_LEVELS_DIR
+    dir_path = Path(directory)
+    if not dir_path.is_dir():
+        return ()
+
+    entries: list[LevelEntry] = []
+    json_files = sorted(
+        [p for p in dir_path.iterdir() if p.is_file() and p.suffix.lower() == ".json"],
+        key=lambda p: p.name,
+    )
+    for path in json_files:
+        try:
+            level = load_level(path)
+            entries.append(
+                LevelEntry(
+                    path=path,
+                    name=level.name,
+                    rows=level.board.rows,
+                    cols=level.board.cols,
+                    cars=len(level.state.cars),
+                    problem=None,
+                )
+            )
+        except LevelError as err:
+            entries.append(
+                LevelEntry(
+                    path=path,
+                    name=path.stem,
+                    rows=0,
+                    cols=0,
+                    cars=0,
+                    problem=err.detail,
+                )
+            )
+        except Exception as err:
+            entries.append(
+                LevelEntry(
+                    path=path,
+                    name=path.stem,
+                    rows=0,
+                    cols=0,
+                    cars=0,
+                    problem=str(err),
+                )
+            )
+    return tuple(entries)
 
 
 def _is_int(val: Any) -> bool:

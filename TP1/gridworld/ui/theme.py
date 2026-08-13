@@ -110,6 +110,26 @@ CONTROL_LEGEND: tuple[str, str, str, str] = (
 
 WIN_BODY = "R to play again" + " · " + "Esc to quit"
 
+PICKER_HEADING = "Choose Level"
+PICKER_HINT = "1-9" + "  " + "select level" + " · " + "Esc" + "  " + "quit"
+PICKER_EMPTY = "No level files found"
+PICKER_UNSELECTABLE = "—"
+PICKER_MAX_CHOICES = 9
+PICKER_NAME_MAX_CHARS = 24
+
+LOAD_ERROR_HEADING = "Cannot Load Level"
+LOAD_ERROR_HINT = "Esc" + "  " + "back"
+LOAD_ERROR_MAX_LINES = 6
+
+
+def picker_entry_detail(cols: int, rows: int, cars: int) -> str:
+    """Return the size and car count summary for a level entry.
+
+    Singular car count at one, plural otherwise.
+    """
+    car_word = "car" if cars == 1 else "cars"
+    return f"{cols}x{rows}" + " · " + f"{cars} {car_word}"
+
 
 # --- Layout math ----------------------------------------------------------------
 
