@@ -202,6 +202,40 @@ print("drove warmup level file to solved in 16 moves; error handling verified he
 """
 
 
+CHECK_LEGAL_MOVES = """
+from gridworld.engine.rules import LegalMove, apply_move, legal_moves, legal_moves_for
+from gridworld.engine.state import Direction, GameState
+from gridworld.levelfile import load_level, DEFAULT_LEVEL_PATH
+import sys
+
+level = load_level(DEFAULT_LEVEL_PATH)
+board, state = level.board, level.state
+
+expected = (
+    LegalMove(car=1, direction=Direction.DOWN, target=(1, 0)),
+    LegalMove(car=1, direction=Direction.RIGHT, target=(0, 1)),
+    LegalMove(car=2, direction=Direction.DOWN, target=(1, 4)),
+    LegalMove(car=2, direction=Direction.LEFT, target=(0, 3)),
+)
+moves = legal_moves(board, state)
+assert moves == expected, moves
+
+enumerated = {(m.car, m.direction) for m in moves}
+for car in board.car_numbers():
+    for direction in Direction:
+        result = apply_move(board, state, car, direction)
+        pair = (car, direction)
+        assert result.accepted == (pair in enumerated), (pair, result.accepted)
+
+all_parked = GameState(cars=state.cars, parked=frozenset(board.car_numbers()))
+assert legal_moves(board, all_parked) == ()
+assert legal_moves_for(board, all_parked, 1) == ()
+
+assert "pygame" not in sys.modules, "enumerating legal moves pulled in the renderer"
+print("enumerated 4 legal moves for the warmup level; agrees with apply_move; all-parked enumerates empty")
+"""
+
+
 def _report(label: str, result: subprocess.CompletedProcess) -> bool:
     if result.returncode == 0:
         print(f"PASS  {label}: {result.stdout.strip()}")
@@ -225,6 +259,7 @@ def main() -> int:
         ("engine imports headlessly", CHECK_IMPORTS),
         ("engine runs headlessly", CHECK_RUNS),
         ("level file layer runs headlessly", CHECK_LEVEL_FILE),
+        ("legal-move enumeration runs headlessly", CHECK_LEGAL_MOVES),
     )
 
     for label, code in checks:
@@ -232,8 +267,9 @@ def main() -> int:
         if not _report(label, result):
             return 1
 
-    print("\nENG-08 holds: the engine and level layer import, run full solutions, and use")
-    print("states as dictionary keys in an environment with no renderer.")
+    print("\nENG-08 holds: the engine, level layer, and legal-move enumeration import, run")
+    print("full solutions, and use states as dictionary keys in an environment with no")
+    print("renderer.")
     return 0
 
 
