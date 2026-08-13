@@ -34,6 +34,11 @@ from gridworld.ui.sprites import build_sprites  # noqa: E402
 from gridworld.ui.theme import (  # noqa: E402
     COLOR_BOARD_BG,
     COLOR_OBSTACLE,
+    CONTROL_LEGEND,
+    FONT_BODY,
+    HUD_WARNING_BLOCK_HEIGHT,
+    SPACING_LG,
+    SPACING_MD,
     WINDOW_SIZE,
     cell_size,
     grid_origin,
@@ -75,6 +80,59 @@ def check_legal_destinations() -> bool:
     return bool(ok)
 
 
+def check_control_legend() -> bool:
+    """The legend is five rows, row 2 is the undo row, and every row is
+    typesettable by the bundled font (ASCII plus the em dash and middle
+    dot only -- anything else renders as a ``.notdef`` box). No display
+    reads needed.
+    """
+    if len(CONTROL_LEGEND) != 5:
+        return False
+    if "undo" not in CONTROL_LEGEND[2]:
+        return False
+    if "reset" not in CONTROL_LEGEND[3]:
+        return False
+    if "quit" not in CONTROL_LEGEND[4]:
+        return False
+
+    allowed_extra = {"—", "·"}
+    for row in CONTROL_LEGEND:
+        for char in row:
+            if ord(char) >= 128 and char not in allowed_extra:
+                return False
+    return True
+
+
+def check_hud_fits() -> bool:
+    """The HUD stack -- five-row legend included -- still fits above the
+    reserved warning block, under the dummy video driver.
+
+    Deliberately duplicates a small slice of ``draw_hud``'s layout
+    arithmetic (top padding, then for each of the Moves, Car and Controls
+    blocks the label height plus the inter-label gap plus the value height
+    plus the inter-block gap, with the legend contributing
+    ``len(CONTROL_LEGEND) * round(FONT_BODY * 1.4)``), present so that
+    adding this plan's fifth legend row cannot silently push 03-03's
+    warning block off the panel.
+    """
+    pygame.init()
+    pygame.display.set_mode(WINDOW_SIZE)
+    fonts = build_fonts()
+
+    y = SPACING_LG
+    for _ in range(2):  # Moves block, then Car block.
+        y += fonts.label.get_height() + SPACING_MD
+        y += fonts.display.get_height() + SPACING_LG
+
+    y += fonts.label.get_height() + SPACING_MD  # Controls label.
+    line_height = round(FONT_BODY * 1.4)
+    y += len(CONTROL_LEGEND) * line_height
+    y += SPACING_LG
+
+    stack_height = y + HUD_WARNING_BLOCK_HEIGHT
+    return stack_height <= WINDOW_SIZE[1] - SPACING_LG
+
+
 def _report(label: str, ok: bool) -> bool:
     status = "PASS" if ok else "FAIL"
     print(f"{status}  {label}")
@@ -84,6 +142,8 @@ def _report(label: str, ok: bool) -> bool:
 def main() -> int:
     checks = (
         ("selecting car 1 tints exactly its legal destinations", check_legal_destinations),
+        ("control legend is five rows with undo inserted, typesettable", check_control_legend),
+        ("HUD stack fits alongside the reserved warning block", check_hud_fits),
     )
 
     passed = 0

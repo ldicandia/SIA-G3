@@ -113,6 +113,7 @@ import gridworld.engine
 import gridworld.engine.board
 import gridworld.engine.state
 import gridworld.engine.rules
+import gridworld.history
 import gridworld.levels
 import gridworld.levelfile
 import sys
@@ -236,6 +237,53 @@ print("enumerated 4 legal moves for the warmup level; agrees with apply_move; al
 """
 
 
+CHECK_UNDO_HISTORY = """
+from gridworld.engine.rules import apply_move
+from gridworld.engine.state import Direction
+from gridworld.history import MoveHistory
+from gridworld.levelfile import load_level, DEFAULT_LEVEL_PATH
+import sys
+
+level = load_level(DEFAULT_LEVEL_PATH)
+history = MoveHistory.start(level.state)
+
+sequence = [
+    (1, Direction.DOWN),
+    (1, Direction.DOWN),
+    (1, Direction.DOWN),
+    (1, Direction.RIGHT),
+    (1, Direction.RIGHT),
+]
+for car, direction in sequence:
+    result = apply_move(level.board, history.current, car, direction)
+    assert result.accepted, (car, direction, result.rejection)
+    history = history.push(result.state)
+
+assert history.depth == 5, history.depth
+
+for _ in range(5):
+    history = history.undo()
+
+assert history.current == level.state, "undo did not restore the level's initial state"
+assert history.depth == 0, history.depth
+
+no_op = history.undo()
+assert no_op is history, "undo at depth 0 must return self by identity"
+
+deep = MoveHistory.start(level.state)
+for car, direction in sequence[:3]:
+    result = apply_move(level.board, deep.current, car, direction)
+    assert result.accepted, (car, direction, result.rejection)
+    deep = deep.push(result.state)
+reset_history = deep.reset()
+assert reset_history.current == level.state, "reset did not land on the level's initial state"
+assert reset_history.depth == 0, reset_history.depth
+
+assert "pygame" not in sys.modules, "the undo history pulled in the renderer"
+print("pushed 5 moves, undid all 5 back to the initial state, and confirmed reset lands there too")
+"""
+
+
 def _report(label: str, result: subprocess.CompletedProcess) -> bool:
     if result.returncode == 0:
         print(f"PASS  {label}: {result.stdout.strip()}")
@@ -260,6 +308,7 @@ def main() -> int:
         ("engine runs headlessly", CHECK_RUNS),
         ("level file layer runs headlessly", CHECK_LEVEL_FILE),
         ("legal-move enumeration runs headlessly", CHECK_LEGAL_MOVES),
+        ("undo history runs headlessly", CHECK_UNDO_HISTORY),
     )
 
     for label, code in checks:
@@ -267,9 +316,9 @@ def main() -> int:
         if not _report(label, result):
             return 1
 
-    print("\nENG-08 holds: the engine, level layer, and legal-move enumeration import, run")
-    print("full solutions, and use states as dictionary keys in an environment with no")
-    print("renderer.")
+    print("\nENG-08 holds: the engine, level layer, legal-move enumeration, and undo history")
+    print("import, run full solutions, undo back to the initial state, and use states as")
+    print("dictionary keys in an environment with no renderer.")
     return 0
 
 
