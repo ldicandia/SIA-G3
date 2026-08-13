@@ -58,12 +58,15 @@ from gridworld.ui.theme import (
     SPACING_MD,
     SPACING_SM,
     SPACING_XS,
+    WARNING_HEADING,
     WIN_BODY,
     WINDOW_SIZE,
     car_hue,
     cell_size,
     grid_origin,
     picker_entry_detail,
+    unwinnable_body,
+    unwinnable_hint,
     win_heading,
 )
 
@@ -192,7 +195,58 @@ def draw_board(
     surface.set_clip(previous_clip)
 
 
-def draw_hud(surface: pygame.Surface, fonts: Fonts, moves: int, selected: int | None) -> None:
+def draw_unwinnable_warning(
+    surface: pygame.Surface,
+    fonts: Fonts,
+    origin: tuple[int, int],
+    stranded: tuple[int, ...],
+    moves: int,
+) -> None:
+    """Fill the reserved HUD warning block: heading, body, hint.
+
+    Three lines stacked from ``origin``, separated by ``SPACING_XS``: the
+    heading in the Label font in ``COLOR_DESTRUCTIVE``, the body from
+    ``unwinnable_body`` in the Body font in ``COLOR_DESTRUCTIVE``, the hint
+    from ``unwinnable_hint`` in the Body font in ``COLOR_TEXT_MUTED``.
+
+    Height budget: the three lines plus their two gaps must fit within
+    ``HUD_WARNING_BLOCK_HEIGHT``. If the bundled font's measured metrics do
+    not fit, the heading is dropped and only body plus hint render -- the
+    destructive colour on the body already carries the alarm.
+    ``HUD_WARNING_BLOCK_HEIGHT`` itself is never grown: the whole point of
+    the Phase 1 reservation is that this block's size was agreed before
+    the content existed.
+    """
+    x, y = origin
+    heading_label = fonts.label.render(WARNING_HEADING, True, COLOR_DESTRUCTIVE)
+    body_label = fonts.body.render(unwinnable_body(stranded), True, COLOR_DESTRUCTIVE)
+    hint_label = fonts.body.render(unwinnable_hint(moves), True, COLOR_TEXT_MUTED)
+
+    full_height = (
+        heading_label.get_height()
+        + SPACING_XS
+        + body_label.get_height()
+        + SPACING_XS
+        + hint_label.get_height()
+    )
+
+    if full_height <= HUD_WARNING_BLOCK_HEIGHT:
+        surface.blit(heading_label, (x, y))
+        y += heading_label.get_height() + SPACING_XS
+
+    surface.blit(body_label, (x, y))
+    y += body_label.get_height() + SPACING_XS
+    surface.blit(hint_label, (x, y))
+
+
+def draw_hud(
+    surface: pygame.Surface,
+    fonts: Fonts,
+    moves: int,
+    selected: int | None,
+    unwinnable: bool = False,
+    stranded: tuple[int, ...] = (),
+) -> None:
     """Fill the HUD panel and stack every block, every frame, in fixed order."""
     panel_rect = pygame.Rect(BOARD_SIZE, 0, HUD_WIDTH, WINDOW_SIZE[1])
     surface.fill(COLOR_HUD_BG, panel_rect)
@@ -225,9 +279,11 @@ def draw_hud(surface: pygame.Surface, fonts: Fonts, moves: int, selected: int | 
         y += line_height
     y += SPACING_LG
 
-    # Reserved, deliberately blank: Phase 3's unwinnable warning lands here
-    # without reflowing anything above it.
-    _ = pygame.Rect(x, y, HUD_WIDTH - 2 * SPACING_LG, HUD_WARNING_BLOCK_HEIGHT)
+    # Reserved for the unwinnable warning: blank unless `unwinnable` is set,
+    # so adding it never reflows anything drawn above it.
+    warning_rect = pygame.Rect(x, y, HUD_WIDTH - 2 * SPACING_LG, HUD_WARNING_BLOCK_HEIGHT)
+    if unwinnable:
+        draw_unwinnable_warning(surface, fonts, warning_rect.topleft, stranded, moves)
 
 
 def draw_illegal_flash(surface: pygame.Surface, cell_rect: pygame.Rect) -> None:
@@ -276,12 +332,14 @@ def draw_frame(
     moves: int,
     sprites: SpriteSet,
     flash_rect: pygame.Rect | None = None,
+    unwinnable: bool = False,
+    stranded: tuple[int, ...] = (),
 ) -> None:
     """Compose a full frame: board, flash if active, HUD, win overlay if solved."""
     draw_board(surface, board, state, selected, sprites)
     if flash_rect is not None:
         draw_illegal_flash(surface, flash_rect)
-    draw_hud(surface, fonts, moves, selected)
+    draw_hud(surface, fonts, moves, selected, unwinnable, stranded)
     if is_solved(board, state):
         draw_win_overlay(surface, fonts, moves)
 

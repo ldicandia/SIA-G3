@@ -137,3 +137,93 @@ def is_solved(board: Board, state: GameState) -> bool:
         if state.position_of(car) != board.flag_for(car):
             return False
     return True
+
+
+def _reachable_cells(board: Board, state: GameState, car: int) -> frozenset[Position]:
+    """Flood fill every cell ``car`` could eventually stand on, permanent blockers only.
+
+    A breadth-first walk over grid *cells* (never game states) starting at
+    ``state.position_of(car)``, using a plain list as a queue and a set of
+    positions as the visited set. A neighbour cell is enterable when it is
+    in bounds, is not an obstacle, carries either no flag or ``car``'s own
+    flag, and is not occupied by a *parked* car.
+
+    Unparked cars are deliberately treated as passable: they can still move
+    out of the way, so blocking through them would manufacture a false
+    alarm on every ordinary board where one car is briefly behind another
+    -- exactly the failure the plan's prohibitions forbid.
+
+    This is not the deferred TP search engine: it walks cells bounded by
+    ``board.rows * board.cols``, not game states, and it exposes no
+    frontier, cost, heuristic or metric -- only the set of cells reached.
+    """
+    start = state.position_of(car)
+    visited: set[Position] = {start}
+    queue: list[Position] = [start]
+
+    while queue:
+        row, col = queue.pop(0)
+        for direction in Direction:
+            drow, dcol = direction.delta
+            neighbor = (row + drow, col + dcol)
+            if neighbor in visited:
+                continue
+            if not board.in_bounds(neighbor):
+                continue
+            if board.is_obstacle(neighbor):
+                continue
+            flag_owner = board.flag_owner(neighbor)
+            if flag_owner is not None and flag_owner != car:
+                continue
+            occupant = state.car_at(neighbor)
+            if occupant is not None and state.is_parked(occupant):
+                continue
+            visited.add(neighbor)
+            queue.append(neighbor)
+
+    return frozenset(visited)
+
+
+def stranded_cars(board: Board, state: GameState) -> tuple[int, ...]:
+    """Return, in ascending order, every unparked car whose own flag is unreachable.
+
+    Parked cars are skipped -- they have already reached their flag by
+    definition. Returns an empty tuple when nothing is stranded.
+    """
+    stranded: list[int] = []
+    for car in board.car_numbers():
+        if state.is_parked(car):
+            continue
+        if board.flag_for(car) not in _reachable_cells(board, state, car):
+            stranded.append(car)
+    return tuple(stranded)
+
+
+def is_unwinnable(board: Board, state: GameState) -> bool:
+    """Return whether ``state`` can no longer be won.
+
+    ``True`` when either branch holds: (A) ``stranded_cars`` is non-empty,
+    or (B) the state is not solved and ``legal_moves`` is empty.
+
+    **Soundness.** Every blocker branch A relies on is permanent: the grid
+    boundary and obstacles never change, other cars' flags are refused
+    unconditionally by ``apply_move`` regardless of parked status, and a
+    parked car never moves again. So once a flag falls outside the
+    reachable set it can never come back into reach, and branch A cannot
+    be a false alarm. Branch B is trivially terminal: no legal move exists
+    anywhere, by direct delegation to ``legal_moves`` from 03-01, so it
+    restates none of the rejection ladder itself.
+
+    **Incompleteness.** This is a sound but *incomplete* check: it never
+    reports a winnable state as unwinnable, but it does not claim to catch
+    every unwinnable state. A congestion deadlock that still admits at
+    least one legal move -- for example two cars in a one-wide corridor
+    that each need the cell the other occupies -- is not detected, because
+    deciding that would require the state-space search this milestone
+    explicitly excludes.
+    """
+    if stranded_cars(board, state):
+        return True
+    if not is_solved(board, state) and not legal_moves(board, state):
+        return True
+    return False

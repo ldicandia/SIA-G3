@@ -128,6 +128,9 @@ LOAD_ERROR_HEADING = "Cannot Load Level"
 LOAD_ERROR_HINT = "Esc" + "  " + "back"
 LOAD_ERROR_MAX_LINES = 6
 
+WARNING_HEADING = "Unwinnable"
+"""The reserved HUD block's heading, rendered destructive (01-UI-SPEC.md)."""
+
 
 def picker_entry_detail(cols: int, rows: int, cars: int) -> str:
     """Return the size and car count summary for a level entry.
@@ -218,3 +221,31 @@ def win_heading(moves: int) -> str:
     if moves == 1:
         return "Solved in 1 move"
     return f"Solved in {moves} moves"
+
+
+def unwinnable_body(cars: tuple[int, ...]) -> str:
+    """Return the body copy for the unwinnable warning naming ``cars``.
+
+    Zero-one-many, mirroring ``picker_entry_detail`` and ``win_heading``:
+    an empty tuple names the terminal no-legal-move case, exactly one car
+    is named directly, two or more lead with a count. Every branch is a
+    short, bounded literal so a nine-car board cannot overflow the panel.
+    """
+    if not cars:
+        return "No legal moves remain"
+    if len(cars) == 1:
+        return f"Car {cars[0]} cannot reach its flag"
+    return f"{len(cars)} cars cannot reach their flags"
+
+
+def unwinnable_hint(moves: int) -> str:
+    """Return the recovery hint for the unwinnable warning.
+
+    Never points the player at a key that cannot help: when ``moves`` is
+    positive there is history to undo and reset, so the hint names both;
+    when ``moves`` is zero the board was already unwinnable on the very
+    first frame, so the hint names quit instead.
+    """
+    if moves > 0:
+        return "U" + "  " + "undo" + " · " + "R" + "  " + "reset"
+    return "Esc" + "  " + "quit"

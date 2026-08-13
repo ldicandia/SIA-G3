@@ -14,7 +14,7 @@ import sys
 import pygame
 
 from gridworld.engine.board import Board, Position
-from gridworld.engine.rules import apply_move, is_solved
+from gridworld.engine.rules import apply_move, is_solved, is_unwinnable, stranded_cars
 from gridworld.engine.state import Direction
 from gridworld.history import MoveHistory
 from gridworld.levelfile import Level, LevelEntry, LevelError, discover_levels, load_level
@@ -60,6 +60,10 @@ class Session:
     field and no standalone move-counter field, so the two cannot
     disagree. ``history.current`` is the board position; ``history.depth``
     is the move count.
+
+    ``unwinnable`` and ``stranded`` are recomputed on state transition only
+    -- never per frame -- so they always reflect ``history.current``
+    without a flood fill running every tick.
     """
 
     screen: Screen = Screen.CHOICE
@@ -72,6 +76,22 @@ class Session:
     selected: int | None = None
     flash_cell: Position | None = None
     flash_until_ms: int = 0
+    unwinnable: bool = False
+    stranded: tuple[int, ...] = ()
+
+
+def _refresh_unwinnable(session: Session) -> None:
+    """Recompute ``session.unwinnable`` and ``session.stranded`` from the current state.
+
+    Called from exactly four state transitions -- level start, an accepted
+    move, a successful undo, and reset -- and never from the frame loop, so
+    the reachability walk runs once per transition rather than once per
+    frame.
+    """
+    if session.board is None or session.history is None:
+        return
+    session.stranded = stranded_cars(session.board, session.history.current)
+    session.unwinnable = is_unwinnable(session.board, session.history.current)
 
 
 def _flash(session: Session, cell: Position) -> None:
@@ -90,6 +110,7 @@ def _handle_keydown(session: Session, key: int) -> None:
         session.selected = None
         session.flash_cell = None
         session.flash_until_ms = 0
+        _refresh_unwinnable(session)
         return
 
     if is_solved(session.board, session.history.current):
@@ -106,6 +127,7 @@ def _handle_keydown(session: Session, key: int) -> None:
         session.history = undone
         session.flash_cell = None
         session.flash_until_ms = 0
+        _refresh_unwinnable(session)
         return
 
     if key in KEY_TO_CAR:
@@ -131,6 +153,7 @@ def _handle_keydown(session: Session, key: int) -> None:
         result = apply_move(session.board, session.history.current, session.selected, direction)
         if result.accepted:
             session.history = session.history.push(result.state)
+            _refresh_unwinnable(session)
         else:
             _flash(session, target)
 
@@ -154,6 +177,7 @@ def _start_level(session: Session, level: Level) -> None:
     session.flash_cell = None
     session.flash_until_ms = 0
     session.screen = Screen.GAME
+    _refresh_unwinnable(session)
 
 
 def run(level_path: str | Path | None = None) -> None:
@@ -232,6 +256,8 @@ def run(level_path: str | Path | None = None) -> None:
                 session.history.depth,
                 sprites,
                 flash_rect=_current_flash_rect(session, current_cell),
+                unwinnable=session.unwinnable,
+                stranded=session.stranded,
             )
 
         pygame.display.flip()
