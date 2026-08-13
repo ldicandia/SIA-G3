@@ -284,6 +284,36 @@ print("pushed 5 moves, undid all 5 back to the initial state, and confirmed rese
 """
 
 
+CHECK_UNWINNABLE = """
+from gridworld.engine.board import Board
+from gridworld.engine.rules import is_unwinnable, legal_moves, stranded_cars
+from gridworld.engine.state import GameState
+from gridworld.levelfile import load_level, DEFAULT_LEVELS_DIR
+import sys
+
+stranded_board = Board(
+    rows=3, cols=3, obstacles=frozenset({(0, 1), (1, 0)}), flags=((2, 2), (2, 1))
+)
+stranded_state = GameState(cars=((0, 0), (2, 0)), parked=frozenset())
+assert stranded_cars(stranded_board, stranded_state) == (1,), stranded_cars(stranded_board, stranded_state)
+assert is_unwinnable(stranded_board, stranded_state) is True
+
+gridlock_board = Board(rows=2, cols=2, obstacles=frozenset(), flags=((1, 1), (1, 0)))
+gridlock_state = GameState(cars=((0, 0), (0, 1)), parked=frozenset())
+assert legal_moves(gridlock_board, gridlock_state) == ()
+assert stranded_cars(gridlock_board, gridlock_state) == ()
+assert is_unwinnable(gridlock_board, gridlock_state) is True
+
+for path in sorted(DEFAULT_LEVELS_DIR.glob("*.json")):
+    level = load_level(path)
+    assert is_unwinnable(level.board, level.state) is False, path.name
+    assert stranded_cars(level.board, level.state) == (), path.name
+
+assert "pygame" not in sys.modules, "unwinnable detection pulled in the renderer"
+print("stranded car and terminal gridlock both detected; no false alarm on any shipped level")
+"""
+
+
 def _report(label: str, result: subprocess.CompletedProcess) -> bool:
     if result.returncode == 0:
         print(f"PASS  {label}: {result.stdout.strip()}")
@@ -309,6 +339,7 @@ def main() -> int:
         ("level file layer runs headlessly", CHECK_LEVEL_FILE),
         ("legal-move enumeration runs headlessly", CHECK_LEGAL_MOVES),
         ("undo history runs headlessly", CHECK_UNDO_HISTORY),
+        ("unwinnable detection runs headlessly", CHECK_UNWINNABLE),
     )
 
     for label, code in checks:
@@ -316,8 +347,9 @@ def main() -> int:
         if not _report(label, result):
             return 1
 
-    print("\nENG-08 holds: the engine, level layer, legal-move enumeration, and undo history")
-    print("import, run full solutions, undo back to the initial state, and use states as")
+    print("\nENG-08 holds: the engine, level layer, legal-move enumeration, undo history,")
+    print("and unwinnable detection import, run full solutions, undo back to the initial")
+    print("state, detect stranded cars and terminal gridlock, and use states as")
     print("dictionary keys in an environment with no renderer.")
     return 0
 

@@ -28,17 +28,25 @@ if str(TP1_DIR) not in sys.path:
 
 import pygame  # noqa: E402
 
+from gridworld.engine.board import Board  # noqa: E402
+from gridworld.engine.rules import stranded_cars  # noqa: E402
+from gridworld.engine.state import GameState  # noqa: E402
 from gridworld.levelfile import load_level  # noqa: E402
 from gridworld.ui.render import build_fonts, draw_frame  # noqa: E402
 from gridworld.ui.sprites import build_sprites  # noqa: E402
 from gridworld.ui.theme import (  # noqa: E402
+    BOARD_SIZE,
     COLOR_BOARD_BG,
+    COLOR_DESTRUCTIVE,
+    COLOR_HUD_BG,
     COLOR_OBSTACLE,
     CONTROL_LEGEND,
     FONT_BODY,
     HUD_WARNING_BLOCK_HEIGHT,
+    HUD_WIDTH,
     SPACING_LG,
     SPACING_MD,
+    SPACING_XS,
     WINDOW_SIZE,
     cell_size,
     grid_origin,
@@ -103,6 +111,80 @@ def check_control_legend() -> bool:
     return True
 
 
+def _warning_block_origin(fonts) -> tuple[int, int]:
+    """Reproduce draw_hud's own cursor arithmetic to find the reserved block's origin.
+
+    Duplicated (not imported) for the same reason ``check_hud_fits`` duplicates
+    it: a real assertion against real font metrics under the dummy driver,
+    not a hardcoded pixel guess.
+    """
+    x = BOARD_SIZE + SPACING_LG
+    y = SPACING_LG
+    for _ in range(2):  # Moves block, then Car block.
+        y += fonts.label.get_height() + SPACING_MD
+        y += fonts.display.get_height() + SPACING_LG
+    y += fonts.label.get_height() + SPACING_MD  # Controls label.
+    line_height = round(FONT_BODY * 1.4)
+    y += len(CONTROL_LEGEND) * line_height
+    y += SPACING_LG
+    return x, y
+
+
+def check_unwinnable_warning() -> bool:
+    """The reserved HUD block stays blank when suppressed, fills when enabled.
+
+    Builds the 3x3 stranded board (car 1 boxed in), draws one frame with
+    the warning suppressed and one with it enabled, and samples pixels
+    across the reserved block region. Also proves -- on real font metrics
+    under the dummy driver, not an assumption -- that the composed warning
+    height never exceeds HUD_WARNING_BLOCK_HEIGHT, the exact Phase 1
+    reservation this plan fills without growing.
+    """
+    pygame.init()
+    surface = pygame.display.set_mode(WINDOW_SIZE)
+
+    board = Board(
+        rows=3, cols=3, obstacles=frozenset({(0, 1), (1, 0)}), flags=((2, 2), (2, 1))
+    )
+    state = GameState(cars=((0, 0), (2, 0)), parked=frozenset())
+    stranded = stranded_cars(board, state)
+    assert stranded == (1,), stranded
+
+    fonts = build_fonts()
+    sprites = build_sprites(board, cell_size(board.cols, board.rows))
+
+    x, y = _warning_block_origin(fonts)
+    region_width = HUD_WIDTH - 2 * SPACING_LG
+    probe_points = [
+        (px, py)
+        for py in range(y, y + HUD_WARNING_BLOCK_HEIGHT, 2)
+        for px in range(x, x + region_width, 8)
+    ]
+
+    draw_frame(surface, fonts, board, state, selected=None, moves=0, sprites=sprites, unwinnable=False, stranded=())
+    suppressed_ok = all(surface.get_at(p)[:3] == COLOR_HUD_BG for p in probe_points)
+
+    draw_frame(surface, fonts, board, state, selected=None, moves=0, sprites=sprites, unwinnable=True, stranded=stranded)
+    enabled_ok = any(surface.get_at(p)[:3] == COLOR_DESTRUCTIVE for p in probe_points)
+
+    heading_label = fonts.label.render("Unwinnable", True, COLOR_DESTRUCTIVE)
+    body_label = fonts.body.render("placeholder", True, COLOR_DESTRUCTIVE)
+    hint_label = fonts.body.render("placeholder", True, COLOR_HUD_BG)
+    full_height = (
+        heading_label.get_height()
+        + SPACING_XS
+        + body_label.get_height()
+        + SPACING_XS
+        + hint_label.get_height()
+    )
+    composed_height = full_height if full_height <= HUD_WARNING_BLOCK_HEIGHT else (
+        body_label.get_height() + SPACING_XS + hint_label.get_height()
+    )
+    height_ok = composed_height <= HUD_WARNING_BLOCK_HEIGHT
+
+    return bool(suppressed_ok and enabled_ok and height_ok)
+
+
 def check_hud_fits() -> bool:
     """The HUD stack -- five-row legend included -- still fits above the
     reserved warning block, under the dummy video driver.
@@ -144,6 +226,7 @@ def main() -> int:
         ("selecting car 1 tints exactly its legal destinations", check_legal_destinations),
         ("control legend is five rows with undo inserted, typesettable", check_control_legend),
         ("HUD stack fits alongside the reserved warning block", check_hud_fits),
+        ("unwinnable warning fills the reserved block without growing it", check_unwinnable_warning),
     )
 
     passed = 0

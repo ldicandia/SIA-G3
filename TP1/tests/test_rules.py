@@ -10,16 +10,21 @@ imports only from the engine and the level source.
 
 from __future__ import annotations
 
+import random
+
 from gridworld.engine.board import Board
 from gridworld.engine.rules import (
     LegalMove,
     MoveRejection,
     apply_move,
     is_solved,
+    is_unwinnable,
     legal_moves,
     legal_moves_for,
+    stranded_cars,
 )
 from gridworld.engine.state import Direction, GameState
+from gridworld.levelfile import DEFAULT_LEVELS_DIR, load_level
 
 
 def test_move_shifts_one_car_one_cell_and_returns_new_state(built_in):
@@ -379,3 +384,141 @@ def test_solved_single_car_level():
     assert result.accepted
     assert result.state.is_parked(1)
     assert is_solved(board, result.state)
+
+
+# --- 03-03: unwinnable detection ---------------------------------------------
+
+
+def test_stranded_car_detected_and_reported_per_car(stranded_board):
+    """Car 1 is boxed in; car 2 is not. The check must be per-car, not board-wide."""
+    board, state = stranded_board
+
+    result = stranded_cars(board, state)
+
+    assert result == (1,)
+    assert 2 not in result
+    assert is_unwinnable(board, state)
+
+
+def test_terminal_gridlock_detected_with_nothing_stranded(gridlock_board):
+    """Branch B (no legal move anywhere) fires independently of branch A.
+
+    Deleting branch B from ``is_unwinnable`` would make this test fail
+    rather than pass quietly, because ``stranded_cars`` is empty here.
+    """
+    board, state = gridlock_board
+
+    assert legal_moves(board, state) == ()
+    assert stranded_cars(board, state) == ()
+    assert is_unwinnable(board, state)
+
+
+def test_is_unwinnable_false_on_every_shipped_level_at_start():
+    """No shipped level begins in a false-alarm state."""
+    for path in sorted(DEFAULT_LEVELS_DIR.glob("*.json")):
+        level = load_level(path)
+        assert stranded_cars(level.board, level.state) == (), path.name
+        assert not is_unwinnable(level.board, level.state), path.name
+
+
+def test_is_unwinnable_false_along_a_known_solution_replay(built_in, solution_sequence):
+    """A warning appearing anywhere along a known winning line is the exact
+    defect the plan's prohibitions name: any doubt must resolve toward
+    silence, never toward telling a player to give up on a solvable board.
+    """
+    board, state = built_in
+
+    assert not is_unwinnable(board, state)
+    for car, direction in solution_sequence:
+        result = apply_move(board, state, car, direction)
+        assert result.accepted, (car, direction, result.rejection)
+        state = result.state
+        assert not is_unwinnable(board, state), (car, direction)
+
+
+def test_solved_board_is_never_unwinnable(built_in, solution_sequence):
+    board, start = built_in
+    state = _drive(board, start, solution_sequence)
+
+    assert is_solved(board, state)
+    assert not is_unwinnable(board, state)
+    assert stranded_cars(board, state) == ()
+
+
+def test_unparked_cars_do_not_block_reachability():
+    """A car blocking the only route is unparked, so it is passable.
+
+    2x4 board: car 1's only route to its flag runs along row 0 straight
+    through the cell car 2 currently occupies. Car 2's own flag sits at
+    (1, 0), off car 1's route entirely. Treating car 2 as a blocker here
+    would manufacture a false alarm on a board where car 1 could simply
+    wait for car 2 to move -- exactly the false alarm the plan prohibits.
+    """
+    board = Board(rows=2, cols=4, obstacles=frozenset(), flags=((0, 3), (1, 0)))
+    state = GameState(cars=((0, 0), (0, 1)), parked=frozenset())
+
+    assert 1 not in stranded_cars(board, state)
+
+    # Car 2 has since parked on its own flag, elsewhere on the board. A
+    # parked car only ever occupies its own flag cell -- already an
+    # unconditional blocker for everyone else -- so parking introduces no
+    # new permanent obstruction and car 1's answer must not change.
+    parked_state = GameState(cars=((0, 0), (1, 0)), parked=frozenset({2}))
+    assert 1 not in stranded_cars(board, parked_state)
+
+
+def test_documented_incompleteness_congestion_deadlock_not_detected():
+    """A genuine but undetected deadlock: sound-but-incomplete, by design.
+
+    1x3 corridor, cars needing to swap places. Car 1 at (0, 0) wants flag 1
+    at (0, 2); car 2 at (0, 2) wants flag 2 at (0, 0). Neither can ever
+    pass the other in a corridor one cell wide, so the position can never
+    be won -- but at least one legal move exists at every step (each car
+    can step onto the shared middle cell and back), so branch B never
+    fires, and the private reachability walk treats each car's own flag as
+    reachable because the *other*, still-unparked car sitting on it is
+    passable. This is the deliberate, documented limit of a sound-but-
+    incomplete check, named here so a future reader does not mistake the
+    false negative for a bug: catching it would require the state-space
+    search this milestone excludes.
+    """
+    board = Board(rows=1, cols=3, obstacles=frozenset(), flags=((0, 2), (0, 0)))
+    state = GameState(cars=((0, 0), (0, 2)), parked=frozenset())
+
+    assert legal_moves(board, state) != ()
+    assert not is_unwinnable(board, state)
+
+
+def test_reachability_finding_stranded_cars_invariant_across_a_random_playthrough():
+    """Empirical record: parking never introduces a new permanent obstruction.
+
+    A parked car only ever occupies its own flag cell, which already
+    blocks every other car unconditionally whether or not its owner has
+    parked there yet. So the per-car reachability answer is expected to be
+    invariant across a whole playthrough on every shipped level: parking
+    order changes nothing ``stranded_cars`` can see. This test is the
+    evidence for that finding, not an assumption -- if it ever fails, the
+    reasoning in ``is_unwinnable``'s docstring is wrong and must be
+    revisited before this test is changed.
+
+    Each shipped level is driven by a seeded pseudo-random walk of
+    accepted moves (deterministic, capped at a few hundred steps),
+    asserting ``stranded_cars`` stays empty at every single step.
+    """
+    for path in sorted(DEFAULT_LEVELS_DIR.glob("*.json")):
+        level = load_level(path)
+        board, state = level.board, level.state
+        rng = random.Random(f"03-03-reachability-{path.name}")
+
+        assert stranded_cars(board, state) == ()
+
+        for _ in range(300):
+            if is_solved(board, state):
+                break
+            car = rng.choice(list(board.car_numbers()))
+            direction = rng.choice(list(Direction))
+            result = apply_move(board, state, car, direction)
+            if not result.accepted:
+                continue
+            state = result.state
+            assert stranded_cars(board, state) == (), path.name

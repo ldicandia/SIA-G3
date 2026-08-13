@@ -88,6 +88,60 @@ def tiny_board() -> tuple[Board, GameState]:
 
 
 @pytest.fixture
+def stranded_board() -> tuple[Board, GameState]:
+    """A 3x3 board where car 1 is boxed in and car 2 is not.
+
+    Layout, ``(row, col)`` with row 0 at the top::
+
+        col:      0          1          2
+        row 0:  car 1     obstacle       .
+        row 1: obstacle      .           .
+        row 2:  car 2      flag 2     flag 1
+
+    Entities:
+
+    - car 1 starts at ``(0, 0)``, boxed in by the obstacles at ``(0, 1)``
+      and ``(1, 0)``; its flag is at ``(2, 2)``, unreachable
+    - car 2 starts at ``(2, 0)``, free to move; its own flag sits at
+      ``(2, 1)``, one cell to its right and reachable
+
+    Reused by 03-03's ``stranded_cars``/``is_unwinnable`` tests: car 1 is
+    the stranded car, car 2 proves the check is per-car, not board-wide.
+    """
+    board = Board(
+        rows=3,
+        cols=3,
+        obstacles=frozenset({(0, 1), (1, 0)}),
+        flags=((2, 2), (2, 1)),
+    )
+    state = GameState(cars=((0, 0), (2, 0)), parked=frozenset())
+    return board, state
+
+
+@pytest.fixture
+def gridlock_board() -> tuple[Board, GameState]:
+    """A 2x2 board where both cars are boxed in by each other, with nothing stranded.
+
+    Layout, ``(row, col)`` with row 0 at the top::
+
+        col:      0          1
+        row 0:  car 1      car 2
+        row 1: flag 2     flag 1
+
+    Neither car has a legal move: car 1's only non-off-grid neighbour
+    beyond car 2 (occupied) is car 2's flag (foreign), and symmetrically
+    for car 2. This pins branch B of ``is_unwinnable`` (terminal gridlock)
+    as independent of branch A (stranded cars): each car's own flag is
+    still reachable by the private walk (it can pass through the other,
+    still-unparked car to get there), so ``stranded_cars`` is empty here
+    even though no move remains.
+    """
+    board = Board(rows=2, cols=2, obstacles=frozenset(), flags=((1, 1), (1, 0)))
+    state = GameState(cars=((0, 0), (0, 1)), parked=frozenset())
+    return board, state
+
+
+@pytest.fixture
 def valid_level_dict() -> dict[str, Any]:
     """Return a fresh valid level dictionary.
 
