@@ -112,6 +112,8 @@ def draw_legal_destinations(
     board: Board,
     state: GameState,
     selected: int | None,
+    cell: int | None = None,
+    origin: tuple[int, int] | None = None,
 ) -> None:
     """Tint every cell ``selected`` may legally enter, in its own hue.
 
@@ -123,8 +125,12 @@ def draw_legal_destinations(
     if selected is None:
         return
 
-    cell = cell_size(board.cols, board.rows)
-    origin_x, origin_y = grid_origin(board.cols, board.rows)
+    if cell is None or origin is None:
+        cell = cell_size(board.cols, board.rows)
+        origin_x, origin_y = grid_origin(board.cols, board.rows)
+    else:
+        origin_x, origin_y = origin
+
     hue = car_hue(selected)
 
     for move in legal_moves_for(board, state, selected):
@@ -168,7 +174,7 @@ def draw_board(
                 pygame.draw.rect(surface, COLOR_BOARD_BG, rect)
                 pygame.draw.rect(surface, COLOR_GRID_LINE, rect, width=GRID_LINE_WIDTH)
 
-    draw_legal_destinations(surface, board, state, selected)
+    draw_legal_destinations(surface, board, state, selected, cell=cell, origin=(origin_x, origin_y))
 
     for car in board.car_numbers():
         if car in state.parked:

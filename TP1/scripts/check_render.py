@@ -32,6 +32,7 @@ from gridworld.engine.board import Board  # noqa: E402
 from gridworld.engine.rules import stranded_cars  # noqa: E402
 from gridworld.engine.state import GameState  # noqa: E402
 from gridworld.levelfile import load_level  # noqa: E402
+from gridworld.ui.app import Session, _handle_keydown, _start_level  # noqa: E402
 from gridworld.ui.render import build_fonts, draw_frame  # noqa: E402
 from gridworld.ui.sprites import build_sprites  # noqa: E402
 from gridworld.ui.theme import (  # noqa: E402
@@ -86,6 +87,64 @@ def check_legal_destinations() -> bool:
     ok &= surface.get_at(center_1_0)[:3] == COLOR_BOARD_BG
 
     return bool(ok)
+
+
+def check_session_key_handling() -> bool:
+    """Test Session state machine and keydown transitions headlessly."""
+    pygame.init()
+    pygame.display.set_mode(WINDOW_SIZE)
+
+    level = load_level("levels/01-warmup.json")
+    session = Session()
+    _start_level(session, level)
+
+    # 1. Selecting car 1
+    _handle_keydown(session, pygame.K_1)
+    if session.selected != 1:
+        return False
+
+    # 2. Drive car 1 down 3, right 4, down 1 to land on flag (4, 4)
+    moves = [
+        pygame.K_DOWN, pygame.K_DOWN, pygame.K_DOWN,
+        pygame.K_RIGHT, pygame.K_RIGHT, pygame.K_RIGHT, pygame.K_RIGHT,
+        pygame.K_DOWN,
+    ]
+    for key in moves:
+        _handle_keydown(session, key)
+
+    # Selection must be automatically cleared upon parking car 1 (WR-01)
+    if session.selected is not None:
+        return False
+    if not session.history.current.is_parked(1):
+        return False
+
+    # 3. Selecting a parked car flashes its position and rejects selection
+    _handle_keydown(session, pygame.K_1)
+    if session.selected is not None:
+        return False
+    if session.flash_cell != (4, 4):
+        return False
+
+    # 4. Arrow key with no selection does nothing
+    _handle_keydown(session, pygame.K_LEFT)
+    if session.history.depth != 8:
+        return False
+
+    # 5. Undo (K_u) un-parks car 1 and restores depth
+    _handle_keydown(session, pygame.K_u)
+    if session.history.current.is_parked(1):
+        return False
+    if session.history.depth != 7:
+        return False
+
+    # 6. Reset (K_r) clears selection and resets history depth to 0
+    _handle_keydown(session, pygame.K_r)
+    if session.history.depth != 0:
+        return False
+    if session.selected is not None:
+        return False
+
+    return True
 
 
 def check_control_legend() -> bool:
@@ -224,6 +283,7 @@ def _report(label: str, ok: bool) -> bool:
 def main() -> int:
     checks = (
         ("selecting car 1 tints exactly its legal destinations", check_legal_destinations),
+        ("session key handling state machine behavior", check_session_key_handling),
         ("control legend is five rows with undo inserted, typesettable", check_control_legend),
         ("HUD stack fits alongside the reserved warning block", check_hud_fits),
         ("unwinnable warning fills the reserved block without growing it", check_unwinnable_warning),

@@ -147,18 +147,17 @@ def _handle_keydown(session: Session, key: int) -> None:
             # No car selected: arrow keys do nothing and never reach apply_move.
             return
         direction = KEY_TO_DIRECTION[key]
-        row, col = session.history.current.position_of(session.selected)
-        drow, dcol = direction.delta
-        target = (row + drow, col + dcol)
         result = apply_move(session.board, session.history.current, session.selected, direction)
         if result.accepted:
             session.history = session.history.push(result.state)
+            if result.state.is_parked(session.selected):
+                session.selected = None
             _refresh_unwinnable(session)
-        else:
-            _flash(session, target)
+        elif result.target is not None:
+            _flash(session, result.target)
 
 
-def _current_flash_rect(session: Session, cell: int) -> pygame.Rect | None:
+def _expire_and_get_flash_rect(session: Session, cell: int) -> pygame.Rect | None:
     if session.board is None or session.flash_cell is None:
         return None
     if pygame.time.get_ticks() >= session.flash_until_ms:
@@ -255,7 +254,7 @@ def run(level_path: str | Path | None = None) -> None:
                 session.selected,
                 session.history.depth,
                 sprites,
-                flash_rect=_current_flash_rect(session, current_cell),
+                flash_rect=_expire_and_get_flash_rect(session, current_cell),
                 unwinnable=session.unwinnable,
                 stranded=session.stranded,
             )

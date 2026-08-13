@@ -37,6 +37,7 @@ class MoveResult:
     accepted: bool
     state: GameState
     rejection: MoveRejection | None
+    target: Position | None = None
 
 
 def apply_move(board: Board, state: GameState, car: int, direction: Direction) -> MoveResult:
@@ -47,28 +48,28 @@ def apply_move(board: Board, state: GameState, car: int, direction: Direction) -
     Landing on the car's own flag parks it atomically with the move.
     """
     if car not in board.car_numbers():
-        return MoveResult(accepted=False, state=state, rejection=MoveRejection.NO_SUCH_CAR)
+        return MoveResult(accepted=False, state=state, rejection=MoveRejection.NO_SUCH_CAR, target=None)
 
     if state.is_parked(car):
-        return MoveResult(accepted=False, state=state, rejection=MoveRejection.CAR_PARKED)
+        return MoveResult(accepted=False, state=state, rejection=MoveRejection.CAR_PARKED, target=state.position_of(car))
 
     row, col = state.position_of(car)
     drow, dcol = direction.delta
     target = (row + drow, col + dcol)
 
     if not board.in_bounds(target):
-        return MoveResult(accepted=False, state=state, rejection=MoveRejection.OFF_GRID)
+        return MoveResult(accepted=False, state=state, rejection=MoveRejection.OFF_GRID, target=target)
 
     if board.is_obstacle(target):
-        return MoveResult(accepted=False, state=state, rejection=MoveRejection.OBSTACLE)
+        return MoveResult(accepted=False, state=state, rejection=MoveRejection.OBSTACLE, target=target)
 
     occupant = state.car_at(target)
     if occupant is not None:
-        return MoveResult(accepted=False, state=state, rejection=MoveRejection.OCCUPIED)
+        return MoveResult(accepted=False, state=state, rejection=MoveRejection.OCCUPIED, target=target)
 
     flag_owner = board.flag_owner(target)
     if flag_owner is not None and flag_owner != car:
-        return MoveResult(accepted=False, state=state, rejection=MoveRejection.FOREIGN_FLAG)
+        return MoveResult(accepted=False, state=state, rejection=MoveRejection.FOREIGN_FLAG, target=target)
 
     new_cars = tuple(
         target if index == car - 1 else pos for index, pos in enumerate(state.cars)
@@ -78,7 +79,7 @@ def apply_move(board: Board, state: GameState, car: int, direction: Direction) -
         new_parked = state.parked | {car}
 
     new_state = GameState(cars=new_cars, parked=new_parked)
-    return MoveResult(accepted=True, state=new_state, rejection=None)
+    return MoveResult(accepted=True, state=new_state, rejection=None, target=target)
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,14 +206,17 @@ def is_unwinnable(board: Board, state: GameState) -> bool:
     ``True`` when either branch holds: (A) ``stranded_cars`` is non-empty,
     or (B) the state is not solved and ``legal_moves`` is empty.
 
-    **Soundness.** Every blocker branch A relies on is permanent: the grid
-    boundary and obstacles never change, other cars' flags are refused
-    unconditionally by ``apply_move`` regardless of parked status, and a
-    parked car never moves again. So once a flag falls outside the
-    reachable set it can never come back into reach, and branch A cannot
-    be a false alarm. Branch B is trivially terminal: no legal move exists
-    anywhere, by direct delegation to ``legal_moves`` from 03-01, so it
-    restates none of the rejection ladder itself.
+    **Soundness.** Every blocker branch A relies on is permanent within a
+    single forward line of play: the grid boundary and obstacles never
+    change, other cars' flags are refused unconditionally by ``apply_move``
+    regardless of parked status, and ``apply_move`` itself never un-parks a
+    car. ``MoveHistory.undo()`` *can* un-park a car and restore a previously
+    lost route -- ``is_unwinnable`` stays sound there only because it is a
+    pure function of the current ``(board, state)`` and is recomputed fresh
+    on every transition (including undo), never cached across states.
+    Branch B is trivially terminal: no legal move exists anywhere, by direct
+    delegation to ``legal_moves`` from 03-01, so it restates none of the
+    rejection ladder itself.
 
     **Incompleteness.** This is a sound but *incomplete* check: it never
     reports a winnable state as unwinnable, but it does not claim to catch
