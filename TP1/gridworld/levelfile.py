@@ -21,7 +21,27 @@ MAX_DIMENSION = 100
 
 
 class LevelProblem(Enum):
-    """Specific failure modes for level loading and validation."""
+    """Specific failure modes for level loading and validation.
+
+    Structural problems:
+    - UNREADABLE_FILE: level file path cannot be opened or read
+    - MALFORMED_JSON: file content is not valid JSON syntax
+    - NOT_AN_OBJECT: top-level JSON structure is not an object
+    - MISSING_KEY: required field is missing from object
+    - WRONG_TYPE: field has invalid data type
+    - BAD_DIMENSION: grid dimension out of range [1, MAX_DIMENSION]
+    - BAD_COORDINATE: coordinate is not a 2-element list of integers
+    - OUT_OF_BOUNDS: coordinate falls outside grid dimensions
+
+    Integrity problems:
+    - NO_CARS: level declares zero cars
+    - DUPLICATE_NUMBER: two cars or two flags share the same number
+    - NON_CONTIGUOUS_NUMBERING: car or flag numbers are not contiguous 1..N
+    - UNPAIRED_NUMBER: car without matching flag or flag without matching car
+    - ON_OBSTACLE: car or flag stands on an obstacle cell
+    - CELL_CONFLICT: two entities share a cell (car-car, flag-flag, car-foreign flag)
+    - STARTS_ON_OWN_FLAG: car starts on its own flag
+    """
 
     UNREADABLE_FILE = "unreadable_file"
     MALFORMED_JSON = "malformed_json"
@@ -31,6 +51,13 @@ class LevelProblem(Enum):
     BAD_DIMENSION = "bad_dimension"
     BAD_COORDINATE = "bad_coordinate"
     OUT_OF_BOUNDS = "out_of_bounds"
+    NO_CARS = "no_cars"
+    DUPLICATE_NUMBER = "duplicate_number"
+    NON_CONTIGUOUS_NUMBERING = "non_contiguous_numbering"
+    UNPAIRED_NUMBER = "unpaired_number"
+    ON_OBSTACLE = "on_obstacle"
+    CELL_CONFLICT = "cell_conflict"
+    STARTS_ON_OWN_FLAG = "starts_on_own_flag"
 
 
 class LevelError(Exception):
@@ -86,8 +113,16 @@ def _parse_coordinate(val: Any, owner: str, source: str, rows: int, cols: int) -
 def parse_level(data: object, source: str) -> Level:
     """Parse a decoded JSON object into a Level.
 
-    Performs structural validation: required keys, data types, grid boundaries,
-    and coordinate formats. Order of cars and flags is normalized by car number.
+    Performs validation in a deterministic, fixed check order:
+    1. Structural checks: top-level object, required keys, types, grid dimensions,
+       and coordinate formats (out of bounds).
+    2. At-least-one-car requirement (NO_CARS).
+    3. Per-list numbering uniqueness (DUPLICATE_NUMBER) and contiguity 1..N
+       (NON_CONTIGUOUS_NUMBERING).
+    4. Pairing across car and flag lists (UNPAIRED_NUMBER).
+    5. Obstacle occupancy for cars and flags (ON_OBSTACLE).
+    6. Cell conflicts between entities (CELL_CONFLICT).
+    7. Starts-on-own-flag prevention (STARTS_ON_OWN_FLAG).
     """
     if not isinstance(data, dict):
         raise LevelError(
@@ -218,8 +253,137 @@ def parse_level(data: object, source: str) -> Level:
         pos = _parse_coordinate(flag_raw["at"], f"flag {num}", source, rows, cols)
         flags_list.append((num, pos))
 
+    # --- Integrity Validation Matrix ---
+
+    # 2. At-least-one-car check
+    if len(cars_list) == 0:
+        raise LevelError(
+            LevelProblem.NO_CARS,
+            source,
+            "level must declare at least one car",
+        )
+
+    # 3. Per-list numbering checks
+    seen_car_nums: set[int] = set()
+    for num, _ in cars_list:
+        if num in seen_car_nums:
+            raise LevelError(
+                LevelProblem.DUPLICATE_NUMBER,
+                source,
+                f"duplicate car number {num}",
+            )
+        seen_car_nums.add(num)
+
+    seen_flag_nums: set[int] = set()
+    for num, _ in flags_list:
+        if num in seen_flag_nums:
+            raise LevelError(
+                LevelProblem.DUPLICATE_NUMBER,
+                source,
+                f"duplicate flag number {num}",
+            )
+        seen_flag_nums.add(num)
+
+    expected_car_nums = set(range(1, len(cars_list) + 1))
+    if seen_car_nums != expected_car_nums:
+        missing_or_extra = sorted(seen_car_nums ^ expected_car_nums)
+        raise LevelError(
+            LevelProblem.NON_CONTIGUOUS_NUMBERING,
+            source,
+            f"car numbers must be 1 to {len(cars_list)} with no gaps, broken by number {missing_or_extra[0]} (found {sorted(seen_car_nums)})",
+        )
+
+    expected_flag_nums = set(range(1, len(flags_list) + 1))
+    if seen_flag_nums != expected_flag_nums:
+        missing_or_extra = sorted(seen_flag_nums ^ expected_flag_nums)
+        raise LevelError(
+            LevelProblem.NON_CONTIGUOUS_NUMBERING,
+            source,
+            f"flag numbers must be 1 to {len(flags_list)} with no gaps, broken by number {missing_or_extra[0]} (found {sorted(seen_flag_nums)})",
+        )
+
+    # 4. Pairing across the two lists
+    unpaired_cars = sorted(seen_car_nums - seen_flag_nums)
+    if unpaired_cars:
+        num = unpaired_cars[0]
+        raise LevelError(
+            LevelProblem.UNPAIRED_NUMBER,
+            source,
+            f"car {num} has no matching flag {num}",
+        )
+
+    unpaired_flags = sorted(seen_flag_nums - seen_car_nums)
+    if unpaired_flags:
+        num = unpaired_flags[0]
+        raise LevelError(
+            LevelProblem.UNPAIRED_NUMBER,
+            source,
+            f"flag {num} has no matching car {num}",
+        )
+
     cars_sorted = sorted(cars_list, key=lambda x: x[0])
     flags_sorted = sorted(flags_list, key=lambda x: x[0])
+
+    # 5. Obstacle occupancy
+    for num, pos in cars_sorted:
+        if pos in obstacles:
+            raise LevelError(
+                LevelProblem.ON_OBSTACLE,
+                source,
+                f"car {num} at {list(pos)} is on an obstacle cell",
+            )
+
+    for num, pos in flags_sorted:
+        if pos in obstacles:
+            raise LevelError(
+                LevelProblem.ON_OBSTACLE,
+                source,
+                f"flag {num} at {list(pos)} is on an obstacle cell",
+            )
+
+    # 6. Cell conflicts
+    # Car vs Car
+    for i in range(len(cars_sorted)):
+        c1_num, c1_pos = cars_sorted[i]
+        for j in range(i + 1, len(cars_sorted)):
+            c2_num, c2_pos = cars_sorted[j]
+            if c1_pos == c2_pos:
+                raise LevelError(
+                    LevelProblem.CELL_CONFLICT,
+                    source,
+                    f"car {c1_num} and car {c2_num} share cell {list(c1_pos)}",
+                )
+
+    # Flag vs Flag
+    for i in range(len(flags_sorted)):
+        f1_num, f1_pos = flags_sorted[i]
+        for j in range(i + 1, len(flags_sorted)):
+            f2_num, f2_pos = flags_sorted[j]
+            if f1_pos == f2_pos:
+                raise LevelError(
+                    LevelProblem.CELL_CONFLICT,
+                    source,
+                    f"flag {f1_num} and flag {f2_num} share cell {list(f1_pos)}",
+                )
+
+    # Car vs Flag of different car
+    for c_num, c_pos in cars_sorted:
+        for f_num, f_pos in flags_sorted:
+            if c_num != f_num and c_pos == f_pos:
+                raise LevelError(
+                    LevelProblem.CELL_CONFLICT,
+                    source,
+                    f"car {c_num} and flag {f_num} share cell {list(c_pos)}",
+                )
+
+    # 7. Starts-on-own-flag rule
+    for (c_num, c_pos), (f_num, f_pos) in zip(cars_sorted, flags_sorted):
+        if c_num == f_num and c_pos == f_pos:
+            raise LevelError(
+                LevelProblem.STARTS_ON_OWN_FLAG,
+                source,
+                f"car {c_num} starts on its own flag at {list(c_pos)}; level must not begin already solved",
+            )
 
     cars_positions = tuple(pos for _, pos in cars_sorted)
     flags_positions = tuple(pos for _, pos in flags_sorted)

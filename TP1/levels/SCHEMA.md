@@ -71,7 +71,25 @@ Below is the complete content of `TP1/levels/01-warmup.json`:
 
 ## Validation errors
 
-*(Integrity validation catalogue added in Plan 02-02)*
+When a level file fails loading or integrity validation, a `LevelError` is raised containing a specific `LevelProblem` code and detailed message naming the offending entity, value, or cell.
+
+| Problem (`LevelProblem`) | Trigger Condition | Example Detail Message |
+|--------------------------|-------------------|------------------------|
+| `UNREADABLE_FILE` | File does not exist, path is invalid, or permission denied. | `cannot read level file: [Errno 2] No such file or directory` |
+| `MALFORMED_JSON` | File content is not valid JSON syntax. | `line 3 column 1 (char 25)` |
+| `NOT_AN_OBJECT` | Top-level JSON data is not an object/dictionary. | `level data must be a JSON object, got list` |
+| `MISSING_KEY` | Required key is omitted from object or entry. | `missing required key 'rows'` |
+| `WRONG_TYPE` | Key value has wrong type (e.g. non-string name, non-int rows/cols/number). | `key 'rows' must be an integer, got 5.5` |
+| `BAD_DIMENSION` | Grid dimension outside range [1, 100]. | `key 'rows' must be between 1 and 100, got 0` |
+| `BAD_COORDINATE` | Coordinate is not a 2-element list of integers. | `obstacle[0] coordinate must be a two-element [row, col] array, got [1, 2, 3]` |
+| `OUT_OF_BOUNDS` | Coordinate lies outside the declared grid bounds. | `obstacle[0] coordinate [9, 0] is out of bounds for 3x3 grid` |
+| `NO_CARS` | Level declares zero cars. | `level must declare at least one car` |
+| `DUPLICATE_NUMBER` | Two cars or two flags share the same number. | `duplicate car number 1` |
+| `NON_CONTIGUOUS_NUMBERING` | Car or flag numbers are not contiguous starting from 1. | `car numbers must be 1 to 2 with no gaps, broken by number 2 (found [1, 3])` |
+| `UNPAIRED_NUMBER` | Car has no matching flag, or flag has no matching car. | `car 2 has no matching flag 2` |
+| `ON_OBSTACLE` | Car or flag is placed on an obstacle cell. | `car 1 at [1, 1] is on an obstacle cell` |
+| `CELL_CONFLICT` | Two cars, two flags, or a car and a foreign flag share a cell. | `car 1 and car 2 share cell [0, 0]` |
+| `STARTS_ON_OWN_FLAG` | Car starts on its own destination flag. | `car 1 starts on its own flag at [2, 2]; level must not begin already solved` |
 
 ---
 *Note: Phase 4 delivery README links to this document for the level specification.*

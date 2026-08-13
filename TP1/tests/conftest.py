@@ -6,6 +6,10 @@ the renderer package or constructs a display surface.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from gridworld.engine.board import Board
@@ -81,3 +85,40 @@ def tiny_board() -> tuple[Board, GameState]:
     )
     state = GameState(cars=((0, 0), (0, 1)), parked=frozenset())
     return board, state
+
+
+@pytest.fixture
+def valid_level_dict() -> dict[str, Any]:
+    """Return a fresh valid level dictionary.
+
+    Layout (3x3 grid):
+    - Car 1 at (0, 0), Flag 1 at (2, 2)
+    - Car 2 at (0, 2), Flag 2 at (2, 0)
+    - Obstacle at (1, 1)
+    """
+    return {
+        "name": "Fixture Level",
+        "rows": 3,
+        "cols": 3,
+        "obstacles": [[1, 1]],
+        "cars": [
+            {"number": 1, "at": [0, 0]},
+            {"number": 2, "at": [0, 2]},
+        ],
+        "flags": [
+            {"number": 1, "at": [2, 2]},
+            {"number": 2, "at": [2, 0]},
+        ],
+    }
+
+
+@pytest.fixture
+def write_level(tmp_path: Path):
+    """Return a helper function that writes a level dictionary as JSON to a temp file."""
+
+    def _writer(data: dict[str, Any], filename: str = "level.json") -> Path:
+        p = tmp_path / filename
+        p.write_text(json.dumps(data), encoding="utf-8")
+        return p
+
+    return _writer
