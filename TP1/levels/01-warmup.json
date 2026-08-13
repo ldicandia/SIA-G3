@@ -1,0 +1,29 @@
+{
+  "name": "Warmup",
+  "rows": 5,
+  "cols": 5,
+  "obstacles": [
+    [2, 1],
+    [2, 3]
+  ],
+  "cars": [
+    {
+      "number": 1,
+      "at": [0, 0]
+    },
+    {
+      "number": 2,
+      "at": [0, 4]
+    }
+  ],
+  "flags": [
+    {
+      "number": 1,
+      "at": [4, 4]
+    },
+    {
+      "number": 2,
+      "at": [4, 0]
+    }
+  ]
+}

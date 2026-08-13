@@ -1,4 +1,4 @@
-"""Prove the engine imports and runs with no rendering library present.
+"""Prove the engine and level layer import and run with no rendering library present.
 
 Decision D-03 makes this script the **sole mechanism** for the ENG-08
 guarantee. A complementary fast pytest guard -- asserting the rendering
@@ -114,6 +114,7 @@ import gridworld.engine.board
 import gridworld.engine.state
 import gridworld.engine.rules
 import gridworld.levels
+import gridworld.levelfile
 import sys
 assert "pygame" not in sys.modules, "importing the engine pulled in the renderer"
 print("engine and level modules import with no renderer in sys.modules")
@@ -158,6 +159,48 @@ assert "pygame" not in sys.modules, "running the engine pulled in the renderer"
 print("drove the built-in level to solved in", moves, "moves; states work as dict keys")
 """
 
+CHECK_LEVEL_FILE = """
+from gridworld.engine.rules import apply_move, is_solved
+from gridworld.engine.state import Direction
+from gridworld.levelfile import load_level, DEFAULT_LEVEL_PATH, LevelError, LevelProblem
+import sys
+
+level = load_level(DEFAULT_LEVEL_PATH)
+board, state = level.board, level.state
+assert not is_solved(board, state)
+
+sequence = (
+    [(1, Direction.DOWN)] * 3
+    + [(1, Direction.RIGHT)] * 4
+    + [(1, Direction.DOWN)]
+    + [(2, Direction.DOWN)] * 3
+    + [(2, Direction.LEFT)] * 4
+    + [(2, Direction.DOWN)]
+)
+
+moves = 0
+for car, direction in sequence:
+    result = apply_move(board, state, car, direction)
+    assert result.accepted, (car, direction, result.rejection)
+    state = result.state
+    moves += 1
+
+assert is_solved(board, state), "warmup level did not reach solved"
+assert moves == 16, moves
+assert "pygame" not in sys.modules, "loading levels pulled in the renderer"
+
+missing_path = "levels/does-not-exist.json"
+try:
+    load_level(missing_path)
+except LevelError as err:
+    assert err.problem == LevelProblem.UNREADABLE_FILE
+    assert missing_path in str(err)
+else:
+    raise AssertionError("missing file did not raise LevelError")
+
+print("drove warmup level file to solved in 16 moves; error handling verified headlessly")
+"""
+
 
 def _report(label: str, result: subprocess.CompletedProcess) -> bool:
     if result.returncode == 0:
@@ -181,6 +224,7 @@ def main() -> int:
         ("environment is genuinely clean", CHECK_CLEAN),
         ("engine imports headlessly", CHECK_IMPORTS),
         ("engine runs headlessly", CHECK_RUNS),
+        ("level file layer runs headlessly", CHECK_LEVEL_FILE),
     )
 
     for label, code in checks:
@@ -188,10 +232,11 @@ def main() -> int:
         if not _report(label, result):
             return 1
 
-    print("\nENG-08 holds: the engine imports, runs a full solution, and uses")
-    print("its states as dictionary keys in an environment with no renderer.")
+    print("\nENG-08 holds: the engine and level layer import, run full solutions, and use")
+    print("states as dictionary keys in an environment with no renderer.")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

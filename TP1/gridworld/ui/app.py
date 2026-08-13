@@ -7,13 +7,15 @@ layer never constructs or hand-edits a ``GameState`` directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+import sys
 
 import pygame
 
 from gridworld.engine.board import Board, Position
 from gridworld.engine.rules import apply_move, is_solved
 from gridworld.engine.state import Direction, GameState
-from gridworld.levels import built_in_level
+from gridworld.levelfile import DEFAULT_LEVEL_PATH, Level, LevelError, load_level
 from gridworld.ui.render import Fonts, build_fonts, draw_frame
 from gridworld.ui.sprites import SpriteSet, build_sprites
 from gridworld.ui.theme import FLASH_MS, WINDOW_SIZE, WINDOW_TITLE, cell_size, grid_origin
@@ -42,6 +44,7 @@ KEY_TO_DIRECTION = {
 class Session:
     """Session-local, presentation-only state -- never fed back into the engine."""
 
+    level: Level
     board: Board
     state: GameState
     selected: int | None = None
@@ -57,9 +60,8 @@ def _flash(session: Session, cell: Position) -> None:
 
 def _handle_keydown(session: Session, key: int) -> None:
     if key == pygame.K_r:
-        board, state = built_in_level()
-        session.board = board
-        session.state = state
+        session.board = session.level.board
+        session.state = session.level.state
         session.selected = None
         session.moves = 0
         session.flash_cell = None
@@ -110,8 +112,15 @@ def _current_flash_rect(session: Session, cell: int) -> pygame.Rect | None:
     return pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
 
 
-def run() -> None:
+def run(level_path: str | Path | None = None) -> None:
     """Open the window and run the game loop until the player quits."""
+    path = level_path if level_path is not None else DEFAULT_LEVEL_PATH
+    try:
+        level = load_level(path)
+    except LevelError as err:
+        sys.stderr.write(f"{err}\n")
+        sys.exit(1)
+
     pygame.init()
     pygame.display.set_caption(WINDOW_TITLE)
     screen = pygame.display.set_mode(WINDOW_SIZE)
@@ -119,9 +128,8 @@ def run() -> None:
 
     fonts: Fonts = build_fonts()
 
-    board, state = built_in_level()
-    session = Session(board=board, state=state)
-    sprites: SpriteSet = build_sprites(board, cell_size(board.cols, board.rows))
+    session = Session(level=level, board=level.board, state=level.state)
+    sprites: SpriteSet = build_sprites(session.board, cell_size(session.board.cols, session.board.rows))
 
     running = True
     while running:
@@ -152,3 +160,4 @@ def run() -> None:
         clock.tick(60)
 
     pygame.quit()
+
