@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import pygame
 
 from gridworld.engine.board import Board
-from gridworld.engine.rules import is_solved
+from gridworld.engine.rules import is_solved, legal_moves_for
 from gridworld.engine.state import GameState
 from gridworld.levelfile import LevelEntry
 from gridworld.ui.sprites import SpriteSet, arrow_row_surface
@@ -38,6 +38,7 @@ from gridworld.ui.theme import (
     LABEL_CAR,
     LABEL_CONTROLS,
     LABEL_MOVES,
+    LEGAL_DESTINATION_ALPHA,
     LOAD_ERROR_HEADING,
     LOAD_ERROR_HINT,
     LOAD_ERROR_MAX_LINES,
@@ -103,6 +104,34 @@ def _blit_text(
     return rect
 
 
+def draw_legal_destinations(
+    surface: pygame.Surface,
+    board: Board,
+    state: GameState,
+    selected: int | None,
+) -> None:
+    """Tint every cell ``selected`` may legally enter, in its own hue.
+
+    Returns immediately when no car is selected. A parked or unknown
+    selected car yields an empty enumeration from ``legal_moves_for``, so
+    both cases self-handle with no extra branch. No text, no border, no
+    state change.
+    """
+    if selected is None:
+        return
+
+    cell = cell_size(board.cols, board.rows)
+    origin_x, origin_y = grid_origin(board.cols, board.rows)
+    hue = car_hue(selected)
+
+    for move in legal_moves_for(board, state, selected):
+        row, col = move.target
+        rect = pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
+        tint = pygame.Surface((cell, cell), pygame.SRCALPHA)
+        tint.fill((*hue, LEGAL_DESTINATION_ALPHA))
+        surface.blit(tint, rect.topleft)
+
+
 def draw_board(
     surface: pygame.Surface,
     board: Board,
@@ -112,8 +141,10 @@ def draw_board(
 ) -> None:
     """Render every cell of ``board`` exactly once, in State Treatment order.
 
-    Empty and obstacle cells first, then unclaimed flags, then cars (idle,
-    parked, selected). Drawing is clipped to the board area so a grid
+    Empty and obstacle cells first, then the selected car's legal
+    destinations, then unclaimed flags, then cars (idle, parked, selected).
+    The legal-destination tint sits beneath the flag and car sprites so it
+    never covers a numeral. Drawing is clipped to the board area so a grid
     clamped by ``MIN_CELL`` past the board area is cut off at the edge
     rather than bleeding into the HUD panel.
     """
@@ -133,6 +164,8 @@ def draw_board(
             else:
                 pygame.draw.rect(surface, COLOR_BOARD_BG, rect)
                 pygame.draw.rect(surface, COLOR_GRID_LINE, rect, width=GRID_LINE_WIDTH)
+
+    draw_legal_destinations(surface, board, state, selected)
 
     for car in board.car_numbers():
         if car in state.parked:

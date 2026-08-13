@@ -62,6 +62,12 @@ COLOR_SCRIM = _rgb("1A1A1A")
 SCRIM_ALPHA = round(255 * 0.60)
 PARKED_FILL_ALPHA = round(255 * 0.25)
 FLASH_ALPHA = round(255 * 0.30)
+LEGAL_DESTINATION_ALPHA = round(255 * 0.40)
+"""Alpha for the selected car's legal-destination tint.
+
+Implements the ``01-UI-SPEC.md`` State Treatments row "Legal destinations
+(Phase 3)": target cells filled with the selected car's hue at 40% alpha.
+"""
 
 FLASH_MS = 150
 
