@@ -314,6 +314,48 @@ print("stranded car and terminal gridlock both detected; no false alarm on any s
 """
 
 
+CHECK_SEARCH = """
+from gridworld.engine.rules import legal_moves
+from gridworld.levels import built_in_level
+from gridworld.search.algorithms import ALGORITHMS
+from gridworld.search.heuristics import HEURISTICS
+from gridworld.search.node import SearchNode
+from gridworld.search.problem import Problem
+import sys
+
+board, state = built_in_level()
+problem = Problem(board=board, initial=state)
+
+assert problem.actions(state) == legal_moves(board, state)
+assert problem.is_goal(state) is False
+
+root = SearchNode.root(state)
+assert root.parent is None and root.action is None and root.path() == ()
+
+for name, algorithm in ALGORITHMS.items():
+    try:
+        if name in ("greedy", "astar"):
+            algorithm(problem, HEURISTICS["heuristic_a"])
+        else:
+            algorithm(problem)
+    except NotImplementedError:
+        pass
+    else:
+        raise AssertionError(f"{name} unexpectedly returned instead of raising NotImplementedError")
+
+for name, heuristic in HEURISTICS.items():
+    try:
+        heuristic(problem, state)
+    except NotImplementedError:
+        pass
+    else:
+        raise AssertionError(f"{name} unexpectedly returned instead of raising NotImplementedError")
+
+assert "pygame" not in sys.modules, "the search scaffolding pulled in the renderer"
+print("search scaffolding imports and wires headlessly; every algorithm and heuristic stub raises NotImplementedError")
+"""
+
+
 def _report(label: str, result: subprocess.CompletedProcess) -> bool:
     if result.returncode == 0:
         print(f"PASS  {label}: {result.stdout.strip()}")
@@ -340,6 +382,7 @@ def main() -> int:
         ("legal-move enumeration runs headlessly", CHECK_LEGAL_MOVES),
         ("undo history runs headlessly", CHECK_UNDO_HISTORY),
         ("unwinnable detection runs headlessly", CHECK_UNWINNABLE),
+        ("search scaffolding runs headlessly", CHECK_SEARCH),
     )
 
     for label, code in checks:
@@ -350,7 +393,9 @@ def main() -> int:
     print("\nENG-08 holds: the engine, level layer, legal-move enumeration, undo history,")
     print("and unwinnable detection import, run full solutions, undo back to the initial")
     print("state, detect stranded cars and terminal gridlock, and use states as")
-    print("dictionary keys in an environment with no renderer.")
+    print("dictionary keys in an environment with no renderer. The search scaffolding")
+    print("(gridworld.search) also imports and wires headlessly, with every algorithm")
+    print("and heuristic still an unimplemented stub.")
     return 0
 
 
