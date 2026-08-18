@@ -1,10 +1,8 @@
 """Wiring checks for the search scaffolding (v2 milestone prep).
 
 These tests verify the ``Problem`` adapter and ``SearchNode`` bookkeeping
-agree with the engine they wrap, and that the algorithm/heuristic
-registries are correctly wired. They deliberately test no search
-algorithm's behavior -- every ``ALGORITHMS``/``HEURISTICS`` entry is
-still a ``NotImplementedError`` stub.
+agree with the engine they wrap, and that the registries are wired. A* is
+covered separately; these checks retain contracts for the remaining stubs.
 """
 
 from __future__ import annotations

@@ -148,18 +148,24 @@ def check_session_key_handling() -> bool:
 
 
 def check_control_legend() -> bool:
-    """The legend is five rows, row 2 is the undo row, and every row is
+    """The legend includes manual and search controls, and every row is
     typesettable by the bundled font (ASCII plus the em dash and middle
     dot only -- anything else renders as a ``.notdef`` box). No display
     reads needed.
     """
-    if len(CONTROL_LEGEND) != 5:
+    if len(CONTROL_LEGEND) != 8:
         return False
     if "undo" not in CONTROL_LEGEND[2]:
         return False
     if "reset" not in CONTROL_LEGEND[3]:
         return False
-    if "quit" not in CONTROL_LEGEND[4]:
+    if "optimal search" not in CONTROL_LEGEND[4]:
+        return False
+    if "pause" not in CONTROL_LEGEND[5]:
+        return False
+    if "speed" not in CONTROL_LEGEND[6]:
+        return False
+    if "quit" not in CONTROL_LEGEND[7]:
         return False
 
     allowed_extra = {"—", "·"}
@@ -245,7 +251,7 @@ def check_unwinnable_warning() -> bool:
 
 
 def check_hud_fits() -> bool:
-    """The HUD stack -- five-row legend included -- still fits above the
+    """The HUD stack -- eight-row legend included -- still fits above the
     reserved warning block, under the dummy video driver.
 
     Deliberately duplicates a small slice of ``draw_hud``'s layout
@@ -284,7 +290,7 @@ def main() -> int:
     checks = (
         ("selecting car 1 tints exactly its legal destinations", check_legal_destinations),
         ("session key handling state machine behavior", check_session_key_handling),
-        ("control legend is five rows with undo inserted, typesettable", check_control_legend),
+        ("control legend includes search controls and is typesettable", check_control_legend),
         ("HUD stack fits alongside the reserved warning block", check_hud_fits),
         ("unwinnable warning fills the reserved block without growing it", check_unwinnable_warning),
     )
