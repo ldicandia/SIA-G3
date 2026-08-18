@@ -341,28 +341,22 @@ assert is_solved(board, solved)
 
 for name in ("bfs", "dfs", "greedy", "iddfs"):
     algorithm = ALGORITHMS[name]
-    try:
-        if name == "greedy":
-            algorithm(problem, HEURISTICS["heuristic_a"])
-        else:
-            algorithm(problem)
-    except NotImplementedError:
-        pass
+    if name == "greedy":
+        result = algorithm(problem, HEURISTICS["heuristic_a"])
     else:
-        raise AssertionError(f"{name} unexpectedly returned instead of raising NotImplementedError")
+        result = algorithm(problem)
+    assert result.success, (name, result)
+    replayed = state
+    for action in result.path:
+        replayed = apply_move(board, replayed, action.car, action.direction).state
+    assert is_solved(board, replayed), (name, "path did not reach solved")
 
-assert HEURISTICS["heuristic_a"](problem, state) > 0
-for name in ("heuristic_b",):
-    heuristic = HEURISTICS[name]
-    try:
-        heuristic(problem, state)
-    except NotImplementedError:
-        pass
-    else:
-        raise AssertionError(f"{name} unexpectedly returned instead of raising NotImplementedError")
+for name in ("heuristic_a", "heuristic_b"):
+    value = HEURISTICS[name](problem, state)
+    assert isinstance(value, (int, float)) and value >= 0, (name, value)
 
 assert "pygame" not in sys.modules, "the search scaffolding pulled in the renderer"
-print("A* solves optimally headlessly; remaining algorithm and heuristic stubs stay explicit")
+print("every algorithm and heuristic runs headlessly; A* solves optimally in", astar_result.cost, "moves")
 """
 
 
@@ -403,8 +397,8 @@ def main() -> int:
     print("\nENG-08 holds: the engine, level layer, legal-move enumeration, undo history,")
     print("and unwinnable detection import, run full solutions, undo back to the initial")
     print("state, detect stranded cars and terminal gridlock, and use states as")
-    print("dictionary keys in an environment with no renderer. The search package also")
-    print("runs A* to an optimal solution headlessly; the remaining stubs stay explicit.")
+    print("dictionary keys in an environment with no renderer. Every search algorithm and")
+    print("heuristic also runs headlessly, with A* reaching an optimal solution.")
     return 0
 
 
