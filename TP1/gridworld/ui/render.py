@@ -6,6 +6,7 @@ Every colour, spacing value, font size and on-screen string is read from
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -228,6 +229,29 @@ def draw_board(
     surface.set_clip(previous_clip)
 
 
+def _grid_cells(rect: pygame.Rect, count: int) -> list[pygame.Rect]:
+    """Split ``rect`` into ``count`` compact sub-rects, one per occupant.
+
+    Several cars can land on the same board cell in the trace overlay; giving
+    each occupant its own slice keeps every one of them visible instead of
+    letting later draws fully cover -- or alpha-blend into an indistinct
+    smear over -- earlier ones.
+    """
+    if count <= 1:
+        return [rect]
+    cols = math.ceil(math.sqrt(count))
+    rows = math.ceil(count / cols)
+    cells: list[pygame.Rect] = []
+    for index in range(count):
+        row_idx, col_idx = divmod(index, cols)
+        x0 = rect.x + round(col_idx * rect.width / cols)
+        x1 = rect.x + round((col_idx + 1) * rect.width / cols)
+        y0 = rect.y + round(row_idx * rect.height / rows)
+        y1 = rect.y + round((row_idx + 1) * rect.height / rows)
+        cells.append(pygame.Rect(x0, y0, max(1, x1 - x0), max(1, y1 - y0)))
+    return cells
+
+
 def draw_search_trace(
     surface: pygame.Surface,
     board: Board,
@@ -241,33 +265,51 @@ def draw_search_trace(
 
     Both are keyed by car number and drawn in that car's own hue, so each
     car's exploration and route stay visually distinct instead of blending
-    into a single undifferentiated trace.
+    into a single undifferentiated trace. When two or more cars share the
+    same board cell, that cell is split via ``_grid_cells`` so every car's
+    mark stays visible in its own slice rather than fully overlapping.
     """
     origin_x, origin_y = origin
     trace = pygame.Surface((BOARD_SIZE, BOARD_SIZE), pygame.SRCALPHA)
     dot_radius = max(3, cell // 9)
 
+    explored_by_cell: dict[tuple[int, int], list[int]] = {}
     for car, positions in explored_cells.items():
-        hue = car_hue(car)
-        for row, col in positions:
-            center = (origin_x + col * cell + cell // 2, origin_y + row * cell + cell // 2)
-            pygame.draw.circle(
-                trace,
-                (*hue, SEARCH_EXPLORED_ALPHA),
-                center,
-                dot_radius,
-            )
+        for pos in positions:
+            explored_by_cell.setdefault(pos, []).append(car)
+
+    for (row, col), cars in explored_by_cell.items():
+        rect = pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
+        cars = sorted(cars)
+        for car, sub in zip(cars, _grid_cells(rect, len(cars))):
+            hue = car_hue(car)
+            radius = dot_radius if len(cars) == 1 else max(2, min(sub.width, sub.height) // 2 - 1)
+            pygame.draw.circle(trace, (*hue, SEARCH_EXPLORED_ALPHA), sub.center, radius)
+
+    path_cell_cars: dict[tuple[int, int], list[int]] = {}
+    for car, positions in solution_paths.items():
+        seen: set[tuple[int, int]] = set()
+        for pos in positions:
+            if pos not in seen:
+                path_cell_cars.setdefault(pos, []).append(car)
+                seen.add(pos)
+
+    for (row, col), cars in path_cell_cars.items():
+        rect = pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
+        cars = sorted(cars)
+        for car, sub in zip(cars, _grid_cells(rect, len(cars))):
+            hue = car_hue(car)
+            pygame.draw.rect(trace, (*hue, SEARCH_PATH_ALPHA), sub)
 
     path_width = max(3, cell // 7)
     for car, positions in solution_paths.items():
         if not positions:
             continue
         hue = car_hue(car)
-        centers: list[tuple[int, int]] = []
-        for row, col in positions:
-            rect = pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
-            pygame.draw.rect(trace, (*hue, SEARCH_PATH_ALPHA), rect)
-            centers.append(rect.center)
+        centers = [
+            (origin_x + col * cell + cell // 2, origin_y + row * cell + cell // 2)
+            for row, col in positions
+        ]
         if len(centers) > 1:
             pygame.draw.lines(
                 trace,
