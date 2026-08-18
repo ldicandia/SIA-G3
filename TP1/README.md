@@ -11,8 +11,8 @@ ultimately requires is a separate, later milestone.
 
 ## Requirements
 
-- Python 3.10+ (developed and tested on 3.12)
-- [pygame](https://www.pygame.org/) (tested with 2.6.1)
+- Python 3.10–3.13 (developed and tested on 3.12)
+- [pygame](https://www.pygame.org/) 2.6.1
 
 ## Installation
 
@@ -21,7 +21,7 @@ From the `TP1` directory:
 ```sh
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install pygame
+python -m pip install -r requirements.txt
 ```
 
 ## Running the game
