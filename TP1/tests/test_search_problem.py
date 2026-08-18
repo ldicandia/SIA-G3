@@ -95,23 +95,27 @@ def test_node_path_reconstructs_action_sequence(built_in):
 
 
 @pytest.mark.parametrize("name", ["bfs", "dfs", "greedy", "astar", "iddfs"])
-def test_algorithm_registry_entries_are_unimplemented_stubs(built_in, name):
-    board, state = built_in
+def test_algorithm_registry_entries_are_callable(tiny_board, name):
+    board, state = tiny_board
     problem = Problem(board=board, initial=state)
     algorithm = ALGORITHMS[name]
 
-    with pytest.raises(NotImplementedError):
-        if name in ("greedy", "astar"):
-            algorithm(problem, HEURISTICS["heuristic_a"])
-        else:
-            algorithm(problem)
+    if name in ("greedy", "astar"):
+        result = algorithm(problem, HEURISTICS["heuristic_a"])
+    else:
+        result = algorithm(problem)
+
+    assert result.success
+    assert result.algorithm == name
 
 
 @pytest.mark.parametrize("name", ["heuristic_a", "heuristic_b"])
-def test_heuristic_registry_entries_are_unimplemented_stubs(built_in, name):
-    board, state = built_in
+def test_heuristic_registry_entries_are_callable(tiny_board, name):
+    board, state = tiny_board
     problem = Problem(board=board, initial=state)
     heuristic = HEURISTICS[name]
 
-    with pytest.raises(NotImplementedError):
-        heuristic(problem, state)
+    val = heuristic(problem, state)
+    assert isinstance(val, (int, float))
+    assert val >= 0
+

@@ -41,32 +41,36 @@ To skip the picker and load a specific level directly:
 python -m gridworld levels/01-warmup.json
 ```
 
-## Visualizing Search (Demo Replay)
+## Visualizing Search (Algorithm Replay)
 
-To watch `random_search` solve a level and replay its move sequence automatically in the Pygame window:
+To solve a level with any search algorithm and replay its solution step-by-step in the Pygame window:
 
 ```sh
-python scripts/replay_random_search.py [level_path] [--seed SEED]
+python scripts/replay_search.py --algo <bfs|dfs|greedy|astar|iddfs> [level_path] [--heuristic <heuristic_a|heuristic_b>] [--delay <ms>]
 ```
 
 Examples:
 
-- Run default level (`levels/01-warmup.json`):
+- Run **A\*** with default Manhattan heuristic on warmup level:
   ```sh
-  python scripts/replay_random_search.py
+  python scripts/replay_search.py --algo astar levels/01-warmup.json
   ```
-- Run a specific level:
+- Run **BFS** on classic level:
   ```sh
-  python scripts/replay_random_search.py levels/02-classic.json
+  python scripts/replay_search.py --algo bfs levels/02-classic.json
   ```
-- Generate a new random solution on every run:
+- Run **Greedy** with max Manhattan heuristic:
   ```sh
-  python scripts/replay_random_search.py --seed random
+  python scripts/replay_search.py --algo greedy levels/01-warmup.json --heuristic heuristic_b
   ```
-- Use a custom numeric or text seed:
+- Run **DFS** or **IDDFS** with custom animation speed (150ms per step):
   ```sh
-  python scripts/replay_random_search.py levels/01-warmup.json --seed 42
+  python scripts/replay_search.py --algo dfs levels/01-warmup.json --delay 150
   ```
+
+In the replay window:
+- Press **Space** to pause / resume the replay.
+- Press **Esc** to close the window.
 
 ## Controls
 
