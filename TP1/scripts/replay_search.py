@@ -140,6 +140,7 @@ def main() -> int:
     print("Starting visual replay window...")
     print("Controls in replay:")
     print("  • Space: Pause / Resume replay")
+    print("  • R: Restart the replay from the beginning")
     print("  • Esc: Close window")
 
     history = MoveHistory.start(level.state)
@@ -172,6 +173,18 @@ def main() -> int:
                     running = False
                 elif event.key == pygame.K_SPACE:
                     paused = not paused
+                    next_visual_ms = pygame.time.get_ticks()
+                elif event.key == pygame.K_r:
+                    history = MoveHistory.start(level.state)
+                    remaining_path = deque(result.path)
+                    pending_cells = deque(expansion_order)
+                    explored_cells = {}
+                    solution_paths = {}
+                    focus_cell = None
+                    selected = None
+                    announced_solved = False
+                    paused = False
+                    phase = ReplayPhase.EXPLORING if pending_cells else ReplayPhase.TRAIL_PAUSE
                     next_visual_ms = pygame.time.get_ticks()
 
         now = pygame.time.get_ticks()
