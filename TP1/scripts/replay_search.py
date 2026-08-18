@@ -13,6 +13,8 @@ Examples:
 from __future__ import annotations
 
 import argparse
+from collections import deque
+from enum import Enum
 from pathlib import Path
 import sys
 
@@ -23,15 +25,33 @@ if str(_TP1_DIR) not in sys.path:
 
 import pygame
 
+from gridworld.engine.board import Position
 from gridworld.engine.rules import apply_move
+from gridworld.engine.state import GameState
 from gridworld.history import MoveHistory
 from gridworld.levelfile import DEFAULT_LEVEL_PATH, LevelError, load_level
 from gridworld.search.algorithms import ALGORITHMS
 from gridworld.search.heuristics import HEURISTICS
 from gridworld.search.problem import Problem
+from gridworld.ui.app import build_solution_paths
 from gridworld.ui.render import build_fonts, draw_frame
 from gridworld.ui.sprites import build_sprites
-from gridworld.ui.theme import WINDOW_SIZE, WINDOW_TITLE, cell_size
+from gridworld.ui.theme import (
+    SEARCH_REVEAL_DELAYS_MS,
+    SEARCH_TRAIL_REVEAL_MS,
+    WINDOW_SIZE,
+    WINDOW_TITLE,
+    cell_size,
+)
+
+
+class ReplayPhase(Enum):
+    """Visible phases of the offline replay: explore, trace, then move."""
+
+    EXPLORING = "exploring"
+    TRAIL_PAUSE = "trail_pause"
+    REPLAYING = "replaying"
+    DONE = "done"
 
 
 def main() -> int:
@@ -80,14 +100,26 @@ def main() -> int:
     problem = Problem(board=level.board, initial=level.state)
     algo_fn = ALGORITHMS[args.algo]
 
+    # Every state the algorithm expands is recorded here, per car, in the
+    # order it was expanded -- the reveal animation just replays this list.
+    expansion_order: list[tuple[int, Position]] = []
+    known_cells: dict[int, set[Position]] = {}
+
+    def _record_expansion(state: GameState) -> None:
+        for car, position in enumerate(state.cars, start=1):
+            car_known = known_cells.setdefault(car, set())
+            if position not in car_known:
+                car_known.add(position)
+                expansion_order.append((car, position))
+
     print("=" * 60)
     print(f"Running {args.algo.upper()} on level '{level.name}' ({level_path})...")
     if args.algo in ("greedy", "astar"):
         print(f"Heuristic: {args.heuristic}")
         heuristic_fn = HEURISTICS[args.heuristic]
-        result = algo_fn(problem, heuristic_fn)
+        result = algo_fn(problem, heuristic_fn, on_expand=_record_expansion)
     else:
-        result = algo_fn(problem)
+        result = algo_fn(problem, on_expand=_record_expansion)
 
     print("=" * 60)
     print("SEARCH RESULTS:")
@@ -103,16 +135,23 @@ def main() -> int:
         sys.stderr.write(f"Algorithm {args.algo} did not find a solution for {level_path}.\n")
         return 1
 
+    full_solution_paths = build_solution_paths(level.board, level.state, result.path)
+
     print("Starting visual replay window...")
     print("Controls in replay:")
     print("  • Space: Pause / Resume replay")
     print("  • Esc: Close window")
 
     history = MoveHistory.start(level.state)
-    remaining = list(result.path)
+    remaining_path = deque(result.path)
+    pending_cells = deque(expansion_order)
+    explored_cells: dict[int, set[Position]] = {}
+    solution_paths: dict[int, tuple[Position, ...]] = {}
+    focus_cell: tuple[int, Position] | None = None
     selected: int | None = None
     announced_solved = False
     paused = False
+    phase = ReplayPhase.EXPLORING if pending_cells else ReplayPhase.TRAIL_PAUSE
 
     pygame.init()
     pygame.display.set_caption(f"{WINDOW_TITLE} — {args.algo.upper()} Replay ({level.name})")
@@ -121,7 +160,7 @@ def main() -> int:
     fonts = build_fonts()
     sprites = build_sprites(level.board, cell_size(level.board.cols, level.board.rows))
 
-    next_step_ms = pygame.time.get_ticks() + args.delay
+    next_visual_ms = pygame.time.get_ticks()
     running = True
 
     while running:
@@ -133,17 +172,39 @@ def main() -> int:
                     running = False
                 elif event.key == pygame.K_SPACE:
                     paused = not paused
+                    next_visual_ms = pygame.time.get_ticks()
 
         now = pygame.time.get_ticks()
-        if not paused and remaining and now >= next_step_ms:
-            action = remaining.pop(0)
-            outcome = apply_move(level.board, history.current, action.car, action.direction)
-            assert outcome.accepted, (action.car, action.direction, outcome.rejection)
-            history = history.push(outcome.state)
-            selected = None if outcome.state.is_parked(action.car) else action.car
-            next_step_ms = now + args.delay
 
-        if not remaining and not announced_solved:
+        if not paused and phase is ReplayPhase.EXPLORING and now >= next_visual_ms:
+            car, position = pending_cells.popleft()
+            explored_cells.setdefault(car, set()).add(position)
+            focus_cell = (car, position)
+            next_visual_ms = now + SEARCH_REVEAL_DELAYS_MS[1]
+            if not pending_cells:
+                focus_cell = None
+                phase = ReplayPhase.TRAIL_PAUSE
+                next_visual_ms = now + SEARCH_TRAIL_REVEAL_MS
+
+        if not paused and phase is ReplayPhase.TRAIL_PAUSE and now >= next_visual_ms:
+            solution_paths = {car: tuple(path) for car, path in full_solution_paths.items()}
+            phase = ReplayPhase.REPLAYING
+            next_visual_ms = now
+
+        if not paused and phase is ReplayPhase.REPLAYING and now >= next_visual_ms:
+            if not remaining_path:
+                phase = ReplayPhase.DONE
+            else:
+                action = remaining_path.popleft()
+                outcome = apply_move(level.board, history.current, action.car, action.direction)
+                assert outcome.accepted, (action.car, action.direction, outcome.rejection)
+                history = history.push(outcome.state)
+                selected = None if outcome.state.is_parked(action.car) else action.car
+                next_visual_ms = now + args.delay
+                if not remaining_path:
+                    phase = ReplayPhase.DONE
+
+        if phase is ReplayPhase.DONE and not announced_solved:
             print("Level solved! Press Esc to exit.")
             announced_solved = True
 
@@ -155,6 +216,9 @@ def main() -> int:
             selected,
             history.depth,
             sprites,
+            explored_cells={car: frozenset(cells) for car, cells in explored_cells.items()},
+            solution_paths=solution_paths,
+            focus_cell=focus_cell,
         )
         pygame.display.flip()
         clock.tick(60)

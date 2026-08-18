@@ -22,7 +22,9 @@ from gridworld.search.node import SearchNode
 from gridworld.search.problem import Problem
 
 
-def bfs(problem: Problem) -> SearchResult:
+def bfs(
+    problem: Problem, on_expand: Callable[[GameState], None] | None = None
+) -> SearchResult:
     """Breadth-first search: uninformed graph search expanding by increasing depth. SRCH-01."""
     start = time.perf_counter()
     root = SearchNode.root(problem.initial)
@@ -48,6 +50,8 @@ def bfs(problem: Problem) -> SearchResult:
         frontier_states.remove(node.state)
         explored.add(node.state)
         expanded += 1
+        if on_expand is not None:
+            on_expand(node.state)
 
         for action in problem.actions(node.state):
             child_state = problem.result(node.state, action)
@@ -87,7 +91,9 @@ def bfs(problem: Problem) -> SearchResult:
     )
 
 
-def dfs(problem: Problem) -> SearchResult:
+def dfs(
+    problem: Problem, on_expand: Callable[[GameState], None] | None = None
+) -> SearchResult:
     """Depth-first search: uninformed graph search expanding depth-first. SRCH-02."""
     start = time.perf_counter()
     root = SearchNode.root(problem.initial)
@@ -115,6 +121,8 @@ def dfs(problem: Problem) -> SearchResult:
 
         explored.add(node.state)
         expanded += 1
+        if on_expand is not None:
+            on_expand(node.state)
 
         for action in problem.actions(node.state):
             child_state = problem.result(node.state, action)
@@ -139,7 +147,11 @@ def dfs(problem: Problem) -> SearchResult:
     )
 
 
-def greedy(problem: Problem, heuristic: Heuristic) -> SearchResult:
+def greedy(
+    problem: Problem,
+    heuristic: Heuristic,
+    on_expand: Callable[[GameState], None] | None = None,
+) -> SearchResult:
     """Greedy best-first search: informed, orders the frontier by heuristic value alone. SRCH-03."""
     start = time.perf_counter()
     root = SearchNode.root(problem.initial)
@@ -169,6 +181,8 @@ def greedy(problem: Problem, heuristic: Heuristic) -> SearchResult:
 
         explored.add(node.state)
         expanded += 1
+        if on_expand is not None:
+            on_expand(node.state)
 
         for action in problem.actions(node.state):
             child_state = problem.result(node.state, action)
@@ -194,15 +208,25 @@ def greedy(problem: Problem, heuristic: Heuristic) -> SearchResult:
     )
 
 
-def astar(problem: Problem, heuristic: Heuristic) -> SearchResult:
+def astar(
+    problem: Problem,
+    heuristic: Heuristic,
+    on_expand: Callable[[GameState], None] | None = None,
+) -> SearchResult:
     """A* search: informed, orders the frontier by path cost plus heuristic value. SRCH-04."""
     stepper = AStarStepper(problem, heuristic)
     while stepper.result is None:
-        stepper.advance(1_000)
+        for expansion in stepper.advance(1_000):
+            if on_expand is not None:
+                on_expand(expansion.state)
     return stepper.result
 
 
-def iddfs(problem: Problem, max_depth: int = 1000) -> SearchResult:
+def iddfs(
+    problem: Problem,
+    max_depth: int = 1000,
+    on_expand: Callable[[GameState], None] | None = None,
+) -> SearchResult:
     """Iterative deepening DFS: uninformed, expands depth-first with increasing limits. SRCH-05."""
     start = time.perf_counter()
     total_expanded = 0
@@ -232,6 +256,8 @@ def iddfs(problem: Problem, max_depth: int = 1000) -> SearchResult:
                 continue
 
             total_expanded += 1
+            if on_expand is not None:
+                on_expand(node.state)
 
             for action in problem.actions(node.state):
                 child_state = problem.result(node.state, action)

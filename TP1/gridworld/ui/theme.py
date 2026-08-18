@@ -58,9 +58,7 @@ COLOR_TEXT = _rgb("1A1A1A")
 COLOR_TEXT_MUTED = _rgb("5C5C5C")
 COLOR_DESTRUCTIVE = _rgb("D55E00")
 COLOR_SCRIM = _rgb("1A1A1A")
-COLOR_SEARCH_EXPLORED = _rgb("56B4E9")
 COLOR_SEARCH_FOCUS = _rgb("009E73")
-COLOR_SEARCH_PATH = _rgb("F0E442")
 
 SCRIM_ALPHA = round(255 * 0.60)
 PARKED_FILL_ALPHA = round(255 * 0.25)
@@ -79,6 +77,8 @@ SEARCH_BATCH_SIZE = 120
 SEARCH_REVEAL_DELAYS_MS: tuple[int, ...] = (180, 105, 55)
 SEARCH_PATH_DELAYS_MS: tuple[int, ...] = (600, 360, 190)
 SEARCH_PATH_PAUSE_MS = 700
+SEARCH_TRAIL_REVEAL_MS = 650
+"""Pause after the full route is traced, before cars start moving along it."""
 
 HUD_WARNING_BLOCK_HEIGHT = 64
 """Vertical space reserved for the Phase 3 unwinnable warning block, so

@@ -26,9 +26,7 @@ from gridworld.ui.theme import (
     COLOR_HUD_BG,
     COLOR_OBSTACLE,
     COLOR_SCRIM,
-    COLOR_SEARCH_EXPLORED,
     COLOR_SEARCH_FOCUS,
-    COLOR_SEARCH_PATH,
     COLOR_TEXT,
     COLOR_TEXT_MUTED,
     FLASH_ALPHA,
@@ -164,9 +162,9 @@ def draw_board(
     state: GameState,
     selected: int | None,
     sprites: SpriteSet,
-    explored_cells: frozenset[tuple[int, int]] = frozenset(),
+    explored_cells: Mapping[int, frozenset[tuple[int, int]]] | None = None,
     solution_paths: Mapping[int, tuple[tuple[int, int], ...]] | None = None,
-    focus_cell: tuple[int, int] | None = None,
+    focus_cell: tuple[int, tuple[int, int]] | None = None,
 ) -> None:
     """Render every cell of ``board`` exactly once, in State Treatment order.
 
@@ -198,7 +196,7 @@ def draw_board(
     draw_search_trace(
         surface,
         board,
-        explored_cells,
+        explored_cells or {},
         solution_paths or {},
         focus_cell,
         cell,
@@ -233,50 +231,59 @@ def draw_board(
 def draw_search_trace(
     surface: pygame.Surface,
     board: Board,
-    explored_cells: frozenset[tuple[int, int]],
+    explored_cells: Mapping[int, frozenset[tuple[int, int]]],
     solution_paths: Mapping[int, tuple[tuple[int, int], ...]],
-    focus_cell: tuple[int, int] | None,
+    focus_cell: tuple[int, tuple[int, int]] | None,
     cell: int,
     origin: tuple[int, int],
 ) -> None:
-    """Draw accumulated exploration dots and the final path beneath entities."""
+    """Draw accumulated exploration dots and the final path beneath entities.
+
+    Both are keyed by car number and drawn in that car's own hue, so each
+    car's exploration and route stay visually distinct instead of blending
+    into a single undifferentiated trace.
+    """
     origin_x, origin_y = origin
     trace = pygame.Surface((BOARD_SIZE, BOARD_SIZE), pygame.SRCALPHA)
     dot_radius = max(3, cell // 9)
 
-    for row, col in explored_cells:
-        center = (origin_x + col * cell + cell // 2, origin_y + row * cell + cell // 2)
-        pygame.draw.circle(
-            trace,
-            (*COLOR_SEARCH_EXPLORED, SEARCH_EXPLORED_ALPHA),
-            center,
-            dot_radius,
-        )
+    for car, positions in explored_cells.items():
+        hue = car_hue(car)
+        for row, col in positions:
+            center = (origin_x + col * cell + cell // 2, origin_y + row * cell + cell // 2)
+            pygame.draw.circle(
+                trace,
+                (*hue, SEARCH_EXPLORED_ALPHA),
+                center,
+                dot_radius,
+            )
 
     path_width = max(3, cell // 7)
-    for positions in solution_paths.values():
+    for car, positions in solution_paths.items():
         if not positions:
             continue
+        hue = car_hue(car)
         centers: list[tuple[int, int]] = []
         for row, col in positions:
             rect = pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
-            pygame.draw.rect(trace, (*COLOR_SEARCH_PATH, SEARCH_PATH_ALPHA), rect)
+            pygame.draw.rect(trace, (*hue, SEARCH_PATH_ALPHA), rect)
             centers.append(rect.center)
         if len(centers) > 1:
             pygame.draw.lines(
                 trace,
-                (*COLOR_SEARCH_PATH, 235),
+                (*hue, 235),
                 False,
                 centers,
                 width=path_width,
             )
 
     if focus_cell is not None:
-        row, col = focus_cell
+        car, (row, col) = focus_cell
+        hue = car_hue(car)
         center = (origin_x + col * cell + cell // 2, origin_y + row * cell + cell // 2)
         pygame.draw.circle(
             trace,
-            (*COLOR_SEARCH_FOCUS, 245),
+            (*hue, 245),
             center,
             dot_radius + max(2, cell // 18),
             width=max(2, cell // 20),
@@ -454,9 +461,9 @@ def draw_frame(
     flash_rect: pygame.Rect | None = None,
     unwinnable: bool = False,
     stranded: tuple[int, ...] = (),
-    explored_cells: frozenset[tuple[int, int]] = frozenset(),
+    explored_cells: Mapping[int, frozenset[tuple[int, int]]] | None = None,
     solution_paths: Mapping[int, tuple[tuple[int, int], ...]] | None = None,
-    focus_cell: tuple[int, int] | None = None,
+    focus_cell: tuple[int, tuple[int, int]] | None = None,
     search: SearchHud | None = None,
     show_win_overlay: bool = True,
 ) -> None:

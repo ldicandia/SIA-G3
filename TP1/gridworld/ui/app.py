@@ -16,7 +16,7 @@ import pygame
 
 from gridworld.engine.board import Board, Position
 from gridworld.engine.rules import LegalMove, apply_move, is_solved, is_unwinnable, stranded_cars
-from gridworld.engine.state import Direction
+from gridworld.engine.state import Direction, GameState
 from gridworld.history import MoveHistory
 from gridworld.levelfile import Level, LevelEntry, LevelError, discover_levels, load_level
 from gridworld.search.algorithms import AStarStepper
@@ -31,6 +31,7 @@ from gridworld.ui.theme import (
     SEARCH_PATH_DELAYS_MS,
     SEARCH_PATH_PAUSE_MS,
     SEARCH_REVEAL_DELAYS_MS,
+    SEARCH_TRAIL_REVEAL_MS,
     WINDOW_SIZE,
     WINDOW_TITLE,
     cell_size,
@@ -52,6 +53,7 @@ class SearchPhase(Enum):
     EXPLORING = "exploring"
     DRAINING = "draining"
     PATH_PAUSE = "path_pause"
+    TRAIL_REVEAL = "trail_reveal"
     REPLAYING = "replaying"
     COMPLETE = "complete"
     FAILED = "failed"
@@ -88,10 +90,10 @@ class SearchAnimation:
     phase: SearchPhase = SearchPhase.EXPLORING
     paused: bool = False
     speed_index: int = 0
-    pending_cells: deque[Position] = field(default_factory=deque)
-    known_cells: set[Position] = field(default_factory=set)
-    explored_cells: set[Position] = field(default_factory=set)
-    focus_cell: Position | None = None
+    pending_cells: deque[tuple[int, Position]] = field(default_factory=deque)
+    known_cells: dict[int, set[Position]] = field(default_factory=dict)
+    explored_cells: dict[int, set[Position]] = field(default_factory=dict)
+    focus_cell: tuple[int, Position] | None = None
     remaining_path: deque[LegalMove] = field(default_factory=deque)
     solution_paths: dict[int, list[Position]] = field(default_factory=dict)
     next_visual_ms: int = 0
@@ -155,6 +157,27 @@ def _change_search_speed(search: SearchAnimation, delta: int) -> None:
     search.next_visual_ms = pygame.time.get_ticks()
 
 
+def build_solution_paths(
+    board: Board, base_state: GameState, path: tuple[LegalMove, ...]
+) -> dict[int, list[Position]]:
+    """Replay ``path`` from ``base_state`` and return each car's full route.
+
+    Used to trace the whole route at once -- before any car actually
+    moves -- rather than growing it one step behind the animation.
+    """
+    solution_paths: dict[int, list[Position]] = {}
+    state = base_state
+    for action in path:
+        source = state.position_of(action.car)
+        outcome = apply_move(board, state, action.car, action.direction)
+        car_path = solution_paths.setdefault(action.car, [source])
+        if car_path[-1] != source:
+            car_path.append(source)
+        car_path.append(outcome.state.position_of(action.car))
+        state = outcome.state
+    return solution_paths
+
+
 def _advance_search(session: Session, now_ms: int) -> None:
     """Advance computation and playback without blocking the event loop."""
     search = session.search
@@ -163,10 +186,11 @@ def _advance_search(session: Session, now_ms: int) -> None:
 
     if search.phase is SearchPhase.EXPLORING:
         for expansion in search.stepper.advance(SEARCH_BATCH_SIZE):
-            for position in expansion.state.cars:
-                if position not in search.known_cells:
-                    search.known_cells.add(position)
-                    search.pending_cells.append(position)
+            for car, position in enumerate(expansion.state.cars, start=1):
+                car_known = search.known_cells.setdefault(car, set())
+                if position not in car_known:
+                    car_known.add(position)
+                    search.pending_cells.append((car, position))
 
         result = search.stepper.result
         if result is not None:
@@ -178,9 +202,9 @@ def _advance_search(session: Session, now_ms: int) -> None:
 
     if search.phase in (SearchPhase.EXPLORING, SearchPhase.DRAINING):
         if search.pending_cells and now_ms >= search.next_visual_ms:
-            position = search.pending_cells.popleft()
-            search.explored_cells.add(position)
-            search.focus_cell = position
+            car, position = search.pending_cells.popleft()
+            search.explored_cells.setdefault(car, set()).add(position)
+            search.focus_cell = (car, position)
             search.next_visual_ms = now_ms + SEARCH_REVEAL_DELAYS_MS[search.speed_index]
 
         if search.phase is SearchPhase.DRAINING and not search.pending_cells:
@@ -190,6 +214,13 @@ def _advance_search(session: Session, now_ms: int) -> None:
             search.next_visual_ms = now_ms + SEARCH_PATH_PAUSE_MS
 
     if search.phase is SearchPhase.PATH_PAUSE and now_ms >= search.next_visual_ms:
+        search.solution_paths = build_solution_paths(
+            session.board, search.base_history.current, tuple(search.remaining_path)
+        )
+        search.phase = SearchPhase.TRAIL_REVEAL
+        search.next_visual_ms = now_ms + SEARCH_TRAIL_REVEAL_MS
+
+    if search.phase is SearchPhase.TRAIL_REVEAL and now_ms >= search.next_visual_ms:
         search.phase = SearchPhase.REPLAYING
         search.next_visual_ms = now_ms
 
@@ -201,7 +232,6 @@ def _advance_search(session: Session, now_ms: int) -> None:
             return
 
         action = search.remaining_path.popleft()
-        source = session.history.current.position_of(action.car)
         outcome = apply_move(
             session.board,
             session.history.current,
@@ -213,10 +243,6 @@ def _advance_search(session: Session, now_ms: int) -> None:
             session.selected = None
             return
 
-        path = search.solution_paths.setdefault(action.car, [source])
-        if path[-1] != source:
-            path.append(source)
-        path.append(outcome.state.position_of(action.car))
         session.history = session.history.push(outcome.state)
         session.selected = None if outcome.state.is_parked(action.car) else action.car
         search.next_visual_ms = now_ms + SEARCH_PATH_DELAYS_MS[search.speed_index]
@@ -235,6 +261,7 @@ def _search_hud(search: SearchAnimation) -> SearchHud:
             SearchPhase.EXPLORING: "Exploring",
             SearchPhase.DRAINING: "Revealing explored cells",
             SearchPhase.PATH_PAUSE: "Optimal path found",
+            SearchPhase.TRAIL_REVEAL: "Tracing optimal route",
             SearchPhase.REPLAYING: "Replaying optimal path",
             SearchPhase.COMPLETE: "Optimal solution complete",
             SearchPhase.FAILED: "No solution found",
@@ -444,7 +471,9 @@ def run(level_path: str | Path | None = None) -> None:
                 unwinnable=session.unwinnable,
                 stranded=session.stranded,
                 explored_cells=(
-                    frozenset(search.explored_cells) if search is not None else frozenset()
+                    {car: frozenset(cells) for car, cells in search.explored_cells.items()}
+                    if search is not None
+                    else None
                 ),
                 solution_paths=(
                     {car: tuple(path) for car, path in search.solution_paths.items()}
