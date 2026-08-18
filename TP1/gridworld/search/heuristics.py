@@ -43,6 +43,24 @@ def max_manhattan_distance(problem: Problem, state: GameState) -> float:
             max_d = float(d)
     return max_d
 
+def euclidean_distance_sum(problem: Problem, state: GameState) -> float:
+    """Admissible heuristic: Sum of Euclidean distances from each unparked car to its flag.
+
+    The straight-line (L2) distance is always ≤ the Manhattan distance, so this
+    heuristic is admissible and never over-estimates the true remaining cost.
+    """
+    import math
+
+    total = 0.0
+    for car in problem.board.car_numbers():
+        if state.is_parked(car):
+            continue
+        car_pos = state.position_of(car)
+        flag_pos = problem.board.flag_for(car)
+        dx = car_pos[0] - flag_pos[0]
+        dy = car_pos[1] - flag_pos[1]
+        total += math.sqrt(dx * dx + dy * dy)
+    return total
 
 heuristic_a = manhattan_distance_sum
 heuristic_b = max_manhattan_distance
@@ -52,4 +70,5 @@ HEURISTICS: dict[str, Heuristic] = {
     "heuristic_b": heuristic_b,
     "manhattan": manhattan_distance_sum,
     "max_manhattan": max_manhattan_distance,
+    "euclidean_distance": euclidean_distance_sum,
 }
