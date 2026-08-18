@@ -6,7 +6,8 @@ layer never constructs or hand-edits a ``GameState`` directly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 import sys
@@ -14,13 +15,27 @@ import sys
 import pygame
 
 from gridworld.engine.board import Board, Position
-from gridworld.engine.rules import apply_move, is_solved, is_unwinnable, stranded_cars
+from gridworld.engine.rules import LegalMove, apply_move, is_solved, is_unwinnable, stranded_cars
 from gridworld.engine.state import Direction
 from gridworld.history import MoveHistory
 from gridworld.levelfile import Level, LevelEntry, LevelError, discover_levels, load_level
-from gridworld.ui.render import Fonts, build_fonts, draw_frame, draw_load_error, draw_picker
+from gridworld.search.algorithms import AStarStepper
+from gridworld.search.heuristics import heuristic_a
+from gridworld.search.problem import Problem
+from gridworld.ui.render import Fonts, SearchHud, build_fonts, draw_frame, draw_load_error, draw_picker
 from gridworld.ui.sprites import SpriteSet, build_sprites
-from gridworld.ui.theme import FLASH_MS, PICKER_MAX_CHOICES, WINDOW_SIZE, WINDOW_TITLE, cell_size, grid_origin
+from gridworld.ui.theme import (
+    FLASH_MS,
+    PICKER_MAX_CHOICES,
+    SEARCH_BATCH_SIZE,
+    SEARCH_PATH_DELAYS_MS,
+    SEARCH_PATH_PAUSE_MS,
+    SEARCH_REVEAL_DELAYS_MS,
+    WINDOW_SIZE,
+    WINDOW_TITLE,
+    cell_size,
+    grid_origin,
+)
 
 
 class Screen(Enum):
@@ -29,6 +44,17 @@ class Screen(Enum):
     CHOICE = "choice"
     GAME = "game"
     ERROR = "error"
+
+
+class SearchPhase(Enum):
+    """Visible phases of an optimal-search animation."""
+
+    EXPLORING = "exploring"
+    DRAINING = "draining"
+    PATH_PAUSE = "path_pause"
+    REPLAYING = "replaying"
+    COMPLETE = "complete"
+    FAILED = "failed"
 
 
 KEY_TO_CAR = {
@@ -49,6 +75,34 @@ KEY_TO_DIRECTION = {
     pygame.K_LEFT: Direction.LEFT,
     pygame.K_RIGHT: Direction.RIGHT,
 }
+
+SEARCH_SPEED_LABELS = ("0.5x", "1x", "2x")
+
+
+@dataclass
+class SearchAnimation:
+    """Non-blocking A* computation plus its two-phase visual playback."""
+
+    stepper: AStarStepper
+    base_history: MoveHistory
+    phase: SearchPhase = SearchPhase.EXPLORING
+    paused: bool = False
+    speed_index: int = 0
+    pending_cells: deque[Position] = field(default_factory=deque)
+    known_cells: set[Position] = field(default_factory=set)
+    explored_cells: set[Position] = field(default_factory=set)
+    focus_cell: Position | None = None
+    remaining_path: deque[LegalMove] = field(default_factory=deque)
+    solution_paths: dict[int, list[Position]] = field(default_factory=dict)
+    next_visual_ms: int = 0
+
+    @property
+    def expanded_nodes(self) -> int:
+        return self.stepper.expanded_nodes
+
+    @property
+    def frontier_nodes(self) -> int:
+        return self.stepper.frontier_nodes
 
 
 @dataclass
@@ -78,6 +132,119 @@ class Session:
     flash_until_ms: int = 0
     unwinnable: bool = False
     stranded: tuple[int, ...] = ()
+    search: SearchAnimation | None = None
+
+
+def _begin_search(session: Session) -> None:
+    """Start an optimal A* search from the player's current state."""
+    if session.board is None or session.history is None:
+        return
+    problem = Problem(session.board, session.history.current)
+    session.search = SearchAnimation(
+        stepper=AStarStepper(problem, heuristic_a),
+        base_history=session.history,
+        next_visual_ms=pygame.time.get_ticks(),
+    )
+    session.selected = None
+    session.flash_cell = None
+    session.flash_until_ms = 0
+
+
+def _change_search_speed(search: SearchAnimation, delta: int) -> None:
+    search.speed_index = max(0, min(len(SEARCH_SPEED_LABELS) - 1, search.speed_index + delta))
+    search.next_visual_ms = pygame.time.get_ticks()
+
+
+def _advance_search(session: Session, now_ms: int) -> None:
+    """Advance computation and playback without blocking the event loop."""
+    search = session.search
+    if search is None or session.board is None or session.history is None or search.paused:
+        return
+
+    if search.phase is SearchPhase.EXPLORING:
+        for expansion in search.stepper.advance(SEARCH_BATCH_SIZE):
+            for position in expansion.state.cars:
+                if position not in search.known_cells:
+                    search.known_cells.add(position)
+                    search.pending_cells.append(position)
+
+        result = search.stepper.result
+        if result is not None:
+            if result.success:
+                search.remaining_path = deque(result.path)
+                search.phase = SearchPhase.DRAINING
+            else:
+                search.phase = SearchPhase.FAILED
+
+    if search.phase in (SearchPhase.EXPLORING, SearchPhase.DRAINING):
+        if search.pending_cells and now_ms >= search.next_visual_ms:
+            position = search.pending_cells.popleft()
+            search.explored_cells.add(position)
+            search.focus_cell = position
+            search.next_visual_ms = now_ms + SEARCH_REVEAL_DELAYS_MS[search.speed_index]
+
+        if search.phase is SearchPhase.DRAINING and not search.pending_cells:
+            session.history = search.base_history
+            search.focus_cell = None
+            search.phase = SearchPhase.PATH_PAUSE
+            search.next_visual_ms = now_ms + SEARCH_PATH_PAUSE_MS
+
+    if search.phase is SearchPhase.PATH_PAUSE and now_ms >= search.next_visual_ms:
+        search.phase = SearchPhase.REPLAYING
+        search.next_visual_ms = now_ms
+
+    if search.phase is SearchPhase.REPLAYING and now_ms >= search.next_visual_ms:
+        if not search.remaining_path:
+            search.phase = SearchPhase.COMPLETE
+            session.selected = None
+            _refresh_unwinnable(session)
+            return
+
+        action = search.remaining_path.popleft()
+        source = session.history.current.position_of(action.car)
+        outcome = apply_move(
+            session.board,
+            session.history.current,
+            action.car,
+            action.direction,
+        )
+        if not outcome.accepted:
+            search.phase = SearchPhase.FAILED
+            session.selected = None
+            return
+
+        path = search.solution_paths.setdefault(action.car, [source])
+        if path[-1] != source:
+            path.append(source)
+        path.append(outcome.state.position_of(action.car))
+        session.history = session.history.push(outcome.state)
+        session.selected = None if outcome.state.is_parked(action.car) else action.car
+        search.next_visual_ms = now_ms + SEARCH_PATH_DELAYS_MS[search.speed_index]
+
+        if not search.remaining_path:
+            search.phase = SearchPhase.COMPLETE
+            session.selected = None
+            _refresh_unwinnable(session)
+
+
+def _search_hud(search: SearchAnimation) -> SearchHud:
+    if search.paused:
+        status = "Paused"
+    else:
+        status = {
+            SearchPhase.EXPLORING: "Exploring",
+            SearchPhase.DRAINING: "Revealing explored cells",
+            SearchPhase.PATH_PAUSE: "Optimal path found",
+            SearchPhase.REPLAYING: "Replaying optimal path",
+            SearchPhase.COMPLETE: "Optimal solution complete",
+            SearchPhase.FAILED: "No solution found",
+        }[search.phase]
+    return SearchHud(
+        status=status,
+        expanded_nodes=search.expanded_nodes,
+        frontier_nodes=search.frontier_nodes,
+        speed=SEARCH_SPEED_LABELS[search.speed_index],
+    )
 
 
 def _refresh_unwinnable(session: Session) -> None:
@@ -110,7 +277,23 @@ def _handle_keydown(session: Session, key: int) -> None:
         session.selected = None
         session.flash_cell = None
         session.flash_until_ms = 0
+        session.search = None
         _refresh_unwinnable(session)
+        return
+
+    if key == pygame.K_s:
+        if not is_solved(session.board, session.history.current):
+            _begin_search(session)
+        return
+
+    if session.search is not None:
+        if key == pygame.K_SPACE:
+            session.search.paused = not session.search.paused
+            session.search.next_visual_ms = pygame.time.get_ticks()
+        elif key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+            _change_search_speed(session.search, -1)
+        elif key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+            _change_search_speed(session.search, 1)
         return
 
     if is_solved(session.board, session.history.current):
@@ -176,6 +359,7 @@ def _start_level(session: Session, level: Level) -> None:
     session.flash_cell = None
     session.flash_until_ms = 0
     session.screen = Screen.GAME
+    session.search = None
     _refresh_unwinnable(session)
 
 
@@ -242,10 +426,12 @@ def run(level_path: str | Path | None = None) -> None:
         elif session.screen == Screen.ERROR:
             draw_load_error(screen, fonts, session.error_file, session.error_detail)
         elif session.screen == Screen.GAME and session.board is not None and session.history is not None:
+            _advance_search(session, pygame.time.get_ticks())
             current_cell = cell_size(session.board.cols, session.board.rows)
             if sprites is None or sprites.cell != current_cell or len(sprites.cars) != len(session.board.car_numbers()):
                 sprites = build_sprites(session.board, current_cell)
 
+            search = session.search
             draw_frame(
                 screen,
                 fonts,
@@ -257,6 +443,17 @@ def run(level_path: str | Path | None = None) -> None:
                 flash_rect=_expire_and_get_flash_rect(session, current_cell),
                 unwinnable=session.unwinnable,
                 stranded=session.stranded,
+                explored_cells=(
+                    frozenset(search.explored_cells) if search is not None else frozenset()
+                ),
+                solution_paths=(
+                    {car: tuple(path) for car, path in search.solution_paths.items()}
+                    if search is not None
+                    else None
+                ),
+                focus_cell=search.focus_cell if search is not None else None,
+                search=_search_hud(search) if search is not None else None,
+                show_win_overlay=search is None,
             )
 
         pygame.display.flip()

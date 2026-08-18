@@ -315,7 +315,7 @@ print("stranded car and terminal gridlock both detected; no false alarm on any s
 
 
 CHECK_SEARCH = """
-from gridworld.engine.rules import legal_moves
+from gridworld.engine.rules import apply_move, is_solved, legal_moves
 from gridworld.levels import built_in_level
 from gridworld.search.algorithms import ALGORITHMS
 from gridworld.search.heuristics import HEURISTICS
@@ -332,9 +332,17 @@ assert problem.is_goal(state) is False
 root = SearchNode.root(state)
 assert root.parent is None and root.action is None and root.path() == ()
 
-for name, algorithm in ALGORITHMS.items():
+astar_result = ALGORITHMS["astar"](problem, HEURISTICS["heuristic_a"])
+assert astar_result.success and astar_result.cost == 30, astar_result
+solved = state
+for action in astar_result.path:
+    solved = apply_move(board, solved, action.car, action.direction).state
+assert is_solved(board, solved)
+
+for name in ("bfs", "dfs", "greedy", "iddfs"):
+    algorithm = ALGORITHMS[name]
     try:
-        if name in ("greedy", "astar"):
+        if name == "greedy":
             algorithm(problem, HEURISTICS["heuristic_a"])
         else:
             algorithm(problem)
@@ -343,7 +351,9 @@ for name, algorithm in ALGORITHMS.items():
     else:
         raise AssertionError(f"{name} unexpectedly returned instead of raising NotImplementedError")
 
-for name, heuristic in HEURISTICS.items():
+assert HEURISTICS["heuristic_a"](problem, state) > 0
+for name in ("heuristic_b",):
+    heuristic = HEURISTICS[name]
     try:
         heuristic(problem, state)
     except NotImplementedError:
@@ -352,7 +362,7 @@ for name, heuristic in HEURISTICS.items():
         raise AssertionError(f"{name} unexpectedly returned instead of raising NotImplementedError")
 
 assert "pygame" not in sys.modules, "the search scaffolding pulled in the renderer"
-print("search scaffolding imports and wires headlessly; every algorithm and heuristic stub raises NotImplementedError")
+print("A* solves optimally headlessly; remaining algorithm and heuristic stubs stay explicit")
 """
 
 
@@ -393,12 +403,10 @@ def main() -> int:
     print("\nENG-08 holds: the engine, level layer, legal-move enumeration, undo history,")
     print("and unwinnable detection import, run full solutions, undo back to the initial")
     print("state, detect stranded cars and terminal gridlock, and use states as")
-    print("dictionary keys in an environment with no renderer. The search scaffolding")
-    print("(gridworld.search) also imports and wires headlessly, with every algorithm")
-    print("and heuristic still an unimplemented stub.")
+    print("dictionary keys in an environment with no renderer. The search package also")
+    print("runs A* to an optimal solution headlessly; the remaining stubs stay explicit.")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

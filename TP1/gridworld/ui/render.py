@@ -7,6 +7,7 @@ Every colour, spacing value, font size and on-screen string is read from
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 import pygame
 
@@ -25,6 +26,9 @@ from gridworld.ui.theme import (
     COLOR_HUD_BG,
     COLOR_OBSTACLE,
     COLOR_SCRIM,
+    COLOR_SEARCH_EXPLORED,
+    COLOR_SEARCH_FOCUS,
+    COLOR_SEARCH_PATH,
     COLOR_TEXT,
     COLOR_TEXT_MUTED,
     FLASH_ALPHA,
@@ -38,12 +42,15 @@ from gridworld.ui.theme import (
     LABEL_CAR,
     LABEL_CONTROLS,
     LABEL_MOVES,
+    LABEL_SEARCH,
     LEGAL_DESTINATION_ALPHA,
     LOAD_ERROR_HEADING,
     LOAD_ERROR_HINT,
     LOAD_ERROR_MAX_LINES,
     NO_CAR_SELECTED,
     PARKED_FILL_ALPHA,
+    SEARCH_EXPLORED_ALPHA,
+    SEARCH_PATH_ALPHA,
     PICKER_EMPTY,
     PICKER_HEADING,
     PICKER_HINT,
@@ -79,6 +86,16 @@ class Fonts:
     label: pygame.font.Font
     heading: pygame.font.Font
     display: pygame.font.Font
+
+
+@dataclass(frozen=True, slots=True)
+class SearchHud:
+    """Compact, renderer-only snapshot of the active optimal search."""
+
+    status: str
+    expanded_nodes: int
+    frontier_nodes: int
+    speed: str
 
 
 def build_fonts() -> Fonts:
@@ -147,6 +164,9 @@ def draw_board(
     state: GameState,
     selected: int | None,
     sprites: SpriteSet,
+    explored_cells: frozenset[tuple[int, int]] = frozenset(),
+    solution_paths: Mapping[int, tuple[tuple[int, int], ...]] | None = None,
+    focus_cell: tuple[int, int] | None = None,
 ) -> None:
     """Render every cell of ``board`` exactly once, in State Treatment order.
 
@@ -175,6 +195,15 @@ def draw_board(
                 pygame.draw.rect(surface, COLOR_GRID_LINE, rect, width=GRID_LINE_WIDTH)
 
     draw_legal_destinations(surface, board, state, selected, cell=cell, origin=(origin_x, origin_y))
+    draw_search_trace(
+        surface,
+        board,
+        explored_cells,
+        solution_paths or {},
+        focus_cell,
+        cell,
+        (origin_x, origin_y),
+    )
 
     for car in board.car_numbers():
         if car in state.parked:
@@ -199,6 +228,61 @@ def draw_board(
                 pygame.draw.rect(surface, COLOR_TEXT, rect, width=SELECTION_OUTLINE_WIDTH)
 
     surface.set_clip(previous_clip)
+
+
+def draw_search_trace(
+    surface: pygame.Surface,
+    board: Board,
+    explored_cells: frozenset[tuple[int, int]],
+    solution_paths: Mapping[int, tuple[tuple[int, int], ...]],
+    focus_cell: tuple[int, int] | None,
+    cell: int,
+    origin: tuple[int, int],
+) -> None:
+    """Draw accumulated exploration dots and the final path beneath entities."""
+    origin_x, origin_y = origin
+    trace = pygame.Surface((BOARD_SIZE, BOARD_SIZE), pygame.SRCALPHA)
+    dot_radius = max(3, cell // 9)
+
+    for row, col in explored_cells:
+        center = (origin_x + col * cell + cell // 2, origin_y + row * cell + cell // 2)
+        pygame.draw.circle(
+            trace,
+            (*COLOR_SEARCH_EXPLORED, SEARCH_EXPLORED_ALPHA),
+            center,
+            dot_radius,
+        )
+
+    path_width = max(3, cell // 7)
+    for positions in solution_paths.values():
+        if not positions:
+            continue
+        centers: list[tuple[int, int]] = []
+        for row, col in positions:
+            rect = pygame.Rect(origin_x + col * cell, origin_y + row * cell, cell, cell)
+            pygame.draw.rect(trace, (*COLOR_SEARCH_PATH, SEARCH_PATH_ALPHA), rect)
+            centers.append(rect.center)
+        if len(centers) > 1:
+            pygame.draw.lines(
+                trace,
+                (*COLOR_SEARCH_PATH, 235),
+                False,
+                centers,
+                width=path_width,
+            )
+
+    if focus_cell is not None:
+        row, col = focus_cell
+        center = (origin_x + col * cell + cell // 2, origin_y + row * cell + cell // 2)
+        pygame.draw.circle(
+            trace,
+            (*COLOR_SEARCH_FOCUS, 245),
+            center,
+            dot_radius + max(2, cell // 18),
+            width=max(2, cell // 20),
+        )
+
+    surface.blit(trace, (0, 0))
 
 
 def draw_unwinnable_warning(
@@ -252,6 +336,7 @@ def draw_hud(
     selected: int | None,
     unwinnable: bool = False,
     stranded: tuple[int, ...] = (),
+    search: SearchHud | None = None,
 ) -> None:
     """Fill the HUD panel and stack every block, every frame, in fixed order."""
     panel_rect = pygame.Rect(BOARD_SIZE, 0, HUD_WIDTH, WINDOW_SIZE[1])
@@ -288,8 +373,37 @@ def draw_hud(
     # Reserved for the unwinnable warning: blank unless `unwinnable` is set,
     # so adding it never reflows anything drawn above it.
     warning_rect = pygame.Rect(x, y, HUD_WIDTH - 2 * SPACING_LG, HUD_WARNING_BLOCK_HEIGHT)
-    if unwinnable:
+    if search is not None:
+        draw_search_hud(surface, fonts, warning_rect.topleft, search)
+    elif unwinnable:
         draw_unwinnable_warning(surface, fonts, warning_rect.topleft, stranded, moves)
+
+
+def draw_search_hud(
+    surface: pygame.Surface,
+    fonts: Fonts,
+    origin: tuple[int, int],
+    search: SearchHud,
+) -> None:
+    """Render search phase and metrics inside the reserved HUD block."""
+    x, y = origin
+    _blit_text(surface, fonts.label, LABEL_SEARCH, (x, y), COLOR_SEARCH_FOCUS)
+    y += fonts.label.get_height() + SPACING_XS
+    _blit_text(
+        surface,
+        fonts.body,
+        f"{search.status} · {search.speed}",
+        (x, y),
+        COLOR_TEXT,
+    )
+    y += fonts.body.get_height() + SPACING_XS
+    _blit_text(
+        surface,
+        fonts.body,
+        f"Expanded {search.expanded_nodes} · Frontier {search.frontier_nodes}",
+        (x, y),
+        COLOR_TEXT_MUTED,
+    )
 
 
 def draw_illegal_flash(surface: pygame.Surface, cell_rect: pygame.Rect) -> None:
@@ -340,13 +454,27 @@ def draw_frame(
     flash_rect: pygame.Rect | None = None,
     unwinnable: bool = False,
     stranded: tuple[int, ...] = (),
+    explored_cells: frozenset[tuple[int, int]] = frozenset(),
+    solution_paths: Mapping[int, tuple[tuple[int, int], ...]] | None = None,
+    focus_cell: tuple[int, int] | None = None,
+    search: SearchHud | None = None,
+    show_win_overlay: bool = True,
 ) -> None:
     """Compose a full frame: board, flash if active, HUD, win overlay if solved."""
-    draw_board(surface, board, state, selected, sprites)
+    draw_board(
+        surface,
+        board,
+        state,
+        selected,
+        sprites,
+        explored_cells,
+        solution_paths,
+        focus_cell,
+    )
     if flash_rect is not None:
         draw_illegal_flash(surface, flash_rect)
-    draw_hud(surface, fonts, moves, selected, unwinnable, stranded)
-    if is_solved(board, state):
+    draw_hud(surface, fonts, moves, selected, unwinnable, stranded, search)
+    if show_win_overlay and is_solved(board, state):
         draw_win_overlay(surface, fonts, moves)
 
 

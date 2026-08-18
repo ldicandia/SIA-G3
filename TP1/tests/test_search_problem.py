@@ -1,10 +1,8 @@
 """Wiring checks for the search scaffolding (v2 milestone prep).
 
 These tests verify the ``Problem`` adapter and ``SearchNode`` bookkeeping
-agree with the engine they wrap, and that the algorithm/heuristic
-registries are correctly wired. They deliberately test no search
-algorithm's behavior -- every ``ALGORITHMS``/``HEURISTICS`` entry is
-still a ``NotImplementedError`` stub.
+agree with the engine they wrap, and that the registries are wired. A* is
+covered separately; these checks retain contracts for the remaining stubs.
 """
 
 from __future__ import annotations
@@ -94,7 +92,7 @@ def test_node_path_reconstructs_action_sequence(built_in):
     assert grandchild.path() == (first_action, second_action)
 
 
-@pytest.mark.parametrize("name", ["bfs", "dfs", "greedy", "astar", "iddfs"])
+@pytest.mark.parametrize("name", ["bfs", "dfs", "greedy", "iddfs"])
 def test_algorithm_registry_entries_are_unimplemented_stubs(built_in, name):
     board, state = built_in
     problem = Problem(board=board, initial=state)
@@ -107,7 +105,7 @@ def test_algorithm_registry_entries_are_unimplemented_stubs(built_in, name):
             algorithm(problem)
 
 
-@pytest.mark.parametrize("name", ["heuristic_a", "heuristic_b"])
+@pytest.mark.parametrize("name", ["heuristic_b"])
 def test_heuristic_registry_entries_are_unimplemented_stubs(built_in, name):
     board, state = built_in
     problem = Problem(board=board, initial=state)

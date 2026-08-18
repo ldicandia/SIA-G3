@@ -1,4 +1,4 @@
-"""Heuristic function stubs for the informed search algorithms.
+"""Heuristic functions for the informed search algorithms.
 
 A heuristic estimates the remaining cost from a state to the goal. Per
 the enunciado, at least two must be admissible -- never overestimate the
@@ -18,8 +18,20 @@ Heuristic = Callable[[Problem, GameState], float]
 
 
 def heuristic_a(problem: Problem, state: GameState) -> float:
-    """First admissible heuristic. HEUR-01."""
-    raise NotImplementedError("HEUR-01")
+    """Sum each unparked car's Manhattan distance to its own flag.
+
+    Every accepted move changes exactly one car by one orthogonal cell, so
+    this ignores obstacles and traffic and can never overestimate the moves
+    still required.  It is therefore admissible for A*.
+    """
+    distance = 0
+    for car in problem.board.car_numbers():
+        if state.is_parked(car):
+            continue
+        row, col = state.position_of(car)
+        flag_row, flag_col = problem.board.flag_for(car)
+        distance += abs(row - flag_row) + abs(col - flag_col)
+    return float(distance)
 
 
 def heuristic_b(problem: Problem, state: GameState) -> float:

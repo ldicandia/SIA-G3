@@ -5,9 +5,9 @@ Ejercicio 2 (Lado A). An N×M grid holds black obstacles, numbered cars, and
 numbered flags; move one car at a time until every car is parked on its
 matching flag.
 
-This deliverable is the game base: a rules engine and a pygame window you can
-play by hand. The search engine (BFS, DFS, Greedy, A*, IDDFS) that the TP
-ultimately requires is a separate, later milestone.
+The game includes a rules engine, a pygame window for manual play, and an
+incremental A* solver that visualizes explored cells before replaying its
+optimal solution.
 
 ## Requirements
 
@@ -40,6 +40,17 @@ To skip the picker and load a specific level directly:
 ```sh
 python -m gridworld levels/01-warmup.json
 ```
+
+## Visualizing the optimal search
+
+While playing any level, press `S`. The board first reveals explored cells as
+blue dots while the HUD reports A*'s expanded and frontier node counts. Once
+the goal is found, the game pauses briefly and replays the optimal path slowly
+in yellow.
+
+The search begins at the current board position. Press `Space` to pause or
+resume and `-` / `+` to change the animation speed. The default is the
+deliberately slow `0.5x` speed.
 
 ## Visualizing Search (Demo Replay)
 
@@ -76,6 +87,9 @@ Examples:
 | Arrow keys | Move the selected car one cell |
 | `U` | Undo the last move |
 | `R` | Reset the level to its starting position |
+| `S` | Start optimal A* search from the current position |
+| `Space` | Pause or resume search animation |
+| `-` / `+` | Change animation speed |
 | `Esc` | Quit (in-game or on the level-choice screen); go back (on a load-error screen) |
 
 ## Rules
