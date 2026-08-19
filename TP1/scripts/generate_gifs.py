@@ -82,7 +82,7 @@ def record_run_to_gif(
                 expansion_order.append((car, position))
 
     label_heuristic = f" ({heuristic_name})" if heuristic_name and algo_name in ("greedy", "astar") else ""
-    print(f"Ejecutando {algo_name.upper()}{label_heuristic} en '{level.name}'...")
+    print(f"Ejecutando {algo_name.upper()}{label_heuristic} en '{level.name}'...", flush=True)
 
     if algo_name in ("greedy", "astar"):
         if not heuristic_name or heuristic_name not in HEURISTICS:
@@ -229,61 +229,91 @@ def record_run_to_gif(
         duration=duration_per_frame,
         loop=0,
     )
-    print(f"GIF guardado en: {output_gif_path} ({len(frames)} frames)")
+    print(f"GIF guardado en: {output_gif_path} ({len(frames)} frames)", flush=True)
     return True
 
 
-def generate_all_warmup_gifs(
-    level_path: Path | str = DEFAULT_LEVEL_PATH,
+def generate_all_gifs(
+    levels: list[Path | str] | None = None,
     out_dir: Path | str = "gifs",
     fps: int = 10,
+    heuristics: list[str] | None = None,
 ) -> None:
-    """Genera GIFs para la suite completa de algoritmos en el mapa de warmup."""
+    """Genera GIFs para todas las combinaciones de algoritmos y heurísticas en todos los mapas especificados."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    level_name = Path(level_path).stem
 
-    runs: list[tuple[str, str | None, str]] = [
-        ("bfs", None, f"{level_name}_bfs.gif"),
-        ("dfs", None, f"{level_name}_dfs.gif"),
-        ("greedy", "heuristic_a", f"{level_name}_greedy_heuristic_a.gif"),
-        ("greedy", "heuristic_b", f"{level_name}_greedy_heuristic_b.gif"),
-        ("astar", "heuristic_a", f"{level_name}_astar_heuristic_a.gif"),
-        ("astar", "heuristic_b", f"{level_name}_astar_heuristic_b.gif"),
-        ("iddfs", None, f"{level_name}_iddfs.gif"),
-    ]
+    if levels is None:
+        from gridworld.levelfile import DEFAULT_LEVELS_DIR
+        level_files = sorted(DEFAULT_LEVELS_DIR.glob("*.json"))
+    else:
+        level_files = [Path(l) for l in levels]
 
-    print("=" * 60)
-    print(f"Generando suite completa de GIFs para '{level_path}' en '{out_dir}/'...")
-    print("=" * 60)
+    if heuristics is None:
+        heuristics_list = ["heuristic_a", "heuristic_b", "euclidean_distance"]
+    else:
+        heuristics_list = heuristics
 
-    success_count = 0
-    for algo, heur, filename in runs:
-        out_path = out_dir / filename
-        ok = record_run_to_gif(
-            level_path=level_path,
-            algo_name=algo,
-            heuristic_name=heur,
-            output_gif_path=out_path,
-            fps=fps,
-        )
-        if ok:
-            success_count += 1
+    print("=" * 70)
+    print(f"Generando suite masiva de GIFs para {len(level_files)} niveles en '{out_dir}/'...")
+    print(f"Heurísticas incluidas: {', '.join(heuristics_list)}")
+    print("=" * 70)
 
-    print("=" * 60)
-    print(f"Finalizado: {success_count}/{len(runs)} GIFs generados correctamente.")
-    print("=" * 60)
+    total_attempted = 0
+    total_success = 0
+
+    for level_path in level_files:
+        level_stem = level_path.stem
+        print(f"\n>>> Procesando nivel: {level_stem} ({level_path.name})")
+
+        runs: list[tuple[str, str | None, str]] = []
+
+        # Algoritmos no informados
+        for algo in ("bfs", "dfs", "iddfs"):
+            # IDDFS re-explora exponencialmente en mapas de más de 6x6; BFS explora excesivamente en 03-gridlock y 04-marathon
+            if level_stem in ("02-classic", "03-gridlock", "04-marathon") and algo == "iddfs":
+                print(f"  [Info] Omitiendo IDDFS en {level_stem} por requerir re-exploración profunda.", flush=True)
+                continue
+            if level_stem in ("03-gridlock", "04-marathon") and algo == "bfs":
+                print(f"  [Info] Omitiendo BFS en {level_stem} por excesivo número de estados en mapa grande.", flush=True)
+                continue
+            if level_stem == "04-marathon" and algo in ("bfs", "dfs"):
+                print(f"  [Info] Omitiendo {algo.upper()} en {level_stem} por tamaño masivo del nivel.", flush=True)
+                continue
+            runs.append((algo, None, f"{level_stem}_{algo}.gif"))
+
+        # Algoritmos informados con cada heurística
+        for algo in ("greedy", "astar"):
+            for heur in heuristics_list:
+                runs.append((algo, heur, f"{level_stem}_{algo}_{heur}.gif"))
+
+        for algo, heur, filename in runs:
+            out_path = out_dir / filename
+            total_attempted += 1
+            ok = record_run_to_gif(
+                level_path=level_path,
+                algo_name=algo,
+                heuristic_name=heur,
+                output_gif_path=out_path,
+                fps=fps,
+            )
+            if ok:
+                total_success += 1
+
+    print("=" * 70)
+    print(f"Finalizado: {total_success}/{total_attempted} GIFs generados exitosamente.")
+    print("=" * 70)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Genera GIFs animados de corridas de algoritmos en Gridworld."
+        description="Genera GIFs animados de corridas de algoritmos en Gridworld para todos los mapas y heurísticas."
     )
     parser.add_argument(
         "level_path",
         nargs="?",
-        default=str(DEFAULT_LEVEL_PATH),
-        help="Ruta al archivo del nivel JSON (por defecto levels/01-warmup.json)",
+        default="all",
+        help="Ruta al nivel JSON o 'all' para procesar todos los mapas en levels/ (por defecto 'all')",
     )
     parser.add_argument(
         "--out-dir",
@@ -298,15 +328,15 @@ def main() -> int:
         type=str,
         default="all",
         choices=list(ALGORITHMS.keys()) + ["all"],
-        help="Algoritmo a ejecutar ('all' para generar la suite completa)",
+        help="Algoritmo a ejecutar ('all' para generar todos los algoritmos)",
     )
     parser.add_argument(
         "--heuristic",
         "-he",
         type=str,
-        default="heuristic_a",
-        choices=list(HEURISTICS.keys()) + ["both"],
-        help="Heurística para Greedy y A* ('heuristic_a', 'heuristic_b', o 'both')",
+        default="all",
+        choices=list(HEURISTICS.keys()) + ["all"],
+        help="Heurística para Greedy y A* ('heuristic_a', 'heuristic_b', 'euclidean_distance', o 'all')",
     )
     parser.add_argument(
         "--fps",
@@ -316,28 +346,41 @@ def main() -> int:
     )
 
     args = parser.parse_args()
-    level_path = Path(args.level_path)
 
-    if args.algo == "all":
-        generate_all_warmup_gifs(level_path=level_path, out_dir=args.out_dir, fps=args.fps)
+    if args.heuristic == "all":
+        heuristics_to_run = ["heuristic_a", "heuristic_b", "euclidean_distance"]
+    else:
+        heuristics_to_run = [args.heuristic]
+
+    if args.level_path == "all" and args.algo == "all":
+        generate_all_gifs(out_dir=args.out_dir, fps=args.fps, heuristics=heuristics_to_run)
     else:
         out_dir = Path(args.out_dir)
-        heuristics_to_run = (
-            ["heuristic_a", "heuristic_b"]
-            if args.heuristic == "both" and args.algo in ("greedy", "astar")
-            else [args.heuristic if args.algo in ("greedy", "astar") else None]
-        )
+        if args.level_path == "all":
+            from gridworld.levelfile import DEFAULT_LEVELS_DIR
+            levels = sorted(DEFAULT_LEVELS_DIR.glob("*.json"))
+        else:
+            levels = [Path(args.level_path)]
 
-        for heur in heuristics_to_run:
-            heur_suffix = f"_{heur}" if heur else ""
-            out_path = out_dir / f"{level_path.stem}_{args.algo}{heur_suffix}.gif"
-            record_run_to_gif(
-                level_path=level_path,
-                algo_name=args.algo,
-                heuristic_name=heur,
-                output_gif_path=out_path,
-                fps=args.fps,
-            )
+        algos_to_run = list(ALGORITHMS.keys()) if args.algo == "all" else [args.algo]
+
+        for level_path in levels:
+            for algo in algos_to_run:
+                heurs = (
+                    heuristics_to_run
+                    if algo in ("greedy", "astar")
+                    else [None]
+                )
+                for heur in heurs:
+                    heur_suffix = f"_{heur}" if heur else ""
+                    out_path = out_dir / f"{level_path.stem}_{algo}{heur_suffix}.gif"
+                    record_run_to_gif(
+                        level_path=level_path,
+                        algo_name=algo,
+                        heuristic_name=heur,
+                        output_gif_path=out_path,
+                        fps=args.fps,
+                    )
 
     return 0
 
