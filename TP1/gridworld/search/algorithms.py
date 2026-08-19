@@ -233,12 +233,12 @@ def iddfs(
 
     for limit in range(max_depth + 1):
         cutoff_occurred = False
-        # Frontier stack contains (node, path_states_on_branch)
         root = SearchNode.root(problem.initial)
-        frontier: list[tuple[SearchNode, frozenset[GameState]]] = [(root, frozenset([root.state]))]
+        frontier: list[SearchNode] = [root]
+        visited_depth: dict[GameState, int] = {root.state: 0}
 
         while frontier:
-            node, branch = frontier.pop()
+            node = frontier.pop()
 
             if problem.is_goal(node.state):
                 return SearchResult(
@@ -261,15 +261,20 @@ def iddfs(
 
             for action in problem.actions(node.state):
                 child_state = problem.result(node.state, action)
-                if child_state not in branch:
-                    child_node = SearchNode(
-                        state=child_state,
-                        parent=node,
-                        action=action,
-                        path_cost=node.path_cost + problem.step_cost(node.state, action, child_state),
-                        depth=node.depth + 1,
-                    )
-                    frontier.append((child_node, branch | {child_state}))
+                child_depth = node.depth + 1
+
+                if child_state in visited_depth and visited_depth[child_state] <= child_depth:
+                    continue
+
+                visited_depth[child_state] = child_depth
+                child_node = SearchNode(
+                    state=child_state,
+                    parent=node,
+                    action=action,
+                    path_cost=node.path_cost + problem.step_cost(node.state, action, child_state),
+                    depth=child_depth,
+                )
+                frontier.append(child_node)
 
         if not cutoff_occurred:
             # Entire state space within reachable depths was explored without finding a goal
