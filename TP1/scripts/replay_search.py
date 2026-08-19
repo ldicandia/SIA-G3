@@ -87,6 +87,13 @@ def main() -> int:
         default=250,
         help="Milliseconds delay between replayed steps in animation (default: 250)",
     )
+    parser.add_argument(
+        "--gif",
+        "-g",
+        type=str,
+        default=None,
+        help="Path to export animated GIF of the search replay (optional)",
+    )
     args = parser.parse_args()
 
     level_path = args.level_path if args.level_path is not None else DEFAULT_LEVEL_PATH
@@ -134,6 +141,15 @@ def main() -> int:
     if not result.success:
         sys.stderr.write(f"Algorithm {args.algo} did not find a solution for {level_path}.\n")
         return 1
+
+    if args.gif:
+        from scripts.generate_gifs import record_run_to_gif
+        record_run_to_gif(
+            level_path=level_path,
+            algo_name=args.algo,
+            heuristic_name=args.heuristic,
+            output_gif_path=args.gif,
+        )
 
     full_solution_paths = build_solution_paths(level.board, level.state, result.path)
 
