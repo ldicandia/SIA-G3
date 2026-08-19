@@ -29,3 +29,4 @@ class SearchResult:
     expanded_nodes: int
     frontier_nodes: int
     elapsed_seconds: float
+    max_frontier_nodes: int = 0

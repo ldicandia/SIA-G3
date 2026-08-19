@@ -83,6 +83,31 @@ In the replay window:
 - Press **Space** to pause / resume the replay.
 - Press **Esc** to close the window.
 
+## Generating Comparative Benchmark Plots
+
+To generate presentation-ready comparative benchmark charts (matching the ITBA slide styles):
+
+```sh
+python scripts/generate_plots.py [level_path] [--runs N] [--out plots/] [--compare-all] [--skip-iddfs]
+```
+
+Examples:
+
+- Benchmark all algorithms on Warmup level (5 runs per algorithm):
+  ```sh
+  python scripts/generate_plots.py levels/01-warmup.json --compare-all
+  ```
+- Benchmark on Classic level (skipping IDDFS due to depth limit):
+  ```sh
+  python scripts/generate_plots.py levels/02-classic.json --skip-iddfs
+  ```
+
+This automatically exports high-resolution PNG charts in the `plots/` folder:
+- **`*_desinformados.png`**: 4-panel comparison of BFS vs DFS vs IDDFS (Expanded nodes, Final frontier, Execution time with error bars, Solution cost).
+- **`*_frontera_max_vs_final.png`**: Grouped bar chart comparing Final Frontier vs Maximum Peak Frontier.
+- **`*_heuristicas_astar.png`**: 4-panel comparison of A* across heuristics (Manhattan vs Max Manhattan vs Euclidean).
+- **`*_todos_los_algoritmos.png`**: Complete 4-panel comparison across all 5 algorithms.
+
 ## Controls
 
 | Key | Action |

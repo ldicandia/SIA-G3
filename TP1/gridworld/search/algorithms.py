@@ -2,7 +2,7 @@
 
 Every function takes a ``Problem`` (plus a heuristic where the algorithm is
 informed) and returns a ``SearchResult`` with every metric field populated
-(success, cost, path, expanded_nodes, frontier_nodes, elapsed_seconds). A*
+(success, cost, path, expanded_nodes, frontier_nodes, elapsed_seconds, max_frontier_nodes). A*
 is implemented with an incremental stepper for the UI.
 """
 
@@ -38,12 +38,14 @@ def bfs(
             expanded_nodes=0,
             frontier_nodes=0,
             elapsed_seconds=time.perf_counter() - start,
+            max_frontier_nodes=0,
         )
 
     frontier: deque[SearchNode] = deque([root])
     frontier_states: set[GameState] = {root.state}
     explored: set[GameState] = set()
     expanded = 0
+    max_frontier = 1
 
     while frontier:
         node = frontier.popleft()
@@ -75,10 +77,13 @@ def bfs(
                     expanded_nodes=expanded,
                     frontier_nodes=len(frontier),
                     elapsed_seconds=time.perf_counter() - start,
+                    max_frontier_nodes=max_frontier,
                 )
 
             frontier.append(child_node)
             frontier_states.add(child_state)
+            if len(frontier) > max_frontier:
+                max_frontier = len(frontier)
 
     return SearchResult(
         algorithm="bfs",
@@ -88,6 +93,7 @@ def bfs(
         expanded_nodes=expanded,
         frontier_nodes=0,
         elapsed_seconds=time.perf_counter() - start,
+        max_frontier_nodes=max_frontier,
     )
 
 
@@ -101,6 +107,7 @@ def dfs(
     frontier: list[SearchNode] = [root]
     explored: set[GameState] = set()
     expanded = 0
+    max_frontier = 1
 
     while frontier:
         node = frontier.pop()
@@ -114,6 +121,7 @@ def dfs(
                 expanded_nodes=expanded,
                 frontier_nodes=len(frontier),
                 elapsed_seconds=time.perf_counter() - start,
+                max_frontier_nodes=max_frontier,
             )
 
         if node.state in explored:
@@ -135,6 +143,8 @@ def dfs(
                     depth=node.depth + 1,
                 )
                 frontier.append(child_node)
+                if len(frontier) > max_frontier:
+                    max_frontier = len(frontier)
 
     return SearchResult(
         algorithm="dfs",
@@ -144,6 +154,7 @@ def dfs(
         expanded_nodes=expanded,
         frontier_nodes=0,
         elapsed_seconds=time.perf_counter() - start,
+        max_frontier_nodes=max_frontier,
     )
 
 
@@ -161,6 +172,7 @@ def greedy(
     heap: list[tuple[float, int, SearchNode]] = [(heuristic(problem, root.state), counter, root)]
     explored: set[GameState] = set()
     expanded = 0
+    max_frontier = 1
 
     while heap:
         _, _, node = heapq.heappop(heap)
@@ -174,6 +186,7 @@ def greedy(
                 expanded_nodes=expanded,
                 frontier_nodes=len(heap),
                 elapsed_seconds=time.perf_counter() - start,
+                max_frontier_nodes=max_frontier,
             )
 
         if node.state in explored:
@@ -196,6 +209,8 @@ def greedy(
                 )
                 counter += 1
                 heapq.heappush(heap, (heuristic(problem, child_state), counter, child_node))
+                if len(heap) > max_frontier:
+                    max_frontier = len(heap)
 
     return SearchResult(
         algorithm="greedy",
@@ -205,6 +220,7 @@ def greedy(
         expanded_nodes=expanded,
         frontier_nodes=0,
         elapsed_seconds=time.perf_counter() - start,
+        max_frontier_nodes=max_frontier,
     )
 
 
@@ -230,12 +246,14 @@ def iddfs(
     """Iterative deepening DFS: uninformed, expands depth-first with increasing limits. SRCH-05."""
     start = time.perf_counter()
     total_expanded = 0
+    overall_max_frontier = 1
 
     for limit in range(max_depth + 1):
         cutoff_occurred = False
         root = SearchNode.root(problem.initial)
         frontier: list[SearchNode] = [root]
         visited_depth: dict[GameState, int] = {root.state: 0}
+        iteration_max_frontier = 1
 
         while frontier:
             node = frontier.pop()
@@ -249,6 +267,7 @@ def iddfs(
                     expanded_nodes=total_expanded,
                     frontier_nodes=len(frontier),
                     elapsed_seconds=time.perf_counter() - start,
+                    max_frontier_nodes=overall_max_frontier,
                 )
 
             if node.depth >= limit:
@@ -275,6 +294,10 @@ def iddfs(
                     depth=child_depth,
                 )
                 frontier.append(child_node)
+                if len(frontier) > iteration_max_frontier:
+                    iteration_max_frontier = len(frontier)
+                    if iteration_max_frontier > overall_max_frontier:
+                        overall_max_frontier = iteration_max_frontier
 
         if not cutoff_occurred:
             # Entire state space within reachable depths was explored without finding a goal
@@ -288,6 +311,7 @@ def iddfs(
         expanded_nodes=total_expanded,
         frontier_nodes=0,
         elapsed_seconds=time.perf_counter() - start,
+        max_frontier_nodes=overall_max_frontier,
     )
 
 
@@ -332,6 +356,7 @@ class AStarStepper:
             (heuristic(problem, root.state), 0, next(self._sequence), root),
         )
         self._best_cost: dict[GameState, int] = {root.state: 0}
+        self._max_frontier = 1
 
     @property
     def frontier_nodes(self) -> int:
@@ -384,6 +409,8 @@ class AStarStepper:
                     self._frontier,
                     (priority, child_cost, next(self._sequence), child),
                 )
+                if len(self._frontier) > self._max_frontier:
+                    self._max_frontier = len(self._frontier)
 
             events.append(
                 SearchExpansion(node.state, self.expanded_nodes, len(self._frontier))
@@ -402,4 +429,5 @@ class AStarStepper:
             expanded_nodes=self.expanded_nodes,
             frontier_nodes=len(self._frontier),
             elapsed_seconds=time.perf_counter() - self.started_at,
+            max_frontier_nodes=self._max_frontier,
         )
