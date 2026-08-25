@@ -19,24 +19,6 @@ source .venv/bin/activate        # En Windows: .venv\Scripts\activate
 python -m pip install -r requirements.txt
 ```
 
-## Ejecución del juego (Modo Manual)
-
-Desde el directorio `TP1`:
-
-```sh
-python -m gridworld
-```
-
-Esto abrirá la pantalla de selección de niveles con todos los archivos `.json` ubicados en `TP1/levels/`. Presiona una tecla numérica para cargar un nivel.
-
-Para saltear el selector y cargar un nivel específico directamente:
-
-```sh
-python -m gridworld levels/01-warmup.json
-```
-
----
-
 ## Ejecución de Algoritmos de Búsqueda
 
 Grid World soporta algoritmos de búsqueda **no informados** e **informados**, con visualizadores interactivos en Pygame, generación automatizada de gráficos comparativos/benchmarks y ejecución en modo headless.
