@@ -1,161 +1,236 @@
 # Grid World — TP1
 
-A playable Grid World game for ITBA's *Sistemas de Inteligencia Artificial* TP1,
-Ejercicio 2 (Lado A). An N×M grid holds black obstacles, numbered cars, and
-numbered flags; move one car at a time until every car is parked on its
-matching flag.
+Juego Grid World para el TP1 de *Sistemas de Inteligencia Artificial* del ITBA, Ejercicio 2 (Lado A). Una cuadrícula de $N \times M$ contiene obstáculos negros, autos numerados y banderas numeradas; el objetivo es mover un auto a la vez hasta que todos los autos queden estacionados sobre su bandera correspondiente.
 
-The game includes a rules engine, a pygame window for manual play, and an
-incremental A* solver that visualizes explored cells before replaying its
-optimal solution.
+El proyecto incluye el motor de reglas, una ventana de Pygame para juego manual, algoritmos de búsqueda no informados e informados, visualizador paso a paso y herramientas de benchmarking.
 
-## Requirements
+## Requisitos
 
-- Python 3.10–3.13 (developed and tested on 3.12)
+- Python 3.10–3.13 (desarrollado y probado en 3.12)
 - [pygame](https://www.pygame.org/) 2.6.1
 
-## Installation
+## Instalación
 
-From the `TP1` directory:
+Desde el directorio `TP1`:
 
 ```sh
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate        # En Windows: .venv\Scripts\activate
 python -m pip install -r requirements.txt
 ```
 
-## Running the game
+## Ejecución del juego (Modo Manual)
 
-From the `TP1` directory:
+Desde el directorio `TP1`:
 
 ```sh
 python -m gridworld
 ```
 
-This opens a level-choice screen listing every `.json` file under
-`TP1/levels/`. Press a number key to load one.
+Esto abrirá la pantalla de selección de niveles con todos los archivos `.json` ubicados en `TP1/levels/`. Presiona una tecla numérica para cargar un nivel.
 
-To skip the picker and load a specific level directly:
+Para saltear el selector y cargar un nivel específico directamente:
 
 ```sh
 python -m gridworld levels/01-warmup.json
 ```
 
-## Visualizing the optimal search
+---
 
-While playing any level, press `S`. The board first reveals explored cells as
-blue dots while the HUD reports A*'s expanded and frontier node counts. Once
-the goal is found, the game pauses briefly and replays the optimal path slowly
-in yellow.
+## Ejecución de Algoritmos de Búsqueda
 
-The search begins at the current board position. Press `Space` to pause or
-resume and `-` / `+` to change the animation speed. The default is the
-deliberately slow `0.5x` speed.
+Grid World soporta algoritmos de búsqueda **no informados** e **informados**, con visualizadores interactivos en Pygame, generación automatizada de gráficos comparativos/benchmarks y ejecución en modo headless.
 
-## Visualizing Search (Demo Replay)
+### Algoritmos Soportados
 
-To solve a level with any search algorithm and replay its solution step-by-step in the Pygame window:
+| Tipo | Algoritmo | Identificador CLI (`--algo`) | Descripción |
+|------|-----------|------------------------------|-------------|
+| **No Informado** | Breadth-First Search (BFS) | `bfs` | Expande primero los nodos menos profundos; garantiza costo óptimo. |
+| **No Informado** | Depth-First Search (DFS) | `dfs` | Expande primero los nodos más profundos; no óptimo, rápida exploración. |
+| **No Informado** | Iterative Deepening DFS (IDDFS) | `iddfs` | Combina la eficiencia de memoria de DFS con la optimalidad en profundidad de BFS. |
+| **Informado** | Greedy Best-First Search (Avara) | `greedy` | Expande los nodos más cercanos a la meta según $h(n)$; rápido, no óptimo. |
+| **Informado** | A* Search | `astar` | Minimiza $f(n) = g(n) + h(n)$; óptimo y completo con heurísticas admisibles. |
+
+### Heurísticas Disponibles (para Greedy y A\*)
+
+| Heurística | Identificador CLI (`--heuristic`) | Descripción | ¿Admisible? |
+|------------|-----------------------------------|-------------|:-----------:|
+| **Suma de Distancias Manhattan** | `manhattan` *(o `heuristic_a`)* | Suma de las distancias Manhattan ($L_1$) de cada auto sin estacionar a su bandera. *(Por defecto)* | ✅ Sí |
+| **Máxima Distancia Manhattan** | `max_manhattan` *(o `heuristic_b`)* | Máxima distancia Manhattan entre todos los autos sin estacionar a sus banderas. | ✅ Sí |
+| **Suma de Distancias Euclidianas** | `euclidean_distance` | Suma de las distancias euclidianas directas ($L_2$) de cada auto sin estacionar a su bandera. | ✅ Sí |
+
+---
+
+### 1. Visualización y Replay de Búsqueda (Paso a Paso en Pygame)
+
+Utiliza `scripts/replay_search.py` para ejecutar cualquier algoritmo sobre un nivel y reproducir visualmente tanto la exploración de nodos como el camino de solución paso a paso en la interfaz gráfica de Pygame:
 
 ```sh
-python scripts/replay_search.py --algo <bfs|dfs|greedy|astar|iddfs> [level_path] [--heuristic <heuristic_a|heuristic_b>] [--delay <ms>]
+python scripts/replay_search.py --algo <bfs|dfs|iddfs|greedy|astar> [ruta_nivel] [--heuristic <manhattan|max_manhattan|euclidean_distance>] [--delay <ms>]
 ```
 
-Examples:
+#### Ejemplos de ejecución:
 
-- Run **A\*** with default Manhattan heuristic on warmup level:
+- **Breadth-First Search (BFS):**
   ```sh
-  python scripts/replay_search.py --algo astar levels/01-warmup.json
-  ```
-- Run **BFS** on classic level:
-  ```sh
+  python scripts/replay_search.py --algo bfs levels/01-warmup.json
   python scripts/replay_search.py --algo bfs levels/02-classic.json
   ```
-- Run **Greedy** with max Manhattan heuristic:
+
+- **Depth-First Search (DFS):**
   ```sh
-  python scripts/replay_search.py --algo greedy levels/01-warmup.json --heuristic heuristic_b
-  ```
-- Run **DFS** or **IDDFS** with custom animation speed (150ms per step):
-  ```sh
-  python scripts/replay_search.py --algo dfs levels/01-warmup.json --delay 150
+  python scripts/replay_search.py --algo dfs levels/01-warmup.json
+  python scripts/replay_search.py --algo dfs levels/01-warmup.json --delay 100
   ```
 
-In the replay window:
-- Press **Space** to pause / resume the replay.
-- Press **Esc** to close the window.
+- **Iterative Deepening DFS (IDDFS):**
+  ```sh
+  python scripts/replay_search.py --algo iddfs levels/01-warmup.json
+  ```
 
-## Generating Comparative Benchmark Plots
+- **Greedy Best-First Search (Búsqueda Avara):**
+  ```sh
+  # Con Heurística Manhattan
+  python scripts/replay_search.py --algo greedy levels/01-warmup.json --heuristic manhattan
 
-To generate presentation-ready comparative benchmark charts (matching the ITBA slide styles):
+  # Con Heurística Máxima Manhattan
+  python scripts/replay_search.py --algo greedy levels/02-classic.json --heuristic max_manhattan
+
+  # Con Heurística Euclidiana
+  python scripts/replay_search.py --algo greedy levels/01-warmup.json --heuristic euclidean_distance
+  ```
+
+- **A\* Search:**
+  ```sh
+  # Heurística por defecto (Suma de distancias Manhattan)
+  python scripts/replay_search.py --algo astar levels/01-warmup.json
+
+  # Con Heurística Máxima Manhattan
+  python scripts/replay_search.py --algo astar levels/01-warmup.json --heuristic max_manhattan
+
+  # Con Heurística Euclidiana en nivel Classic
+  python scripts/replay_search.py --algo astar levels/02-classic.json --heuristic euclidean_distance
+  ```
+
+**Controles en la ventana de Replay:**
+- `Espacio`: Pausar / reanudar la animación.
+- `Esc`: Cerrar la ventana.
+
+---
+
+### 2. Búsqueda Óptima en Vivo dentro del Juego (A\*)
+
+Mientras juegas cualquier nivel de forma manual (`python -m gridworld [ruta_nivel]`):
+- Presiona **`S`** para iniciar la búsqueda incremental con A* desde el estado actual del tablero.
+- Los estados explorados se muestran como puntos azules mientras el HUD reporta en tiempo real los nodos expandidos y en frontera.
+- Una vez encontrada la meta, el camino óptimo se anima y reproduce en amarillo.
+- Presiona **`Espacio`** para pausar/reanudar y **`-` / `+`** para ajustar la velocidad de animación.
+
+---
+
+### 3. Generación de Gráficos y Benchmarks Comparativos
+
+Para ejecutar benchmarks estadísticos y generar gráficos comparativos de alta resolución listos para presentación:
 
 ```sh
-python scripts/generate_plots.py [level_path] [--runs N] [--out plots/] [--compare-all] [--skip-iddfs]
+python scripts/generate_plots.py [ruta_nivel] [--runs N] [--out DIR] [--compare-all] [--skip-iddfs]
 ```
 
-Examples:
+#### Ejemplos:
 
-- Benchmark all algorithms on Warmup level (5 runs per algorithm):
+- **Benchmark de los 5 algoritmos en el nivel Warmup (5 corridas por algoritmo):**
   ```sh
   python scripts/generate_plots.py levels/01-warmup.json --compare-all
   ```
-- Benchmark on Classic level (skipping IDDFS due to depth limit):
+
+- **Benchmark en nivel Classic (omitiendo IDDFS por límite de profundidad):**
   ```sh
-  python scripts/generate_plots.py levels/02-classic.json --skip-iddfs
+  python scripts/generate_plots.py levels/02-classic.json --skip-iddfs --runs 5
   ```
 
-This automatically exports high-resolution PNG charts in the `plots/` folder:
-- **`*_desinformados.png`**: 4-panel comparison of BFS vs DFS vs IDDFS (Expanded nodes, Final frontier, Execution time with error bars, Solution cost).
-- **`*_frontera_max_vs_final.png`**: Grouped bar chart comparing Final Frontier vs Maximum Peak Frontier.
-- **`*_heuristicas_astar.png`**: 4-panel comparison of A* across heuristics (Manhattan vs Max Manhattan vs Euclidean).
-- **`*_todos_los_algoritmos.png`**: Complete 4-panel comparison across all 5 algorithms.
+- **Comparativa específica de heurísticas (Greedy y A\* con distintas heurísticas):**
+  ```sh
+  python scripts/plot_informed_comparison.py
+  ```
 
-## Controls
+#### Gráficos exportados (en el directorio `plots/`):
+- `*_desinformados.png`: Panel de 4 gráficos comparando BFS vs DFS vs IDDFS (Nodos expandidos, Frontera final, Tiempo de ejecución con barras de desvío estándar, Costo de solución).
+- `*_frontera_max_vs_final.png`: Gráfico de barras agrupadas comparando Frontera Final vs Frontera Máxima (pico).
+- `*_heuristicas_astar.png`: Panel de 4 gráficos comparando A* según la heurística (Manhattan vs Max Manhattan vs Euclidiana).
+- `*_heuristicas_greedy.png`: Panel de 4 gráficos comparando Greedy según la heurística.
+- `*_todos_los_algoritmos.png`: Comparativa integral de los 5 algoritmos.
 
-| Key | Action |
-|-----|--------|
-| `1`–`9` | Select a car by number (in-game), or choose a level (on the level-choice screen) |
-| Arrow keys | Move the selected car one cell |
-| `U` | Undo the last move |
-| `R` | Reset the level to its starting position |
-| `S` | Start optimal A* search from the current position |
-| `Space` | Pause or resume search animation |
-| `-` / `+` | Change animation speed |
-| `Esc` | Quit (in-game or on the level-choice screen); go back (on a load-error screen) |
+---
 
-## Rules
+### 4. Exportación de GIFs Animados
 
-- Exactly one selected car moves one orthogonal cell per turn.
-- A move is refused, with no change to the board, when the target cell is:
-  off the grid, a black obstacle, occupied by another car, or a flag
-  belonging to a different car.
-- A car that moves onto its own numbered flag **parks** and can never be
-  selected or moved again.
-- The level is won once every car is parked on its matching flag; a win
-  screen then shows the total move count.
-- Because parked cars lock in place and foreign flags block movement,
-  parking order can leave the board in a legal-but-unwinnable state. When an
-  unparked car can no longer reach its own flag, an on-screen warning names
-  it and points to `U` (undo) or `R` (reset).
+Para generar animaciones en formato GIF de la fase de exploración y la solución:
 
-## Level files
+```sh
+python scripts/generate_gifs.py [ruta_nivel] [--algo <algo>] [--heuristic <heuristic>] [--out-dir DIR] [--fps FPS]
+```
 
-Levels are JSON files under `TP1/levels/`, chosen from the picker or passed
-as a command-line path. Three ship with the game at increasing complexity:
+#### Ejemplos:
 
-- `01-warmup.json` — 5×5, two cars
-- `02-classic.json` — 7×7, three cars
-- `03-gridlock.json` — 9×9, more cars and obstacles
+```sh
+python scripts/generate_gifs.py levels/01-warmup.json --algo astar --heuristic manhattan
+python scripts/generate_gifs.py levels/02-classic.json --algo bfs --out-dir gifs/classic
+```
 
-The full field-by-field format, coordinate convention, limits, and every
-validation error a malformed level can raise are documented in
-[`levels/SCHEMA.md`](levels/SCHEMA.md).
+---
 
-## Running the tests
+### 5. Verificación Headless y Búsqueda Aleatoria
 
-From the `TP1` directory:
+Para probar el motor de búsqueda en modo headless (sin inicializar Pygame):
+
+```sh
+python scripts/check_headless.py
+```
+
+Para ejecutar la demo de búsqueda aleatoria:
+
+```sh
+python scripts/replay_random_search.py levels/01-warmup.json
+```
+
+---
+
+## Controles del Juego
+
+| Tecla | Acción |
+|-------|--------|
+| `1`–`9` | Seleccionar un auto por su número (en juego), o elegir nivel (en pantalla de selección) |
+| Flechas (`↑`, `↓`, `←`, `→`) | Mover el auto seleccionado una celda |
+| `U` | Deshacer el último movimiento (*Undo*) |
+| `R` | Reiniciar el nivel a su posición inicial (*Reset*) |
+| `S` | Iniciar búsqueda óptima con A* desde la posición actual |
+| `Espacio` | Pausar o reanudar la animación de búsqueda |
+| `-` / `+` | Cambiar la velocidad de la animación |
+| `Esc` | Salir del juego o volver atrás |
+
+## Reglas del juego
+
+- Exactamente un auto seleccionado se mueve una celda ortogonal por turno.
+- Un movimiento es rechazado sin modificar el tablero si la celda destino:
+  está fuera del tablero, es un obstáculo negro, está ocupada por otro auto o es una bandera de otro auto.
+- Un auto que se mueve a su propia bandera numerada queda **estacionado** y no puede volver a seleccionarse ni moverse.
+- El nivel se gana cuando todos los autos están estacionados en su bandera correspondiente; la pantalla de victoria muestra el total de movimientos realizados.
+- Dado que los autos estacionados bloquean celdas y las banderas ajenas no se pueden atravesar, el orden de estacionamiento puede dejar el tablero en un estado sin solución. Cuando un auto sin estacionar ya no puede alcanzar su bandera, aparece una advertencia en pantalla sugiriendo usar `U` (deshacer) o `R` (reiniciar).
+
+## Archivos de niveles
+
+Los niveles son archivos JSON ubicados en `TP1/levels/`:
+
+- `01-warmup.json` — Tablero 5×5, 2 autos.
+- `02-classic.json` — Tablero 7×7, 3 autos.
+- `03-gridlock.json` — Tablero 9×9, múltiples autos y obstáculos.
+
+El formato detallado campo por campo, convención de coordenadas y validaciones están documentados en [`levels/SCHEMA.md`](levels/SCHEMA.md).
+
+## Ejecución de tests
+
+Desde el directorio `TP1`:
 
 ```sh
 pytest
 ```
-
-The engine and level-loading modules are also proven to import and run with
-no rendering library installed at all — see `scripts/check_headless.py`.
