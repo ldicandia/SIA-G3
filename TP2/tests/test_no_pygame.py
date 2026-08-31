@@ -12,14 +12,15 @@ MODULES = [
 ]
 
 
-def _run(extra: str = "") -> subprocess.CompletedProcess[str]:
+def _run(extra: str = "", after: str = "") -> subprocess.CompletedProcess[str]:
     imports = "; ".join(f"__import__({module!r})" for module in MODULES)
-    code = f"{extra}\n{imports}\n"
+    code = f"import sys\n{extra}\n{imports}\n{after}\n"
     return subprocess.run([sys.executable, "-c", code], text=True, capture_output=True, check=True)
 
 
 def test_headless_leaves_do_not_import_pygame() -> None:
-    _run("import sys")
+    result = _run(after="assert not [n for n in sys.modules if n.split('.')[0] == 'pygame']")
+    assert result.returncode == 0
 
 
 def test_headless_leaves_work_when_pygame_is_unavailable() -> None:
@@ -29,8 +30,10 @@ class BlockPygame:
         if fullname.split('.')[0] == 'pygame': raise ImportError('blocked pygame')
         return None
 sys.meta_path.insert(0, BlockPygame())"""
-    _run(blocker)
+    result = _run(blocker)
+    assert result.returncode == 0
 
 
 def test_engine_does_not_load_ga_libraries() -> None:
-    _run("import sys")
+    result = _run(after="assert not ({'deap', 'pygad', 'geneticalgorithm', 'pyeasyga', 'inspyred'} & {n.split('.')[0] for n in sys.modules})")
+    assert result.returncode == 0
