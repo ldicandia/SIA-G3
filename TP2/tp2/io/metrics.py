@@ -44,3 +44,5 @@ class MetricsWriter:
             "active_triangles": event.active_triangles,
             "stop_reason": event.stop_reason,
         })
+        assert self._handle is not None
+        self._handle.flush()

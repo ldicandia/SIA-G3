@@ -68,6 +68,39 @@ display and a continuously powered personal laptop are not required.
 
 ## Current status
 
-The committed first slice validates the genome, alpha compositing, fitness,
-seeded one-generation evaluation, artifact writing, and headless imports. The
-next milestone adds the configurable multi-generation loop and GA operators.
+## Evolve the flag, with live notebook progress
+
+The baseline loop uses cátedra-style elite parent/replacement selection,
+one-point crossover, per-gene mutation, additive survival, and a generation
+cap. It records one CSV row per generation:
+
+```bash
+.venv/bin/python -m tp2 \
+  --image assets/flag_ar.png --triangles 80 --canvas 128 --seed 42 \
+  --config configs/baseline.json --out runs/flag-evolution
+```
+
+For a live inline image in **Colab/Jupyter**, run the CLI in the *notebook
+kernel* (not with `!python`, which starts a separate process that cannot redraw
+the current output cell):
+
+```python
+from tp2.cli import main
+
+main([
+    "--image", "assets/flag_ar.png",
+    "--triangles", "80",
+    "--canvas", "128",
+    "--seed", "42",
+    "--config", "configs/baseline.json",
+    "--notebook", "--notebook-every", "2",
+    "--out", "runs/flag-live",
+])
+```
+
+The cell refreshes with the current best image, generation, fitness, and render
+count. `--notebook-every 5` is useful for longer runs.
+
+Current implementation includes the first multi-generation operator slice;
+the remaining operator variants and a standalone browser viewer follow in later
+milestones.

@@ -1,0 +1,11 @@
+{
+  "population": 24,
+  "children": 24,
+  "recombination_probability": 0.8,
+  "parents": {"method": "elite"},
+  "replacement": {"method": "elite"},
+  "crossover": {"method": "one_point", "boundary": "triangle"},
+  "mutation": {"method": "gene", "probability": 0.7},
+  "survival": {"method": "additive"},
+  "stop": {"max_generations": 100}
+}
