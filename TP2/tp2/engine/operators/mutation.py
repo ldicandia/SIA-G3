@@ -45,9 +45,14 @@ def _validate_common_params(probability: float, schedule: str, b: float, sigma: 
     if isinstance(b, bool) or not isinstance(b, (int, float)) or b <= 0:
         raise ConfigError(f"mutation schedule shape b must be positive, got {b!r}")
 
-    # Build per-triangle sigma array
+    # Build per-triangle sigma array from DEFAULT_SIGMA_KIND, the single
+    # named source of truth, rather than re-encoding it as an unlabeled
+    # literal array that could silently drift out of sync if the defaults
+    # are ever tuned (REVIEW.md WR-04).
     per_triangle = np.array(
-        [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.08, 0.08, 0.08, 0.05, 0.0],
+        [DEFAULT_SIGMA_KIND["coordinate"]] * 6
+        + [DEFAULT_SIGMA_KIND["color"]] * 3
+        + [DEFAULT_SIGMA_KIND["alpha"], 0.0],
         dtype=np.float32,
     )
     if sigma is not None:
