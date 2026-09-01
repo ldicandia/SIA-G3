@@ -32,7 +32,7 @@ def test_baseline_convergence_flag_target(seed: int, tmp_path: Path, monkeypatch
     # Ensure what is tested is the shipped config file
     raw_cfg = load_config(BASELINE_CONFIG_PATH)
     child_count = raw_cfg["children"]
-    max_generations = raw_cfg["stop"]["max_generations"]
+    max_generations = raw_cfg["horizon"]
 
     out_dir = tmp_path / f"run_seed_{seed}"
     args = [
@@ -42,6 +42,7 @@ def test_baseline_convergence_flag_target(seed: int, tmp_path: Path, monkeypatch
         "--config", str(BASELINE_CONFIG_PATH),
         "--seed", str(seed),
         "--out", str(out_dir),
+        "--allow-outside",
     ]
     monkeypatch.setattr("sys.argv", args)
     main()
