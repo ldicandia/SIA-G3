@@ -12,8 +12,10 @@ import shutil
 import uuid
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from tp2.engine.events import GenerationEvent
 from tp2.experiments import runner
 from tp2.experiments.matrix import MatrixSpec, load_matrix_spec
 from tp2.experiments.runner import build_jobs, run_matrix
@@ -140,6 +142,52 @@ def test_one_failing_cell_completes_every_other_cell_and_reports_the_failure(
     assert failures[0]["cell_id"] == "selection-bad"
     assert failures[0]["replicate_index"] == 0
     assert "not_a_real_method" in failures[0]["error"]
+
+
+# --- CR-01: a mid-run crash must never leave a file named metrics.csv -------
+
+
+def test_a_crash_mid_run_leaves_no_file_named_metrics_csv(
+    monkeypatch, matrix_out_root: Path, project_root: Path
+) -> None:
+    """`MetricsWriter` flushes after every row, so without the atomic-rename
+    fix a mid-loop crash leaves a syntactically valid but truncated
+    `metrics.csv` behind -- indistinguishable from a complete replicate to
+    `tp2/experiments/aggregate.py`'s `load_seed_curves`, which just globs
+    `seed*/metrics.csv`. `run_cell_seed` must write under a temporary name
+    and only rename it to `metrics.csv` once the entire run (including
+    `run.json`) has succeeded, so a crashed seed's directory has no file
+    literally named `metrics.csv` at all."""
+    spec = _tracer_spec(
+        matrix_out_root, seeds=1, arms={"selection": {"elite": {}}}, project_root=project_root,
+    )
+    job = build_jobs(spec)[0]
+
+    class _CrashingRun:
+        """Stands in for `tp2.engine.loop.Run`: yields one real-shaped event
+        then raises, simulating a crash several generations into a run --
+        after `MetricsWriter` has already flushed at least one row."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.result = None
+
+        def __iter__(self):
+            genes = np.zeros((6, 11), dtype=np.float32)
+            frame = np.zeros((32, 32, 3), dtype=np.uint8)
+            yield GenerationEvent(0, 10, 0.01, 0.5, 0.5, 0.4, 0.3, 0.1, 3, genes, frame, "")
+            raise RuntimeError("synthetic mid-run crash")
+
+    monkeypatch.setattr(runner, "Run", _CrashingRun)
+
+    summary = runner.run_cell_seed(job)
+
+    assert summary.ok is False
+    assert "synthetic mid-run crash" in summary.error
+
+    run_dir = job.out_dir
+    assert not (run_dir / "metrics.csv").exists(), "a crashed run must never leave a file named metrics.csv"
+    assert (run_dir / "metrics.csv.tmp").exists(), "the in-progress write is still on disk under its temp name"
+    assert not (run_dir / "run.json").exists()
 
 
 # --- ordering independence --------------------------------------------------

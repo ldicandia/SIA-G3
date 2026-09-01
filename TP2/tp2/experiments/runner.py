@@ -142,7 +142,21 @@ def run_cell_seed(job: CellJob) -> CellRunSummary:
         # this plan's concurrency-safety truth exists to prevent (T-04-08).
         run_dir = prepare_run_dir(job.out_dir, PROJECT_ROOT, force=False)
         run = Run(config, evaluator, job.triangle_budget, rng)
-        with MetricsWriter(run_dir / "metrics.csv") as writer:
+        # CR-01: write metrics under a temporary name and only rename it to
+        # the real `metrics.csv` after EVERY artifact for this run has been
+        # written successfully. `MetricsWriter.write()` flushes after every
+        # row, so a mid-loop crash (raised out of `for event in run`) would
+        # otherwise leave a syntactically valid but truncated `metrics.csv`
+        # behind -- indistinguishable from a complete replicate to anything
+        # that later globs `seed*/metrics.csv` (tp2/experiments/aggregate.py,
+        # scripts/generate_plots.py). By never letting a file literally named
+        # `metrics.csv` exist until the run is fully done, a crashed seed's
+        # directory has no `metrics.csv` at all, so downstream aggregation
+        # fails loudly (FileNotFoundError naming this exact seed directory)
+        # instead of silently folding a partial curve into a median/IQR
+        # figure.
+        tmp_metrics = run_dir / "metrics.csv.tmp"
+        with MetricsWriter(tmp_metrics) as writer:
             for event in run:
                 writer(event)
         result = run.result
@@ -171,6 +185,10 @@ def run_cell_seed(job: CellJob) -> CellRunSummary:
         )
         save_png(result.best_frame, run_dir / "best.png")
         write_triangles_json(run_dir / "triangles.json", result.best_genes, size)
+        # Last step: only a truly-finished run (loop completed, run.json,
+        # best.png, and triangles.json all written) ever becomes visible
+        # under the name `metrics.csv`.
+        tmp_metrics.replace(run_dir / "metrics.csv")
         return CellRunSummary(job.cell_id, job.replicate_index, ok=True, renders=evaluator.renders, error=None)
     except Exception as exc:  # noqa: BLE001 -- must never propagate out of Pool.map
         return CellRunSummary(job.cell_id, job.replicate_index, ok=False, renders=0, error=str(exc))
