@@ -184,6 +184,18 @@ def build_cells(spec: MatrixSpec) -> list[MatrixCell]:
     Because `product_cells` already embeds the dimension (arm) name in each
     cell's `cell_id`, cells from different arms can never collide by label
     alone -- no separate prefixing step is needed here.
+
+    WR-02: `cell_id` is built by unescaped `-`.join, so an arm/label
+    combination containing its own `-` characters can in principle collide
+    with a DIFFERENT arm/label combination's string (e.g. arm `"survival"`
+    label `"kn-krn-0.5-additive"` vs arm `"survival-kn"` label
+    `"krn-0.5-additive"` both produce `"survival-kn-krn-0.5-additive"`).
+    Nothing about the shipped configs' labels forbids `-`, so a collision
+    hazard is checked explicitly here (defense in depth, independent of
+    whatever separator is used) rather than relying on `prepare_run_dir`'s
+    non-empty-directory guard to ever catch it -- that guard cannot protect
+    against two concurrent `multiprocessing.Pool` jobs racing to write into
+    the same not-yet-existing output directory.
     """
     try:
         with spec.baseline_path.open(encoding="utf-8") as handle:
@@ -192,9 +204,17 @@ def build_cells(spec: MatrixSpec) -> list[MatrixCell]:
         raise MatrixSpecError(f"invalid baseline {spec.baseline_path}: {exc}") from exc
 
     cells: list[MatrixCell] = []
+    seen_cell_ids: set[str] = set()
     for arm_name, labeled in spec.arms.items():
         dimension = {arm_name: [(label, overrides) for label, overrides in labeled.items()]}
         for cell in product_cells(dimension):
+            if cell.cell_id in seen_cell_ids:
+                raise MatrixSpecError(
+                    f"cell_id collision: {cell.cell_id!r} is produced by more than one "
+                    "arm/label combination -- rename one of the colliding arms or labels "
+                    "to disambiguate"
+                )
+            seen_cell_ids.add(cell.cell_id)
             # scale_overrides first, the cell's own arm override layered on
             # top (plain dict merge, later key wins) -- identical to the
             # whole-value-replacement contract `apply_overrides` itself

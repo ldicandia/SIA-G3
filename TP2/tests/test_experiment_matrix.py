@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from tp2.experiments.matrix import (
+    MatrixSpec,
     MatrixSpecError,
     apply_overrides,
     build_cells,
@@ -21,6 +22,7 @@ from tp2.experiments.matrix import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MAIN_MATRIX_PATH = PROJECT_ROOT / "configs" / "experiments" / "main_matrix.json"
+BASELINE_PATH = PROJECT_ROOT / "configs" / "baseline.json"
 
 
 # --- product_cells -----------------------------------------------------------
@@ -193,3 +195,27 @@ def test_main_matrix_all_cell_ids_are_unique() -> None:
     cells = build_cells(spec)
     ids = [c.cell_id for c in cells]
     assert len(ids) == len(set(ids))
+
+
+def test_build_cells_raises_on_a_cell_id_collision_across_different_arms() -> None:
+    """WR-02 regression: arm `"survival"` label `"kn-krn-0.5-additive"` and
+    arm `"survival-kn"` label `"krn-0.5-additive"` both join (via unescaped
+    `-`) to the identical string `"survival-kn-krn-0.5-additive"`. This must
+    raise a clear `MatrixSpecError` naming the collision, never silently
+    produce two `MatrixCell`s that would race to write into the same output
+    directory."""
+    spec = MatrixSpec(
+        baseline_path=BASELINE_PATH,
+        base_seed=1,
+        seeds=1,
+        arms={
+            "survival": {"kn-krn-0.5-additive": {}},
+            "survival-kn": {"krn-0.5-additive": {}},
+        },
+        out_root=Path("runs/_never_used"),
+        image_path=PROJECT_ROOT / "assets" / "flag_ar.png",
+        canvas=32,
+        triangles=6,
+    )
+    with pytest.raises(MatrixSpecError, match="survival-kn-krn-0.5-additive"):
+        build_cells(spec)
