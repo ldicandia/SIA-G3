@@ -23,3 +23,15 @@ def test_render_counter_and_fitness_travel_with_population() -> None:
     assert evaluator.renders == 3
     Population.concat(Population(genes[:1], fitness[:1]), Population(genes[1:], fitness[1:]))
     assert evaluator.renders == 3
+
+
+def test_sse_accumulates_in_float64_and_pins_the_exact_full_contrast_128x128_value() -> None:
+    # Pre-fix, sse() accumulated in float32 via np.dot, which BLAS-dispatches
+    # to sdot: this exact 128x128 full-contrast case returned 3196076288.0
+    # (127 ULP low) instead of the true value asserted below. Exact equality
+    # (not pytest.approx) is deliberate: an approximate comparison would hide
+    # the dtype regression this test exists to catch.
+    target = np.zeros((128, 128, 3), dtype=np.float32)
+    evaluator = Evaluator(target, (128, 128))
+    frame = np.full((128, 128, 3), 255, dtype=np.uint8)
+    assert evaluator.sse(frame) == 3196108800.0

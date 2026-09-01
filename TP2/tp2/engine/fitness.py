@@ -33,7 +33,13 @@ class Evaluator:
 
     def sse(self, frame: np.ndarray) -> float:
         diff = (np.asarray(frame, dtype=np.float32) - self._target).ravel()
-        return float(np.dot(diff, diff))
+        # Accumulate in float64: float32 np.dot dispatches to BLAS sdot, which
+        # previously returned 3196076288.0 (127 ULP low) instead of the exact
+        # 3196108800.0 on the documented 128x128 full-contrast case
+        # (01-VERIFICATION.md gap #2, code review CR-02). Do not revert this
+        # to np.dot on the raw float32 diff.
+        diff64 = diff.astype(np.float64)
+        return float(np.dot(diff64, diff64))
 
     def evaluate(self, genes: np.ndarray) -> tuple[float, np.ndarray]:
         frame = render(genes, self.size, self.background)
