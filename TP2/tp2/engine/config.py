@@ -15,6 +15,30 @@ class ConfigError(ValueError):
     pass
 
 
+CONFIG_KEYS = frozenset({
+    "population", "children", "recombination_probability",
+    "parents", "replacement", "crossover", "mutation", "survival", "stop",
+})
+
+# The two config slots that hold a selection spec -- both resolve through the
+# same SELECTION registry (SUR-04), so a blend built for one works unchanged
+# in the other.
+SELECTION_SLOTS = ("parents", "replacement")
+
+
+def desugar_selection(spec: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a selection spec into the nested form the registry consumes.
+
+    Identity today: no shorthand selection form exists yet in this cohort's
+    material, so there is nothing to desugar. The seam lives here, applied to
+    both `SELECTION_SLOTS`, so Phase 3 can accept a flat cátedra-style
+    shorthand without adding a second desugaring site, and so `run.json`
+    always archives what actually ran rather than a shorthand the source file
+    may have used.
+    """
+    return spec
+
+
 @dataclass(frozen=True, slots=True)
 class RunConfig:
     population: int
@@ -49,6 +73,9 @@ def _integer(data: dict[str, Any], key: str, minimum: int) -> int:
 
 def build_run_config(data: dict[str, Any]) -> RunConfig:
     try:
+        unknown = set(data) - CONFIG_KEYS
+        if unknown:
+            raise ConfigError(f"unknown config key(s): {sorted(unknown)}")
         population = _integer(data, "population", 1)
         children = _integer(data, "children", 1)
         stop = data["stop"]
@@ -58,18 +85,24 @@ def build_run_config(data: dict[str, Any]) -> RunConfig:
         probability = float(data["recombination_probability"])
         if not 0 <= probability <= 1:
             raise ConfigError(f"recombination_probability must be in [0, 1], got {probability!r}")
-        parents_spec = data["parents"]
-        replacement_spec = data["replacement"]
+
+        selection_specs = {slot: data[slot] for slot in SELECTION_SLOTS}
         crossover_spec = data["crossover"]
         mutation_spec = data["mutation"]
         survival_spec = data["survival"]
-        if not all(isinstance(item, dict) for item in (parents_spec, replacement_spec, crossover_spec, mutation_spec, survival_spec)):
+        if not all(isinstance(item, dict) for item in (*selection_specs.values(), crossover_spec, mutation_spec, survival_spec)):
             raise ConfigError("operator settings must be objects")
-        parent_selection = SELECTION.build(parents_spec)
-        replacement = SELECTION.build(replacement_spec)
+
+        # Desugar in exactly one function, applied to both slots, so the
+        # archived effective config below always records what actually ran.
+        desugared = {slot: desugar_selection(spec) for slot, spec in selection_specs.items()}
+        parent_selection = SELECTION.build(desugared["parents"])
+        replacement = SELECTION.build(desugared["replacement"])
+
+        effective = {**data, **desugared}
         return RunConfig(population, children, max_generations, probability, parent_selection, replacement,
                          CROSSOVER.build(crossover_spec), MUTATION.build(mutation_spec),
-                         SURVIVAL.build({**survival_spec, "replacement": replacement}), data)
+                         SURVIVAL.build({**survival_spec, "replacement": replacement}), effective)
     except (KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, ConfigError):
             raise
