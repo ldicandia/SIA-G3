@@ -9,8 +9,9 @@ are orthogonal and deliberately do not share vocabulary; see CATEDRA.md's
 
 from __future__ import annotations
 
+import inspect
 import math
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -80,7 +81,7 @@ def boltzmann_exp_val(
 
 @SELECTION.register("elite")
 def make_elite():
-    def select(fitness: np.ndarray, k: int, _: np.random.Generator) -> np.ndarray:
+    def select(fitness: np.ndarray, k: int, _: np.random.Generator, ctx: Any = None) -> np.ndarray:
         if k < 0 or fitness.size == 0:
             raise ValueError("selection requires non-empty population and non-negative count")
         ordered = np.argsort(-fitness, kind="stable")
@@ -91,7 +92,7 @@ def make_elite():
 @SELECTION.register("random")
 def make_random():
     """Muestreo Aleatorio (CATEDRA.md): picks at random, with no regard for fitness."""
-    def select(fitness: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
+    def select(fitness: np.ndarray, k: int, rng: np.random.Generator, ctx: Any = None) -> np.ndarray:
         if k < 0 or fitness.size == 0:
             raise ValueError("selection requires non-empty population and non-negative count")
         return rng.integers(0, fitness.size, size=k)
@@ -117,11 +118,18 @@ def make_blend(
 
     select_1 = SELECTION.build(method_1, depth=depth + 1)
     select_2 = SELECTION.build(method_2, depth=depth + 1)
+    # Same introspection idiom Registry.build() already uses for `depth`
+    # (registry.py): only forward `ctx` to a sub-select that declares it, so
+    # a selection callable that predates the ctx contract (or is registered
+    # ad hoc, e.g. by a test) keeps working unchanged instead of raising a
+    # TypeError on an unexpected keyword argument.
+    select_1_accepts_ctx = "ctx" in inspect.signature(select_1).parameters
+    select_2_accepts_ctx = "ctx" in inspect.signature(select_2).parameters
 
-    def select(fitness: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
+    def select(fitness: np.ndarray, k: int, rng: np.random.Generator, ctx: Any = None) -> np.ndarray:
         n1 = int(round(coefficient * k))
-        first = select_1(fitness, n1, rng)
-        second = select_2(fitness, k - n1, rng)
+        first = select_1(fitness, n1, rng, ctx=ctx) if select_1_accepts_ctx else select_1(fitness, n1, rng)
+        second = select_2(fitness, k - n1, rng, ctx=ctx) if select_2_accepts_ctx else select_2(fitness, k - n1, rng)
         return np.concatenate([first, second])
     return select
 
@@ -129,7 +137,7 @@ def make_blend(
 @SELECTION.register("roulette")
 def make_roulette():
     """SEL-02: Roulette selection over relative aptitude wheel."""
-    def select(fitness: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
+    def select(fitness: np.ndarray, k: int, rng: np.random.Generator, ctx: Any = None) -> np.ndarray:
         if k < 0 or fitness.size == 0:
             raise ValueError("selection requires non-empty population and non-negative count")
         return sample_from_weights(fitness, k, mode="roulette", rng=rng)
@@ -139,7 +147,7 @@ def make_roulette():
 @SELECTION.register("universal")
 def make_universal():
     """SEL-03: Stochastic Universal Sampling (SUS) over relative aptitude wheel."""
-    def select(fitness: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
+    def select(fitness: np.ndarray, k: int, rng: np.random.Generator, ctx: Any = None) -> np.ndarray:
         if k < 0 or fitness.size == 0:
             raise ValueError("selection requires non-empty population and non-negative count")
         return sample_from_weights(fitness, k, mode="sus", rng=rng)
@@ -149,7 +157,7 @@ def make_universal():
 @SELECTION.register("ranking")
 def make_ranking():
     """SEL-04: Ranking selection running roulette on pseudo-fitness (N - rank(i)) / N."""
-    def select(fitness: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
+    def select(fitness: np.ndarray, k: int, rng: np.random.Generator, ctx: Any = None) -> np.ndarray:
         if k < 0 or fitness.size == 0:
             raise ValueError("selection requires non-empty population and non-negative count")
         pseudo_fitness = ranking_pseudo_fitness(fitness)
@@ -177,14 +185,28 @@ def make_boltzmann(
     tc_val = float(tc)
     k_val = float(k) if k is not None else None
 
-    # Counter tracking generation invocations
-    gen_counter = [0]
-
-    def select(fitness: np.ndarray, count: int, rng: np.random.Generator, generation: int | None = None) -> np.ndarray:
+    def select(
+        fitness: np.ndarray,
+        count: int,
+        rng: np.random.Generator,
+        generation: int | None = None,
+        ctx: Any = None,
+    ) -> np.ndarray:
         if count < 0 or fitness.size == 0:
             raise ValueError("selection requires non-empty population and non-negative count")
-        t = gen_counter[0] if generation is None else generation
-        gen_counter[0] += 1
+        # Real generation number, in priority order: an explicit ctx (the
+        # loop's real wiring), then an explicit `generation` kwarg (direct
+        # callers / tests), then 0 -- there is no hidden internal call
+        # counter here anymore. A counter silently desynced from the real
+        # generation number the moment a caller (e.g. generational_gap's
+        # up-to-2x-per-generation replacement calls) invoked this more or
+        # less than once per real generation; see REVIEW.md CR-02.
+        if ctx is not None and hasattr(ctx, "generation"):
+            t = ctx.generation
+        elif generation is not None:
+            t = generation
+        else:
+            t = 0
 
         exp_val = boltzmann_exp_val(fitness, t0_val, tc_val, k_val, generation=t)
         return sample_from_weights(exp_val, count, mode="roulette", rng=rng)
@@ -202,7 +224,7 @@ def make_tournament_deterministic(m: int | None = None):
 
     m_val = m
 
-    def select(fitness: np.ndarray, count: int, rng: np.random.Generator) -> np.ndarray:
+    def select(fitness: np.ndarray, count: int, rng: np.random.Generator, ctx: Any = None) -> np.ndarray:
         n = fitness.size
         if count < 0 or n == 0:
             raise ValueError("selection requires non-empty population and non-negative count")
@@ -234,7 +256,7 @@ def make_tournament_probabilistic(threshold: float | None = None):
 
     thresh_val = float(threshold)
 
-    def select(fitness: np.ndarray, count: int, rng: np.random.Generator) -> np.ndarray:
+    def select(fitness: np.ndarray, count: int, rng: np.random.Generator, ctx: Any = None) -> np.ndarray:
         n = fitness.size
         if count < 0 or n == 0:
             raise ValueError("selection requires non-empty population and non-negative count")

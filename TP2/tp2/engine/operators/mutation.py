@@ -70,18 +70,38 @@ def _validate_common_params(probability: float, schedule: str, b: float, sigma: 
     return float(probability), schedule, float(b), per_triangle
 
 
-def _get_generation_progress(ctx: Any, gen_counter: list[int], gen_arg: int | None, max_gen_arg: int | None) -> float:
-    """Extract generation and compute clamped progress = min(gen / max_gen, 1.0)."""
+def _get_generation_progress(ctx: Any, gen_arg: int | None, max_gen_arg: int | None) -> float:
+    """Extract generation and compute clamped progress = min(gen / max_gen, 1.0).
+
+    Requires either `ctx` (with `.generation`/`.max_generations`, e.g. the
+    engine's `GenerationContext`) or an explicit `generation` plus
+    `max_generations` -- there is no hidden internal call counter and no
+    invented default horizon. Before this fix, an unwired caller silently
+    fell back to a per-*call* counter capped at a hardcoded
+    `max_generations=100`; since mutation runs once per offspring (not once
+    per generation), that counter saturated `progress` to `1.0` within a
+    handful of real generations and made `schedule: "non_uniform"` a
+    permanent no-op for the rest of the run (REVIEW.md CR-01). Raising here
+    instead surfaces the missing wiring immediately, rather than silently
+    mis-scheduling the Michalewicz decay.
+    """
     if ctx is not None and hasattr(ctx, "generation") and hasattr(ctx, "max_generations"):
         gen = ctx.generation
         max_gen = ctx.max_generations
     elif gen_arg is not None:
+        if max_gen_arg is None:
+            raise ValueError(
+                "non_uniform mutation schedule needs max_generations when generation is "
+                "passed without ctx -- pass max_generations explicitly or supply a ctx with "
+                "generation/max_generations set"
+            )
         gen = gen_arg
-        max_gen = max_gen_arg if max_gen_arg is not None else 100
+        max_gen = max_gen_arg
     else:
-        gen = gen_counter[0]
-        gen_counter[0] += 1
-        max_gen = max_gen_arg if max_gen_arg is not None else 100
+        raise ValueError(
+            "non_uniform mutation schedule needs a ctx (with .generation/.max_generations) "
+            "or explicit generation/max_generations arguments -- got neither"
+        )
 
     if max_gen <= 0:
         return 1.0
@@ -134,7 +154,6 @@ def make_gene(
 ):
     """MUT-01: Single gene mutation."""
     prob_val, sched_val, b_val, per_tri_sigma = _validate_common_params(probability, schedule, b, sigma)
-    gen_counter = [0]
 
     def mutate(
         genes: np.ndarray,
@@ -151,7 +170,7 @@ def make_gene(
         sigmas = np.tile(per_tri_sigma, triangles)
         bounds = bounds_for(triangles)
 
-        progress = _get_generation_progress(ctx, gen_counter, generation, max_generations)
+        progress = _get_generation_progress(ctx, generation, max_generations) if sched_val == "non_uniform" else 0.0
         locus = int(rng.integers(child.size))
         apply_gene_mutation(child, locus, sched_val, b_val, progress, sigmas, bounds, rng)
         return child
@@ -174,7 +193,6 @@ def make_multigen_limited(
         raise ConfigError(f"multigen_limited m must be an integer >= 1, got {m!r}")
 
     prob_val, sched_val, b_val, per_tri_sigma = _validate_common_params(probability, schedule, b, sigma)
-    gen_counter = [0]
     m_val = m
 
     def mutate(
@@ -191,7 +209,7 @@ def make_multigen_limited(
         triangles = child.size // GENES_PER_TRIANGLE
         sigmas = np.tile(per_tri_sigma, triangles)
         bounds = bounds_for(triangles)
-        progress = _get_generation_progress(ctx, gen_counter, generation, max_generations)
+        progress = _get_generation_progress(ctx, generation, max_generations) if sched_val == "non_uniform" else 0.0
 
         count_limit = min(m_val, child.size)
         # Exact integer count in [1, count_limit]
@@ -216,7 +234,6 @@ def make_multigen_uniform(
 ):
     """MUT-03: Uniform multigene mutation where each locus independently has probability Pm."""
     prob_val, sched_val, b_val, per_tri_sigma = _validate_common_params(probability, schedule, b, sigma)
-    gen_counter = [0]
 
     def mutate(
         genes: np.ndarray,
@@ -232,7 +249,7 @@ def make_multigen_uniform(
         triangles = child.size // GENES_PER_TRIANGLE
         sigmas = np.tile(per_tri_sigma, triangles)
         bounds = bounds_for(triangles)
-        progress = _get_generation_progress(ctx, gen_counter, generation, max_generations)
+        progress = _get_generation_progress(ctx, generation, max_generations) if sched_val == "non_uniform" else 0.0
 
         if prob_val == 1.0:
             for locus in range(child.size):
@@ -257,7 +274,6 @@ def make_complete(
 ):
     """MUT-04: Complete mutation where every gene of the individual mutates with probability Pm."""
     prob_val, sched_val, b_val, per_tri_sigma = _validate_common_params(probability, schedule, b, sigma)
-    gen_counter = [0]
 
     def mutate(
         genes: np.ndarray,
@@ -273,7 +289,7 @@ def make_complete(
         triangles = child.size // GENES_PER_TRIANGLE
         sigmas = np.tile(per_tri_sigma, triangles)
         bounds = bounds_for(triangles)
-        progress = _get_generation_progress(ctx, gen_counter, generation, max_generations)
+        progress = _get_generation_progress(ctx, generation, max_generations) if sched_val == "non_uniform" else 0.0
 
         for locus in range(child.size):
             apply_gene_mutation(child, locus, sched_val, b_val, progress, sigmas, bounds, rng)

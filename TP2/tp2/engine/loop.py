@@ -48,7 +48,16 @@ class Run:
         generation = 0
         while True:
             generation += 1
-            parent_indices = self.config.parents(population.fitness, self.config.children, self.rng)
+            # This generation's context, built once and threaded into every
+            # parents/mutation/survival(replacement) call below. Without it,
+            # non_uniform mutation and boltzmann selection have no way to
+            # know the real generation number (REVIEW.md CR-01/CR-02): the
+            # fitness/renders/elapsed snapshot here is from *before* this
+            # generation's offspring are evaluated, matching the same
+            # before-this-iteration snapshot convention `hillclimber.py`
+            # uses when it builds a `ctx` ahead of `mutate(...)`.
+            gen_ctx = GenerationContext(generation, self.config.horizon, self.evaluator.renders, elapsed, population.fitness)
+            parent_indices = self.config.parents(population.fitness, self.config.children, self.rng, ctx=gen_ctx)
             offspring: list[np.ndarray] = []
             # Pairs are formed in the order selection returned them -- (0,1),
             # (2,3), ... -- with no re-sort. `paired` is the largest even
@@ -63,8 +72,8 @@ class Run:
                     child_1, child_2 = self.config.crossover(first, second, self.rng)
                 else:
                     child_1, child_2 = first.copy(), second.copy()
-                offspring.append(self.config.mutation(child_1, self.rng))
-                offspring.append(self.config.mutation(child_2, self.rng))
+                offspring.append(self.config.mutation(child_1, self.rng, ctx=gen_ctx))
+                offspring.append(self.config.mutation(child_2, self.rng, ctx=gen_ctx))
             if len(parent_indices) % 2:
                 # Odd child count: the trailing parent has no partner. Per
                 # the cátedra's rule for a non-recombined pairing, it is
@@ -72,12 +81,12 @@ class Run:
                 # wrapped-around partner, and it still passes through
                 # mutation.
                 leftover = population.genes[parent_indices[-1]]
-                offspring.append(self.config.mutation(leftover.copy(), self.rng))
+                offspring.append(self.config.mutation(leftover.copy(), self.rng, ctx=gen_ctx))
             child_genes = np.asarray(offspring, dtype=np.float32)
             child_fitness, child_frames = self.evaluator.evaluate_population(child_genes)
             frame_cache.update({row.tobytes(): frame for row, frame in zip(child_genes, child_frames)})
             children = Population(child_genes, child_fitness)
-            population = self.config.survival(population, children, self.rng)
+            population = self.config.survival(population, children, self.rng, ctx=gen_ctx)
             elapsed = time.perf_counter() - started
             ctx = GenerationContext(generation, self.config.horizon, self.evaluator.renders, elapsed, population.fitness)
             reason = self.config.stop.check(ctx, population)

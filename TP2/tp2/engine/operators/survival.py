@@ -12,7 +12,7 @@ governing different steps of the loop: G governs survival pool split; A/B govern
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -29,10 +29,10 @@ __all__ = [
 @SURVIVAL.register("additive")
 def make_additive(replacement: Callable):
     """SUR-01: Additive survival selecting N from N+K union pool."""
-    def survive(parents: Population, children: Population, rng: np.random.Generator) -> Population:
+    def survive(parents: Population, children: Population, rng: np.random.Generator, ctx: Any = None) -> Population:
         n = parents.genes.shape[0]
         union = Population.concat(parents, children)
-        indices = replacement(union.fitness, n, rng)
+        indices = replacement(union.fitness, n, rng, ctx=ctx)
         return Population(union.genes[indices].copy(), union.fitness[indices].copy())
     return survive
 
@@ -44,18 +44,18 @@ def make_exclusive(replacement: Callable):
     Per CATEDRA warning: the branch boundary is K > N, not K >= N.
     At K == N both branches coincide to all K children and 0 parents.
     """
-    def survive(parents: Population, children: Population, rng: np.random.Generator) -> Population:
+    def survive(parents: Population, children: Population, rng: np.random.Generator, ctx: Any = None) -> Population:
         n = parents.genes.shape[0]
         k = children.genes.shape[0]
 
         if k > n:
             # Branch K > N: select N from children exclusively
-            indices = replacement(children.fitness, n, rng)
+            indices = replacement(children.fitness, n, rng, ctx=ctx)
             return Population(children.genes[indices].copy(), children.fitness[indices].copy())
 
         # Branch K <= N: all K children unconditionally, plus (N - K) parents
         if k == 0:
-            p_indices = replacement(parents.fitness, n, rng)
+            p_indices = replacement(parents.fitness, n, rng, ctx=ctx)
             return Population(parents.genes[p_indices].copy(), parents.fitness[p_indices].copy())
 
         if k == n:
@@ -63,7 +63,7 @@ def make_exclusive(replacement: Callable):
 
         # 0 < k < n: children first, then selected parents
         n_needed = n - k
-        p_indices = replacement(parents.fitness, n_needed, rng)
+        p_indices = replacement(parents.fitness, n_needed, rng, ctx=ctx)
         sel_parents = Population(parents.genes[p_indices].copy(), parents.fitness[p_indices].copy())
         return Population.concat(Population(children.genes.copy(), children.fitness.copy()), sel_parents)
 
@@ -80,22 +80,22 @@ def make_generational_gap(replacement: Callable, gap: float = 0.5):
 
     gap_val = float(gap)
 
-    def survive(parents: Population, children: Population, rng: np.random.Generator) -> Population:
+    def survive(parents: Population, children: Population, rng: np.random.Generator, ctx: Any = None) -> Population:
         n = parents.genes.shape[0]
         # Exact integer split guaranteed to sum to n
         n_prev = int(round((1.0 - gap_val) * n))
         n_child = n - n_prev
 
         if n_prev == n:
-            p_indices = replacement(parents.fitness, n, rng)
+            p_indices = replacement(parents.fitness, n, rng, ctx=ctx)
             return Population(parents.genes[p_indices].copy(), parents.fitness[p_indices].copy())
 
         if n_child == n:
-            c_indices = replacement(children.fitness, n, rng)
+            c_indices = replacement(children.fitness, n, rng, ctx=ctx)
             return Population(children.genes[c_indices].copy(), children.fitness[c_indices].copy())
 
-        p_indices = replacement(parents.fitness, n_prev, rng) if n_prev > 0 else np.array([], dtype=int)
-        c_indices = replacement(children.fitness, n_child, rng) if n_child > 0 else np.array([], dtype=int)
+        p_indices = replacement(parents.fitness, n_prev, rng, ctx=ctx) if n_prev > 0 else np.array([], dtype=int)
+        c_indices = replacement(children.fitness, n_child, rng, ctx=ctx) if n_child > 0 else np.array([], dtype=int)
 
         p_sel = Population(parents.genes[p_indices].copy(), parents.fitness[p_indices].copy())
         c_sel = Population(children.genes[c_indices].copy(), children.fitness[c_indices].copy())
