@@ -161,7 +161,14 @@ def run_cell_seed(job: CellJob) -> CellRunSummary:
             for event in run:
                 writer(event)
         result = run.result
-        assert result is not None, "Run.__iter__ must set run.result on its final yielded event"
+        # WR-05: an explicit raise, not a bare `assert` -- this is a
+        # defensive invariant check on library behavior, not a test
+        # assertion, so it must still hold under `python -O` (assertions
+        # stripped), rather than silently falling through to an
+        # `AttributeError` on `result.stop_reason` below with a far less
+        # informative message.
+        if result is None:
+            raise RuntimeError("Run.__iter__ must set run.result on its final yielded event")
 
         versions = {"python": platform.python_version(), "numpy": np.__version__, "pillow": PIL.__version__}
         # The resolved integer `children` (never the nominal ratio alone) is
