@@ -1,4 +1,5 @@
 .planning/
+.gsd/
 .claude/
 __pycache__/
 *.pyc

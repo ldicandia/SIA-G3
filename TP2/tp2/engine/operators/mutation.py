@@ -15,7 +15,7 @@ def make_gene(probability: float):
 
     def mutate(genes: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         child = np.asarray(genes, dtype=np.float32).copy()
-        if rng.random() >= probability:
+        if child.size == 0 or rng.random() >= probability:
             return child
         locus = int(rng.integers(child.size))
         if locus % GENES_PER_TRIANGLE == ACTIVE:

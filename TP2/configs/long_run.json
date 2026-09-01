@@ -1,11 +1,11 @@
 {
-  "population": 30,
-  "children": 40,
-  "recombination_probability": 0.8,
+  "population": 50,
+  "children": 50,
+  "recombination_probability": 0.85,
   "parents": {"method": "elite"},
   "replacement": {"method": "elite"},
   "crossover": {"method": "one_point", "boundary": "triangle"},
-  "mutation": {"method": "gene", "probability": 0.8},
+  "mutation": {"method": "gene", "probability": 0.3},
   "survival": {"method": "additive"},
-  "stop": {"max_generations": 3000}
+  "stop": {"max_generations": 2500}
 }
