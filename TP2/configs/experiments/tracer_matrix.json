@@ -1,0 +1,24 @@
+{
+  "baseline": "../baseline.json",
+  "base_seed": 999,
+  "seeds": 2,
+  "out_root": "runs/_matrix_tracer",
+  "image": "../../assets/flag_ar.png",
+  "canvas": 32,
+  "triangles": 6,
+  "scale_overrides": {
+    "population": 6,
+    "children": 6,
+    "horizon": 5,
+    "stop": {"max_generations": true}
+  },
+  "arms": {
+    "selection": {
+      "elite": {},
+      "roulette": {
+        "parents": {"method": "roulette"},
+        "replacement": {"method": "roulette"}
+      }
+    }
+  }
+}
