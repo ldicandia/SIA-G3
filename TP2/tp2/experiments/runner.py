@@ -23,6 +23,7 @@ view, from an ordinary single-run invocation.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import multiprocessing
@@ -277,17 +278,11 @@ def main(argv: list[str] | None = None) -> int:
 
         spec = load_matrix_spec(args.spec)
         out_root = args.out if args.out.is_absolute() else PROJECT_ROOT / args.out
-        spec = MatrixSpec(
-            baseline_path=spec.baseline_path,
-            base_seed=spec.base_seed,
-            seeds=spec.seeds,
-            arms=spec.arms,
-            out_root=out_root,
-            image_path=spec.image_path,
-            canvas=spec.canvas,
-            triangles=spec.triangles,
-            scale_overrides=spec.scale_overrides,
-        )
+        # WR-03: dataclasses.replace, not a manual re-listing of every
+        # MatrixSpec field -- a field added to MatrixSpec later with a
+        # default would otherwise silently fall back to that default here
+        # instead of forwarding the loaded spec's actual value.
+        spec = dataclasses.replace(spec, out_root=out_root)
 
         cells = build_cells(spec)
         total = len(cells) * spec.seeds
