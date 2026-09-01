@@ -1,106 +1,145 @@
-# TP2 — Algoritmos Genéticos
+# SIA TP2 — Algoritmos Genéticos
 
-This project implements the course genetic algorithm from scratch. It approximates
-an RGB target with an ordered stack of translucent triangles. NumPy and Pillow are
-used solely for arrays and image rasterization; no genetic-algorithm library is
-used.
+A hand-written genetic algorithm engine — no genetic-algorithm library anywhere near it,
+per the enunciado's explicit prohibition — that approximates a target image with translucent
+triangles on a blank canvas. Built for ITBA "Sistemas de Inteligencia Artificial" TP2,
+Ejercicio 2 ("un compresor de imágenes un tanto peculiar"). Given a target image and a
+triangle budget, the engine evolves a population of triangle sets, generation after
+generation, until the rendered result resembles the original. The complete operator matrix
+the cátedra mandates — all nine selection methods, all four crossover methods, all four
+mutation scopes and all three survival strategies — is selectable from a single JSON
+configuration file, with no code changes required to switch between them.
 
-## Representation: image structures and genes
+The deliverable is not "a renderer that happens to work" — it is a defensible, measured
+comparison. Every operator choice documented below is backed by an experiment matrix and a
+set of comparative figures built to defend that choice in front of the cátedra, not merely
+a working image approximation.
 
-An individual is a fixed-length `float32` vector with `11 × budget` values. It is
-viewed as a `(budget, 11)` table only when it needs to be read or rendered:
+## Installation
 
-| Loci | Meaning | Stored range | Rendered form |
-|---|---|---|---|
-| 0–5 | `(x1,y1), (x2,y2), (x3,y3)` | `[-0.1, 1.1]` | fractions of canvas width/height |
-| 6–8 | red, green, blue | `[0, 1]` | 0–255 RGB |
-| 9 | alpha | `[0.1, 0.9]` | 0–255 opacity |
-| 10 | active flag | `[0, 1]` | active when `>= 0.5` |
+Python runs through a **WSL** virtual environment, never a Windows-side one — a Windows venv
+is known broken for this project's dependencies (the same constraint TP1 in this repo hit
+first). Open a WSL/Linux shell inside the cloned `TP2/` directory, or prefix every command
+below with:
 
-So, a *gene* is one scalar allele; a triangle is an 11-gene block; and an
-individual is a chromosome of `budget` blocks. The chromosome length is fixed so
-one-point, two-point, uniform, and ring crossover all remain well defined. The
-active flag gives a variable **effective** triangle count without requiring
-unequal-length parents. Triangles are drawn in chromosome order over an opaque
-white background, so later translucent triangles blend over earlier ones.
+```
+wsl.exe bash -lc 'cd /path/to/TP2 && <command>'
+```
 
-All coordinates are normalized. The small overshoot band lets triangles cover
-canvas edges, and means changing `--canvas` needs no genome conversion. At the
-disk boundary, the vector is decoded into named triangles in `triangles.json`, so
-the output stays readable.
-
-Current fitness is `max(1 - sqrt(SSE / max_SSE), 1e-12)`: higher is better, an
-exact image is `1.0`, and the positive floor keeps roulette selection valid.
-
-## Run locally (macOS, Linux, Windows/WSL)
-
-Run these commands from `TP2/`; no absolute user paths are required.
+(replace `/path/to/TP2` with wherever you cloned this repo — do not copy a path from someone
+else's machine). Every command in this README assumes you are inside that shell, in the
+`TP2/` directory, and uses the `.venv/bin/python` form consistently rather than an activated
+shell — the two are equivalent, but this README sticks to one so every command below is
+copy-pasteable verbatim.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python scripts/make_assets.py
-.venv/bin/python -m tp2 \
-  --image assets/flag_ar.png --triangles 30 --population 8 \
-  --canvas 128 --seed 42 --out runs/first-run
+.venv/bin/pip install -r requirements.txt
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1` and replace
-`.venv/bin/python` with `.venv\Scripts\python.exe`. The CLI prints the output
-directory and writes `best.png`, `triangles.json`, `run.json`, and `metrics.csv`.
-It will not overwrite an existing non-empty run directory unless `--force` is
-given.
+`requirements.txt` pins five packages: **Pillow** (`==12.3.0`, pinned to an exact version
+because a few of this project's must-haves are byte-reproducibility claims that would drift
+across Pillow releases), **numpy** (`>=1.26,<3`; verified against `2.5.2`), **pygame-ce**
+(`>=2.5,<3`; verified against `2.5.8` — used only by the optional live viewer), **matplotlib**
+(`>=3.8,<4`; verified against `3.11.1` — used only by the experiment plots), and **pytest**
+(`>=8,<10`; verified against `9.1.1`). Note the package name: it is `pygame-ce`, not `pygame`
+— both install a module literally named `pygame`, so having both installed at once is a
+broken environment; install only what `requirements.txt` names.
 
-## Run in Google Colab
-
-Use a notebook cell (replace the repository URL with your fork if needed):
-
-```python
-!git clone https://github.com/<owner>/SIA-G3.git
-%cd SIA-G3/TP2
-!python -m pip install -r requirements.txt
-!python scripts/make_assets.py
-!python -m tp2 --image assets/flag_ar.png --triangles 30 --population 8 --seed 42 --out runs/colab-run
-```
-
-Download `runs/colab-run/` when the run finishes. The engine is headless; a
-display and a continuously powered personal laptop are not required.
-
-## Current status
-
-## Evolve the flag, with live notebook progress
-
-The baseline loop uses cátedra-style elite parent/replacement selection,
-one-point crossover, per-gene mutation, additive survival, and a generation
-cap. It records one CSV row per generation:
+## Running the Engine
 
 ```bash
-.venv/bin/python -m tp2 \
-  --image assets/flag_ar.png --triangles 80 --canvas 128 --seed 42 \
-  --config configs/baseline.json --out runs/flag-evolution
+.venv/bin/python -m tp2 --image assets/flag_ar.png --triangles 30 --config configs/baseline.json --seed 42 --out runs/demo
 ```
 
-For a live inline image in **Colab/Jupyter**, run the CLI in the *notebook
-kernel* (not with `!python`, which starts a separate process that cannot redraw
-the current output cell):
+`--image` is always required. `--triangles` (the chromosome's triangle budget) and
+`--config` (the JSON hyperparameter file — see [Configuration](#configuration-json-hyperparameters)
+below) are the two flags you will always want to set explicitly in practice;
+`configs/baseline.json` is the shipped starting point and a reasonable default for a first
+run. A successful run writes four artifacts under a fresh directory inside `runs/`:
 
-```python
-from tp2.cli import main
+- `best.png` — the rendered best individual found, as a PNG.
+- `triangles.json` — the enumeration of that individual's triangles (position, colour, and
+  active flag per triangle).
+- `run.json` — the effective configuration actually used (including the resolved seed),
+  library versions, the git commit, and the reason the run stopped.
+- `metrics.csv` — one row per generation: fitness, error, generation number, render count,
+  and elapsed time.
 
-main([
-    "--image", "assets/flag_ar.png",
-    "--triangles", "80",
-    "--canvas", "128",
-    "--seed", "42",
-    "--config", "configs/baseline.json",
-    "--notebook", "--notebook-every", "2",
-    "--out", "runs/flag-live",
-])
+**Omitting `--seed`** still produces a fully reproducible run: a seed is drawn at random and
+archived verbatim in `run.json`, so passing that same value back in with `--seed` replays the
+exact same run. **Omitting `--out`** does not skip writing output — it defaults to a
+timestamped directory created fresh under `runs/`. **Re-running into the SAME `--out`
+directory without `--force`** does not silently overwrite what is there: it raises an error
+naming the colliding path. Passing `--force` is the explicit way to opt into overwriting an
+existing run directory.
+
+## Running the Viewer
+
+```bash
+.venv/bin/python -m tp2 --image assets/flag_ar.png --triangles 30 --config configs/baseline.json --seed 42 --out runs/demo_viewer --viewer
 ```
 
-The cell refreshes with the current best image, generation, fitness, and render
-count. `--notebook-every 5` is useful for longer runs.
+Same command as above, with `--viewer` appended — the engine itself never imports `pygame`
+and runs identically either way; `--viewer` only adds a live display on top. This opens a
+window showing the best individual evolving generation by generation, with generation
+number, fitness, and render count overlaid. `--viewer-scale` (default 4) controls the
+window's pixel scale factor, and `--viewer-every` (default 1) controls how often the display
+redraws (every Nth generation). Closing the viewer window ends the run cleanly rather than
+crashing — the run's artifacts are still written, and `run.json`'s `stop_reason` records
+`viewer_closed` so it is distinguishable from a run that reached its own stop condition
+naturally.
 
-Current implementation includes the first multi-generation operator slice;
-the remaining operator variants and a standalone browser viewer follow in later
-milestones.
+## Running Experiments
+
+```bash
+.venv/bin/python -m tp2.experiments.runner --spec configs/experiments/main_matrix.json --out runs/matrix --jobs 8
+```
+
+This is a **long-running command** — multiple minutes on a multi-core machine, not a quick
+check. The shipped matrix spec is 15 cells (7 selection methods, 6 survival/`K:N` ratio
+combinations, and 2 crossover-honesty controls) times 5 seeds each = 75 independent runs,
+distributed across a process pool sized by `--jobs` (defaults to `min(cpu_count, 16)`). Do
+not expect this to finish in the time it takes to read this README.
+
+Once a matrix run has completed, turn it into figures with a second, much smaller command:
+
+```bash
+.venv/bin/python scripts/generate_plots.py
+```
+
+This reads the `metrics.csv` / `run.json` files `runs/matrix/` and `runs/hillclimber/`
+already contain and writes five comparative figures under `plots/` — it never re-runs the
+GA, so it can be re-run any time (after tweaking a plot's styling, for example) at
+effectively zero cost.
+
+## Running the Hill-Climber Baseline
+
+```bash
+.venv/bin/python -m tp2.baselines.hillclimber --image assets/flag_ar.png --triangles 30 --config configs/baseline.json --seed 1 --out runs/hillclimber
+```
+
+This is a `(1+1)` stochastic hill climber — population size one, mutate-and-accept-if-better,
+no crossover, no selection pressure over a population — used only as an honest,
+equal-render-budget comparison point in the presentation. It is **never** "the baseline GA":
+it is not a genetic algorithm at all, and calling it one misrepresents the comparison it
+exists to make.
+
+## Testing
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+Runs the full suite from the WSL venv. The suite includes one slow convergence-gate test
+(seeded 3-run gate checking real convergence above a fitness threshold); exclude it with
+`-m "not slow"` for a fast pass during normal development.
+
+## Shipped Targets
+
+Three target images ship under `assets/`: `flag_ar.png` (a flag), `silhouette.png`, and
+`pictogram.png` — all deliberately simple, per the enunciado's own advice to start with
+flags, silhouettes, pictograms, and similarly simple shapes rather than photographs. They
+are generated by `scripts/make_assets.py` from committed drawing primitives, not sourced
+from anywhere external.
+
