@@ -49,6 +49,14 @@ def ranking_pseudo_fitness(fitness: np.ndarray) -> np.ndarray:
     n = fitness.size
     if n == 0:
         return np.empty(0, dtype=np.float64)
+    if n == 1:
+        # A size-1 pool's lone individual is both best and worst by
+        # construction; the general formula assigns it f'=0.0 (the "worst
+        # is never selected" invariant), which makes it unselectable and
+        # crashes downstream roulette sampling on an all-zero weight vector
+        # (REVIEW.md WR-01). A lone individual must always be selectable,
+        # matching tournament_probabilistic's existing n==1 special case.
+        return np.array([1.0], dtype=np.float64)
     order = np.argsort(-fitness, kind="stable")
     ranks = np.empty(n, dtype=np.float64)
     ranks[order] = np.arange(1, n + 1, dtype=np.float64)
