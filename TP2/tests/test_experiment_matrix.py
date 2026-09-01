@@ -1,5 +1,6 @@
 """Pure matrix-cell generation tests (EXP-01/EXP-02): product_cells,
-apply_overrides, and load_matrix_spec validation.
+apply_overrides, load_matrix_spec validation, and the shipped
+configs/experiments/main_matrix.json's resolved 15-cell x 5-seed design.
 
 No process is spawned anywhere in this file -- that is `test_experiment_runner.py`'s job.
 """
@@ -13,9 +14,13 @@ import pytest
 from tp2.experiments.matrix import (
     MatrixSpecError,
     apply_overrides,
+    build_cells,
     load_matrix_spec,
     product_cells,
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MAIN_MATRIX_PATH = PROJECT_ROOT / "configs" / "experiments" / "main_matrix.json"
 
 
 # --- product_cells -----------------------------------------------------------
@@ -136,3 +141,42 @@ def test_load_matrix_spec_resolves_baseline_relative_to_spec_dir(tmp_path: Path)
     spec = load_matrix_spec(spec_path)
     assert spec.baseline_path == (tmp_path / "baseline.json").resolve()
     assert spec.seeds == 2
+
+
+# --- configs/experiments/main_matrix.json: the resolved 15-cell design ---------
+
+
+def test_main_matrix_parses_and_builds_fifteen_cells() -> None:
+    spec = load_matrix_spec(MAIN_MATRIX_PATH)
+    cells = build_cells(spec)
+    assert len(cells) == 15
+    selection = [c for c in cells if c.cell_id.startswith("selection-")]
+    survival = [c for c in cells if c.cell_id.startswith("survival_kn-")]
+    crossover = [c for c in cells if c.cell_id.startswith("crossover_control-")]
+    assert len(selection) == 7
+    assert len(survival) == 6
+    assert len(crossover) == 2
+
+
+def test_main_matrix_seeds_and_total_run_count() -> None:
+    spec = load_matrix_spec(MAIN_MATRIX_PATH)
+    cells = build_cells(spec)
+    assert spec.seeds == 5
+    assert len(cells) * spec.seeds == 75
+
+
+def test_main_matrix_survival_kn_cells_carry_children_ratio_never_hardcoded_children() -> None:
+    spec = load_matrix_spec(MAIN_MATRIX_PATH)
+    cells = build_cells(spec)
+    survival = [c for c in cells if c.cell_id.startswith("survival_kn-")]
+    assert len(survival) == 6
+    for cell in survival:
+        assert "children_ratio" in cell.overrides
+        assert "children" not in cell.overrides
+
+
+def test_main_matrix_all_cell_ids_are_unique() -> None:
+    spec = load_matrix_spec(MAIN_MATRIX_PATH)
+    cells = build_cells(spec)
+    ids = [c.cell_id for c in cells]
+    assert len(ids) == len(set(ids))
