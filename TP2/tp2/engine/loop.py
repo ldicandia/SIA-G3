@@ -39,16 +39,29 @@ class Run:
         for generation in range(1, self.config.max_generations + 1):
             parent_indices = self.config.parents(population.fitness, self.config.children, self.rng)
             offspring: list[np.ndarray] = []
-            for start in range(0, self.config.children, 2):
+            # Pairs are formed in the order selection returned them -- (0,1),
+            # (2,3), ... -- with no re-sort. `paired` is the largest even
+            # count <= len(parent_indices); a strict `<` against a uniform
+            # draw means probability 0.0 never recombines and 1.0 always
+            # does.
+            paired = len(parent_indices) - (len(parent_indices) % 2)
+            for start in range(0, paired, 2):
                 first = population.genes[parent_indices[start]]
-                second = population.genes[parent_indices[(start + 1) % len(parent_indices)]]
+                second = population.genes[parent_indices[start + 1]]
                 if self.rng.random() < self.config.recombination_probability:
                     child_1, child_2 = self.config.crossover(first, second, self.rng)
                 else:
                     child_1, child_2 = first.copy(), second.copy()
                 offspring.append(self.config.mutation(child_1, self.rng))
-                if len(offspring) < self.config.children:
-                    offspring.append(self.config.mutation(child_2, self.rng))
+                offspring.append(self.config.mutation(child_2, self.rng))
+            if len(parent_indices) % 2:
+                # Odd child count: the trailing parent has no partner. Per
+                # the cátedra's rule for a non-recombined pairing, it is
+                # unconditionally copied rather than crossed with a
+                # wrapped-around partner, and it still passes through
+                # mutation.
+                leftover = population.genes[parent_indices[-1]]
+                offspring.append(self.config.mutation(leftover.copy(), self.rng))
             child_genes = np.asarray(offspring, dtype=np.float32)
             child_fitness, child_frames = self.evaluator.evaluate_population(child_genes)
             frame_cache.update({row.tobytes(): frame for row, frame in zip(child_genes, child_frames)})
