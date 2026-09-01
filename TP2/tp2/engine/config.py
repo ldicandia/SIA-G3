@@ -82,7 +82,10 @@ def build_run_config(data: dict[str, Any]) -> RunConfig:
             raise ConfigError("stop must be an object")
         stop = build_stop_set(stop_spec, horizon)
 
-        probability = float(data["recombination_probability"])
+        prob_raw = data["recombination_probability"]
+        if isinstance(prob_raw, bool) or not isinstance(prob_raw, (int, float)):
+            raise ConfigError(f"recombination_probability must be a number, got {prob_raw!r}")
+        probability = float(prob_raw)
         if not 0 <= probability <= 1:
             raise ConfigError(f"recombination_probability must be in [0, 1], got {probability!r}")
 
