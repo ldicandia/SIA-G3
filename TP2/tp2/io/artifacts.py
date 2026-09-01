@@ -65,8 +65,16 @@ def write_run_json(
     seed: int,
     versions: dict[str, str],
     git_sha: str | None = None,
+    stop_reason: str | None = None,
 ) -> None:
-    """Archive actual resolved settings, with home paths avoided when possible."""
+    """Archive actual resolved settings, with home paths avoided when possible.
+
+    `stop_reason` is optional so a caller may archive the config before a run
+    starts (crash-safety) and again after it resolves. When present, it is a
+    top-level field -- distinct from `config` -- naming which of the engine's
+    stop conditions fired, or `viewer_closed` when an observer ended the run
+    early (04-01: T-04-03, repudiation).
+    """
     project_root = Path(__file__).resolve().parents[2]
     config = dict(effective_config)
     if "image" in config:
@@ -74,6 +82,8 @@ def write_run_json(
     payload: dict[str, Any] = {"config": config, "seed": int(seed), "versions": versions}
     if git_sha is not None:
         payload["git_sha"] = git_sha
+    if stop_reason is not None:
+        payload["stop_reason"] = stop_reason
     with Path(path).open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
         handle.write("\n")

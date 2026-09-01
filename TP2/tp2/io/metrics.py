@@ -29,6 +29,12 @@ class MetricsWriter:
         assert self._handle is not None
         self._handle.close()
 
+    def __call__(self, event: GenerationEvent) -> None:
+        """Alias for `write`, so `MetricsWriter` satisfies the generic
+        observer protocol (`obs(ev)`) that `tp2/cli.py`'s observer list and
+        `tp2/ui/viewer.py`'s `Viewer` both drive."""
+        self.write(event)
+
     def write(self, event: GenerationEvent) -> None:
         if self._writer is None:
             raise RuntimeError("MetricsWriter must be used as a context manager")
