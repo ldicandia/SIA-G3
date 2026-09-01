@@ -66,6 +66,7 @@ def write_run_json(
     versions: dict[str, str],
     git_sha: str | None = None,
     stop_reason: str | None = None,
+    algorithm: str | None = None,
 ) -> None:
     """Archive actual resolved settings, with home paths avoided when possible.
 
@@ -74,6 +75,13 @@ def write_run_json(
     top-level field -- distinct from `config` -- naming which of the engine's
     stop conditions fired, or `viewer_closed` when an observer ended the run
     early (04-01: T-04-03, repudiation).
+
+    `algorithm` is optional and, when present, is a top-level field naming
+    which family of run produced this directory (e.g. `"hillclimb_1p1"` for
+    `tp2/baselines/hillclimber.py`, 04-02: EXP-05). A GA run never passes it,
+    so its implicit absence is itself the GA's label -- the aggregation code
+    Plan 04-04 builds needs an unambiguous, explicit field to tell the two
+    apart rather than inferring it from a directory name.
     """
     project_root = Path(__file__).resolve().parents[2]
     config = dict(effective_config)
@@ -84,6 +92,8 @@ def write_run_json(
         payload["git_sha"] = git_sha
     if stop_reason is not None:
         payload["stop_reason"] = stop_reason
+    if algorithm is not None:
+        payload["algorithm"] = algorithm
     with Path(path).open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
         handle.write("\n")
