@@ -20,11 +20,11 @@ from tp2.engine.operators.registry import BLEND_MAX_DEPTH
 
 def _config(**overrides) -> dict:
     base = {
-        "population": 4, "children": 4, "recombination_probability": 0.8,
+        "population": 4, "children": 4, "horizon": 100, "recombination_probability": 0.8,
         "parents": {"method": "elite"}, "replacement": {"method": "elite"},
         "crossover": {"method": "one_point", "boundary": "triangle"},
         "mutation": {"method": "gene", "probability": 0.5},
-        "survival": {"method": "additive"}, "stop": {"max_generations": 2},
+        "survival": {"method": "additive"}, "stop": {"max_generations": True},
     }
     base.update(overrides)
     return base
@@ -68,11 +68,18 @@ def test_recombination_probability_out_of_range_is_rejected_naming_the_key(value
     assert "recombination_probability" in str(excinfo.value)
 
 
-@pytest.mark.parametrize("value", [5.0, True, -1, "5"])
-def test_max_generations_type_contract_names_the_key(value) -> None:
+@pytest.mark.parametrize("value", [5.0, 0, -1, "5"])
+def test_stop_max_generations_type_contract_names_the_key(value) -> None:
     with pytest.raises(ConfigError) as excinfo:
         build_run_config(_config(stop={"max_generations": value}))
     assert "max_generations" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("value", [0, -1, 5.0, True, "100"])
+def test_horizon_type_contract_names_the_key(value) -> None:
+    with pytest.raises(ConfigError) as excinfo:
+        build_run_config(_config(horizon=value))
+    assert "horizon" in str(excinfo.value)
 
 
 # --- crossover boundary --------------------------------------------------------

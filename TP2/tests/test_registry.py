@@ -33,10 +33,30 @@ def test_every_registered_name_builds_from_a_minimal_spec() -> None:
                 "method": "blend", "coefficient": 0.5,
                 "method_1": {"method": "elite"}, "method_2": {"method": "random"},
             },
+            "roulette": {"method": "roulette"},
+            "universal": {"method": "universal"},
+            "ranking": {"method": "ranking"},
+            "boltzmann": {"method": "boltzmann", "t0": 1.0, "tc": 0.1, "k": 0.05},
+            "tournament_deterministic": {"method": "tournament_deterministic", "m": 2},
+            "tournament_probabilistic": {"method": "tournament_probabilistic", "threshold": 0.75},
         },
-        "crossover": {"one_point": {"method": "one_point", "boundary": "gene"}},
-        "mutation": {"gene": {"method": "gene", "probability": 0.5}},
-        "survival": {"additive": {"method": "additive", "replacement": replacement}},
+        "crossover": {
+            "one_point": {"method": "one_point", "boundary": "gene"},
+            "two_point": {"method": "two_point", "boundary": "gene"},
+            "ring": {"method": "ring", "boundary": "gene"},
+            "uniform": {"method": "uniform", "p": 0.5, "boundary": "gene"},
+        },
+        "mutation": {
+            "gene": {"method": "gene", "probability": 0.5},
+            "multigen_limited": {"method": "multigen_limited", "m": 3, "probability": 0.5},
+            "multigen_uniform": {"method": "multigen_uniform", "probability": 0.5},
+            "complete": {"method": "complete", "probability": 0.5},
+        },
+        "survival": {
+            "additive": {"method": "additive", "replacement": replacement},
+            "exclusive": {"method": "exclusive", "replacement": replacement},
+            "generational_gap": {"method": "generational_gap", "gap": 0.5, "replacement": replacement},
+        },
     }
     for kind, reg in REGISTRIES.items():
         names = set(reg.names())

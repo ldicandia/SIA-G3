@@ -8,14 +8,16 @@ from typing import Iterator
 import numpy as np
 
 from .config import RunConfig
-from .events import GenerationEvent, RunResult
+from .diversity import diversity
+from .events import GenerationContext, GenerationEvent, RunResult
 from .fitness import Evaluator
-from .genome import Population, active_count, random_population
+from .genome import Population, active_count, bounds_for, random_population
 
 
 class Run:
     def __init__(self, config: RunConfig, evaluator: Evaluator, triangles: int, rng: np.random.Generator) -> None:
         self.config, self.evaluator, self.triangles, self.rng = config, evaluator, triangles, rng
+        self.bounds = bounds_for(triangles)
         self.result: RunResult | None = None
 
     def _event(self, generation: int, population: Population, frame_cache: dict[bytes, np.ndarray], elapsed: float, reason: str) -> GenerationEvent:
@@ -23,7 +25,7 @@ class Run:
         frame = frame_cache[population.genes[index].tobytes()]
         return GenerationEvent(generation, self.evaluator.renders, elapsed, float(population.fitness[index]),
                                1.0 - float(population.fitness[index]), float(population.fitness.mean()),
-                               float(population.fitness.min()), float(population.genes.std(axis=0).mean()),
+                               float(population.fitness.min()), diversity(population.genes, self.bounds),
                                active_count(population.genes[index]), population.genes[index].copy(), frame, reason)
 
     def __iter__(self) -> Iterator[GenerationEvent]:
@@ -32,11 +34,20 @@ class Run:
         fitness, frames = self.evaluator.evaluate_population(genes)
         population = Population(genes, fitness)
         frame_cache = {row.tobytes(): frame for row, frame in zip(genes, frames)}
-        best = self._event(0, population, frame_cache, time.perf_counter() - started,
-                           "max_generations" if self.config.max_generations == 0 else "")
+        elapsed = time.perf_counter() - started
+        ctx = GenerationContext(0, self.config.horizon, self.evaluator.renders, elapsed, population.fitness)
+        reason = self.config.stop.check(ctx, population)
+        best = self._event(0, population, frame_cache, elapsed, reason)
         hall = best
         yield best
-        for generation in range(1, self.config.max_generations + 1):
+        if reason:
+            self.result = RunResult(hall.best_genes, hall.best_frame, hall.best_fitness, hall.best_error,
+                                    0, self.evaluator.renders, elapsed, reason)
+            return
+
+        generation = 0
+        while True:
+            generation += 1
             parent_indices = self.config.parents(population.fitness, self.config.children, self.rng)
             offspring: list[np.ndarray] = []
             # Pairs are formed in the order selection returned them -- (0,1),
@@ -67,11 +78,14 @@ class Run:
             frame_cache.update({row.tobytes(): frame for row, frame in zip(child_genes, child_frames)})
             children = Population(child_genes, child_fitness)
             population = self.config.survival(population, children, self.rng)
-            event = self._event(generation, population, frame_cache, time.perf_counter() - started,
-                                "max_generations" if generation == self.config.max_generations else "")
+            elapsed = time.perf_counter() - started
+            ctx = GenerationContext(generation, self.config.horizon, self.evaluator.renders, elapsed, population.fitness)
+            reason = self.config.stop.check(ctx, population)
+            event = self._event(generation, population, frame_cache, elapsed, reason)
             if event.best_fitness > hall.best_fitness:
                 hall = event
             yield event
-        self.result = RunResult(hall.best_genes, hall.best_frame, hall.best_fitness, hall.best_error,
-                                self.config.max_generations, self.evaluator.renders, time.perf_counter() - started,
-                                "max_generations")
+            if reason:
+                self.result = RunResult(hall.best_genes, hall.best_frame, hall.best_fitness, hall.best_error,
+                                        generation, self.evaluator.renders, elapsed, reason)
+                return

@@ -3,7 +3,7 @@
   "children": 40,
   "horizon": 3000,
   "recombination_probability": 0.8,
-  "parents": {"method": "elite"},
+  "parents": {"method": "roulette"},
   "replacement": {"method": "elite"},
   "crossover": {"method": "one_point", "boundary": "triangle"},
   "mutation": {"method": "gene", "probability": 0.8},

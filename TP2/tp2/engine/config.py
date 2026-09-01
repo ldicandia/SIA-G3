@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from .operators import crossover, mutation, selection, survival
 from .operators.registry import CROSSOVER, MUTATION, SELECTION, SURVIVAL
+from .stop import StopSet, build_stop_set
 
 
 class ConfigError(ValueError):
@@ -16,7 +17,7 @@ class ConfigError(ValueError):
 
 
 CONFIG_KEYS = frozenset({
-    "population", "children", "recombination_probability",
+    "population", "children", "horizon", "recombination_probability",
     "parents", "replacement", "crossover", "mutation", "survival", "stop",
 })
 
@@ -27,15 +28,7 @@ SELECTION_SLOTS = ("parents", "replacement")
 
 
 def desugar_selection(spec: dict[str, Any]) -> dict[str, Any]:
-    """Normalize a selection spec into the nested form the registry consumes.
-
-    Identity today: no shorthand selection form exists yet in this cohort's
-    material, so there is nothing to desugar. The seam lives here, applied to
-    both `SELECTION_SLOTS`, so Phase 3 can accept a flat cátedra-style
-    shorthand without adding a second desugaring site, and so `run.json`
-    always archives what actually ran rather than a shorthand the source file
-    may have used.
-    """
+    """Normalize a selection spec into the nested form the registry consumes."""
     return spec
 
 
@@ -43,14 +36,19 @@ def desugar_selection(spec: dict[str, Any]) -> dict[str, Any]:
 class RunConfig:
     population: int
     children: int
-    max_generations: int
+    horizon: int
     recombination_probability: float
     parents: Callable
     replacement: Callable
     crossover: Callable
     mutation: Callable
     survival: Callable
+    stop: StopSet
     effective: dict[str, Any]
+
+    @property
+    def max_generations(self) -> int:
+        return self.horizon
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -78,10 +76,12 @@ def build_run_config(data: dict[str, Any]) -> RunConfig:
             raise ConfigError(f"unknown config key(s): {sorted(unknown)}")
         population = _integer(data, "population", 1)
         children = _integer(data, "children", 1)
-        stop = data["stop"]
-        if not isinstance(stop, dict):
+        horizon = _integer(data, "horizon", 1)
+        stop_spec = data.get("stop")
+        if not isinstance(stop_spec, dict):
             raise ConfigError("stop must be an object")
-        max_generations = _integer(stop, "max_generations", 0)
+        stop = build_stop_set(stop_spec, horizon)
+
         probability = float(data["recombination_probability"])
         if not 0 <= probability <= 1:
             raise ConfigError(f"recombination_probability must be in [0, 1], got {probability!r}")
@@ -100,9 +100,19 @@ def build_run_config(data: dict[str, Any]) -> RunConfig:
         replacement = SELECTION.build(desugared["replacement"])
 
         effective = {**data, **desugared}
-        return RunConfig(population, children, max_generations, probability, parent_selection, replacement,
-                         CROSSOVER.build(crossover_spec), MUTATION.build(mutation_spec),
-                         SURVIVAL.build({**survival_spec, "replacement": replacement}), effective)
+        return RunConfig(
+            population=population,
+            children=children,
+            horizon=horizon,
+            recombination_probability=probability,
+            parents=parent_selection,
+            replacement=replacement,
+            crossover=CROSSOVER.build(crossover_spec),
+            mutation=MUTATION.build(mutation_spec),
+            survival=SURVIVAL.build({**survival_spec, "replacement": replacement}),
+            stop=stop,
+            effective=effective,
+        )
     except (KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, ConfigError):
             raise

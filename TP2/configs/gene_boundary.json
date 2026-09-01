@@ -1,11 +1,12 @@
 {
   "population": 30,
   "children": 40,
+  "horizon": 3000,
   "recombination_probability": 0.8,
   "parents": {"method": "elite"},
   "replacement": {"method": "elite"},
   "crossover": {"method": "one_point", "boundary": "gene"},
   "mutation": {"method": "gene", "probability": 0.8},
   "survival": {"method": "additive"},
-  "stop": {"max_generations": 3000}
+  "stop": {"max_generations": true}
 }

@@ -9,11 +9,11 @@ from tp2.engine.loop import Run
 
 def _config(generations: int = 3):
     return build_run_config({
-        "population": 6, "children": 6, "recombination_probability": 0.8,
+        "population": 6, "children": 6, "horizon": generations, "recombination_probability": 0.8,
         "parents": {"method": "elite"}, "replacement": {"method": "elite"},
         "crossover": {"method": "one_point", "boundary": "triangle"},
         "mutation": {"method": "gene", "probability": 0.5},
-        "survival": {"method": "additive"}, "stop": {"max_generations": generations},
+        "survival": {"method": "additive"}, "stop": {"max_generations": True},
     })
 
 

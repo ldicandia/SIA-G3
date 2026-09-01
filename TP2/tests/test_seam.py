@@ -36,7 +36,8 @@ def _tiny(config_dict: dict, generations: int = 4) -> dict:
     result = copy.deepcopy(config_dict)
     result["population"] = 6
     result["children"] = 6
-    result["stop"] = {"max_generations": generations}
+    result["horizon"] = generations
+    result["stop"] = {"max_generations": True}
     return result
 
 
@@ -113,3 +114,21 @@ def test_zero_recombination_probability_copies_then_still_mutates() -> None:
     assert not all(
         np.array_equal(post, child) for post, (child, _) in zip(post_mutation, pre_mutation)
     ), "children must still pass through mutation even when never recombined"
+
+
+def test_loop_contains_zero_operator_name_literals() -> None:
+    """The generation loop in tp2/engine/loop.py has zero operator name literals."""
+    import re
+    loop_file = Path(__file__).resolve().parents[1] / "tp2" / "engine" / "loop.py"
+    lines = [l for l in loop_file.read_text(encoding="utf-8").splitlines() if not l.strip().startswith("#")]
+    code = "\n".join(lines)
+    # Check for known operator names appearing as string literals
+    operator_names = [
+        "elite", "random", "blend", "one_point", "gene", "additive",
+        "roulette", "universal", "ranking", "boltzmann",
+        "tournament_deterministic", "tournament_probabilistic",
+    ]
+    pattern = r'["\'](' + "|".join(operator_names) + r')["\']'
+    matches = re.findall(pattern, code)
+    assert matches == [], f"Found operator literals in tp2/engine/loop.py: {matches}"
+

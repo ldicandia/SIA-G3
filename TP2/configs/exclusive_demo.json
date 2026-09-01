@@ -7,6 +7,6 @@
   "replacement": {"method": "elite"},
   "crossover": {"method": "one_point", "boundary": "triangle"},
   "mutation": {"method": "gene", "probability": 0.8},
-  "survival": {"method": "additive"},
+  "survival": {"method": "exclusive"},
   "stop": {"max_generations": true}
 }

@@ -1,0 +1,25 @@
+{
+  "population": 20,
+  "children": 20,
+  "horizon": 1000,
+  "recombination_probability": 0.8,
+  "parents": {"method": "elite"},
+  "replacement": {"method": "elite"},
+  "crossover": {"method": "one_point", "boundary": "triangle"},
+  "mutation": {"method": "gene", "probability": 0.5},
+  "survival": {"method": "additive"},
+  "stop": {
+    "max_generations": false,
+    "wall_clock_seconds": 60.0,
+    "min_fitness": 0.95,
+    "content_stagnation": {
+      "window": 20,
+      "tolerance": 0.0001
+    },
+    "structure_stagnation": {
+      "window": 20,
+      "fraction": 0.8,
+      "tolerance": 0.02
+    }
+  }
+}
