@@ -99,7 +99,13 @@ def test_no_module_under_tp2_seeds_a_global_generator(project_root) -> None:
     assert offenders == [], f"global seeding leaks across runs: {offenders}"
 
 
-def test_the_generator_is_constructed_exactly_once_in_the_composition_root(project_root) -> None:
+def test_the_generator_is_constructed_exactly_once_per_composition_root(project_root) -> None:
+    # 04-02: `tp2/baselines/hillclimber.py` is a second, deliberate
+    # composition root -- `python -m tp2.baselines.hillclimber` runs
+    # standalone, without going through `tp2/cli.py`, so it needs its own
+    # seeded Generator. The invariant this test protects is unchanged
+    # (exactly one construction per composition root, never inside the
+    # engine or an operator), just widened to name both roots explicitly.
     constructions = {
         path.relative_to(project_root).as_posix(): sum(
             1 for name in _called_names(path) if name.split(".")[-1] == "default_rng"
@@ -108,8 +114,8 @@ def test_the_generator_is_constructed_exactly_once_in_the_composition_root(proje
     }
     building = {path: count for path, count in constructions.items() if count}
 
-    assert building == {"tp2/cli.py": 1}, (
-        "exactly one numpy.random.Generator must be created, in the CLI composition root, "
-        f"got {building}"
+    assert building == {"tp2/cli.py": 1, "tp2/baselines/hillclimber.py": 1}, (
+        "exactly one numpy.random.Generator must be created per composition root "
+        f"(tp2/cli.py, tp2/baselines/hillclimber.py), got {building}"
     )
 
