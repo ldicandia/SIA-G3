@@ -65,7 +65,7 @@ def sample_from_weights(
     else:
         raise ValueError(f"unknown sampling mode {mode!r}, expected 'roulette' or 'sus'")
 
-    # searchsorted with side='right' finds index i such that q_{i-1} < r_j <= q_i
-    indices = np.searchsorted(q, r_j, side="right")
+    # searchsorted with side='left' finds index i such that q_{i-1} < r_j <= q_i
+    indices = np.searchsorted(q, r_j, side="left")
     # Clip to guard against floating-point boundary at 1.0
     return np.clip(indices, 0, len(w) - 1).astype(int)
