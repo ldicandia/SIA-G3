@@ -6,7 +6,7 @@
   "parents": {"method": "elite"},
   "replacement": {"method": "elite"},
   "crossover": {"method": "one_point", "boundary": "triangle"},
-  "mutation": {"method": "gene", "probability": 0.8},
+  "mutation": {"method": "gene", "probability": 0.9},
   "survival": {"method": "exclusive"},
   "stop": {"max_generations": true}
 }
