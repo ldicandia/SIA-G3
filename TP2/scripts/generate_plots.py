@@ -29,6 +29,7 @@ matplotlib.use("Agg")
 import argparse  # noqa: E402
 import csv  # noqa: E402
 import json  # noqa: E402
+import textwrap  # noqa: E402
 
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
@@ -82,6 +83,13 @@ FIGURE_CLAIMS: dict[str, str] = {
         "reported honestly whichever way it goes"
     ),
 }
+
+
+def _wrap_title(text: str, width: int = 70) -> str:
+    """Wrap a long claim string onto multiple lines instead of letting it run
+    off the right edge of the figure (matplotlib does not wrap titles itself,
+    and the FIGURE_CLAIMS strings are full sentences)."""
+    return "\n".join(textwrap.wrap(text, width=width))
 
 
 class GeneratePlotsError(ValueError):
@@ -155,9 +163,12 @@ def plot_arm(
     ax.set_ylabel(y_label)
     # The "n=" here is this plan's own omitted-n prohibition's concrete
     # enforcement, not just a described intention.
-    ax.set_title(f"{title}  (n={n_seeds})")
-    ax.legend()
-    fig.savefig(out_path, dpi=150)
+    ax.set_title(_wrap_title(f"{title}  (n={n_seeds})"))
+    # Outside the axes, never "best": with this many overlapping curves and
+    # IQR bands, an in-axes legend inevitably sits on top of the data it is
+    # labeling. bbox_inches="tight" on save expands the canvas to include it.
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -181,10 +192,21 @@ def plot_survival_kn(matrix_root: Path, out_path: Path, n_seeds: int = 5) -> Non
             ax.fill_between(grid_x, q1, q3, alpha=0.2)
         ax.set_xlabel("Renders (cumulative fitness evaluations)")
         ax.set_title(strategy)
-        ax.legend()
     axes[0].set_ylabel("Best fitness")
-    fig.suptitle(f"{FIGURE_CLAIMS['fig_survival_kn.png']}  (n={n_seeds})")
-    fig.savefig(out_path, dpi=150)
+    # One shared legend outside both panels, not one per panel: both axes
+    # plot the same K/N ratios in the same colors (matplotlib's color cycle
+    # resets per-axes), so a legend on each panel would just be a duplicate
+    # sitting on top of that panel's own curves.
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="upper left", bbox_to_anchor=(1.0, 0.95))
+    wrapped_title = _wrap_title(f"{FIGURE_CLAIMS['fig_survival_kn.png']}  (n={n_seeds})", width=90)
+    # A plain fig.suptitle() sits at a fixed y just above the panel titles --
+    # fine for one line, but this claim wraps to several, and would then
+    # collide with "additive"/"exclusive" underneath it. Push the panels
+    # down by however many lines the title actually took.
+    n_title_lines = wrapped_title.count("\n") + 1
+    fig.suptitle(wrapped_title, y=0.99)
+    fig.subplots_adjust(top=0.99 - 0.09 * n_title_lines)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -258,10 +280,11 @@ def plot_hillclimber_comparison(ga_cell_dir: Path, hillclimber_dir: Path, out_pa
     ax.set_xlabel("Renders (cumulative fitness evaluations)")
     ax.set_ylabel("Best fitness")
     ax.set_title(
-        f"{FIGURE_CLAIMS['fig_hillclimber_comparison.png']}\n(GA n={n_seeds}, hill climber n=1)"
+        _wrap_title(FIGURE_CLAIMS["fig_hillclimber_comparison.png"])
+        + f"\n(GA n={n_seeds}, hill climber n=1)"
     )
-    ax.legend()
-    fig.savefig(out_path, dpi=150)
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
