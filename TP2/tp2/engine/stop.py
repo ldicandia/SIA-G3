@@ -93,25 +93,30 @@ class StopSet:
                 if self._structure_streak >= window:
                     structure_fired = True
 
-        # Check in fixed priority order
-        if self.max_generations_enabled and ctx.generation >= self.horizon:
-            return "max_generations"
-
-        if self.wall_clock_seconds is not None and ctx.elapsed >= self.wall_clock_seconds:
-            return "wall_clock"
-
-        if self.min_fitness is not None and (best_f >= self.min_fitness or np.isclose(best_f, self.min_fitness, atol=1e-6)):
-            return "min_fitness"
-
+        content_fired = False
         if self.content_stagnation is not None:
             win = int(self.content_stagnation["window"])
             tol = float(self.content_stagnation["tolerance"])
             if len(self._content_buffer) == win:
                 if (max(self._content_buffer) - min(self._content_buffer)) < tol:
-                    return "content_stagnation"
+                    content_fired = True
 
-        if structure_fired:
-            return "structure_stagnation"
+        # Evaluate every condition's fired-state up front, then resolve
+        # simultaneous firings by iterating STOP_PRIORITY -- this is the
+        # single source of truth for priority order (STP-06); nothing else
+        # duplicates it.
+        fired = {
+            "max_generations": self.max_generations_enabled and ctx.generation >= self.horizon,
+            "wall_clock": self.wall_clock_seconds is not None and ctx.elapsed >= self.wall_clock_seconds,
+            "min_fitness": self.min_fitness is not None
+            and (best_f >= self.min_fitness or np.isclose(best_f, self.min_fitness, atol=1e-6)),
+            "content_stagnation": content_fired,
+            "structure_stagnation": structure_fired,
+        }
+
+        for name in STOP_PRIORITY:
+            if fired[name]:
+                return name
 
         return ""
 
