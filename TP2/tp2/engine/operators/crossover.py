@@ -70,7 +70,7 @@ def make_one_point(boundary: str = "gene"):
         domain = cut_domain_size(length, 11, boundary)
         if domain == 0:
             return parent_1.copy(), parent_2.copy()
-        cut = int(rng.integers(domain + 1))
+        cut = int(rng.integers(domain))  # [0, domain - 1], matching CATEDRA.md's P = [0, S-1]
         return apply_mask(parent_1, parent_2, locus_mask(length, 11, cut, boundary))
     return crossover
 
