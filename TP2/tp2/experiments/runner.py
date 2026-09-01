@@ -23,6 +23,7 @@ view, from an ordinary single-run invocation.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import multiprocessing
 import os
@@ -63,6 +64,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # T-04-07: a planned run count above this cap is rejected before a single
 # process spawns, unless --allow-large is explicitly passed.
 RUN_COUNT_CAP = 2000
+
+
+def _stable_cell_index(cell_id: str) -> int:
+    """A deterministic integer derived purely from `cell_id`'s own content.
+
+    Deliberately NOT a rank in a sorted list of the OTHER cell_ids present:
+    a sorted-position index would still shift for every cell alphabetically
+    after a newly-inserted arm, breaking the very stability this function
+    exists to provide (see `build_jobs`'s own docstring for the worked
+    counter-example). A cell's identity determines its own index and
+    nothing else's presence or absence can change it.
+    """
+    digest = hashlib.sha256(cell_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big")
 
 
 def derive_seed(base_entropy: int, cell_index: int, replicate_index: int) -> int:
@@ -171,20 +186,26 @@ def build_jobs(spec: MatrixSpec) -> list[CellJob]:
     itself, rather than a second, potentially-diverging reimplementation in
     the test suite.
 
-    `cell_index` is assigned from a STABLE SORT of `cell_id` strings, never
-    raw list position: this is what makes reordering the spec's `arms`
-    mapping in the JSON leave every existing cell's derived seed unchanged,
-    and what makes appending a brand-new arm at the end of the JSON never
-    silently reshuffle every prior cell's seed.
+    `cell_index` is a STABLE HASH of the cell's own `cell_id` string
+    (`_stable_cell_index`), never a raw list position AND never a rank in a
+    sorted order of the OTHER cell_ids present. A sorted-position index looks
+    stable but is not: inserting a new arm whose name sorts alphabetically
+    before an existing one (e.g. appending `"aardvark_arm"` after
+    `"selection"`) would shift every later cell's rank and therefore its
+    derived seed -- silently invalidating every already-run, already-cited
+    experiment for cells that were never touched. Hashing the cell_id's own
+    content instead means a cell's derived seed depends on nothing but its
+    own identity: reordering the spec's `arms` mapping, or appending a
+    brand-new arm anywhere in the JSON, can never change ANY existing cell's
+    derived seed, regardless of where the new arm's name falls alphabetically.
     """
     cells = build_cells(spec)
-    cell_ids_sorted = sorted(cell.cell_id for cell in cells)
     with spec.baseline_path.open(encoding="utf-8") as handle:
         baseline_raw = json.load(handle)
 
     jobs: list[CellJob] = []
     for cell in cells:
-        cell_index = cell_ids_sorted.index(cell.cell_id)
+        cell_index = _stable_cell_index(cell.cell_id)
         resolved_config = apply_overrides(baseline_raw, cell.overrides)
         for replicate_index in range(spec.seeds):
             seed = derive_seed(spec.base_seed, cell_index, replicate_index)

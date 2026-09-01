@@ -103,9 +103,16 @@ def test_the_generator_is_constructed_exactly_once_per_composition_root(project_
     # 04-02: `tp2/baselines/hillclimber.py` is a second, deliberate
     # composition root -- `python -m tp2.baselines.hillclimber` runs
     # standalone, without going through `tp2/cli.py`, so it needs its own
-    # seeded Generator. The invariant this test protects is unchanged
-    # (exactly one construction per composition root, never inside the
-    # engine or an operator), just widened to name both roots explicitly.
+    # seeded Generator.
+    # 04-03: `tp2/experiments/runner.py` is a third, deliberate composition
+    # root -- each `multiprocessing.Pool` worker process (`run_cell_seed`)
+    # independently builds its own `np.random.default_rng(job.seed)` from a
+    # per-cell-per-replicate DERIVED seed (never inherited process state),
+    # matching this exact codebase's single-injected-rng convention rather
+    # than the never-built `tp2/engine/rng.py` per-family stream split. The
+    # invariant this test protects is unchanged (exactly one construction per
+    # composition root, never inside the engine or an operator), just widened
+    # to name all three roots explicitly.
     constructions = {
         path.relative_to(project_root).as_posix(): sum(
             1 for name in _called_names(path) if name.split(".")[-1] == "default_rng"
@@ -114,8 +121,9 @@ def test_the_generator_is_constructed_exactly_once_per_composition_root(project_
     }
     building = {path: count for path, count in constructions.items() if count}
 
-    assert building == {"tp2/cli.py": 1, "tp2/baselines/hillclimber.py": 1}, (
+    expected = {"tp2/cli.py": 1, "tp2/baselines/hillclimber.py": 1, "tp2/experiments/runner.py": 1}
+    assert building == expected, (
         "exactly one numpy.random.Generator must be created per composition root "
-        f"(tp2/cli.py, tp2/baselines/hillclimber.py), got {building}"
+        f"({', '.join(sorted(expected))}), got {building}"
     )
 
