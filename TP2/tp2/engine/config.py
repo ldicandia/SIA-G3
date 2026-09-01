@@ -89,6 +89,10 @@ def build_run_config(data: dict[str, Any]) -> RunConfig:
         if not 0 <= probability <= 1:
             raise ConfigError(f"recombination_probability must be in [0, 1], got {probability!r}")
 
+        for key in (*SELECTION_SLOTS, "crossover", "mutation", "survival"):
+            if key not in data:
+                raise ConfigError(f"missing required config key: {key!r}")
+
         selection_specs = {slot: data[slot] for slot in SELECTION_SLOTS}
         crossover_spec = data["crossover"]
         mutation_spec = data["mutation"]
