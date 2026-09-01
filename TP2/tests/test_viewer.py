@@ -107,6 +107,42 @@ def test_first_call_constructs_a_scaled_window_and_blits_without_raising() -> No
         viewer.__exit__(None, None, None)
 
 
+def test_exit_calls_pygame_quit_even_if_set_mode_raises_during_first_frame_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """WR-04 regression: `pygame.init()` succeeds and sets `_initialized`,
+    but `pygame.display.set_mode` then raises before `self._screen` is ever
+    assigned. `__exit__` must still call `pygame.quit()` -- tracked via
+    `self._initialized`, never via `self._screen` -- so a genuinely broken
+    SDL video driver can never leak initialized pygame/SDL state into
+    whatever runs next in the same process."""
+
+    def raising_set_mode(*_args, **_kwargs):
+        raise RuntimeError("synthetic broken SDL video driver")
+
+    monkeypatch.setattr(pygame.display, "set_mode", raising_set_mode)
+
+    viewer = Viewer(scale=4, every=1)
+    with pytest.raises(RuntimeError, match="synthetic broken SDL video driver"):
+        viewer(_event(generation=0))
+
+    assert viewer._screen is None, "set_mode raised before self._screen was ever assigned"
+    assert viewer._initialized is True, "pygame.init() ran and must still be tracked for cleanup"
+
+    original_quit = pygame.quit
+    quit_calls = {"count": 0}
+
+    def spy_quit() -> None:
+        quit_calls["count"] += 1
+        original_quit()
+
+    monkeypatch.setattr(pygame, "quit", spy_quit)
+
+    viewer.__exit__(None, None, None)
+
+    assert quit_calls["count"] == 1, "a screen-less but initialized viewer must still call pygame.quit()"
+
+
 def test_queued_quit_event_sets_should_stop_and_skips_the_next_blit(monkeypatch: pytest.MonkeyPatch) -> None:
     flips = {"count": 0}
     original_flip = pygame.display.flip

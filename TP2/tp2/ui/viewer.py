@@ -29,12 +29,19 @@ class Viewer:
         self._screen: "pygame.Surface | None" = None
         self._font: "pygame.font.Font | None" = None
         self.should_stop = False
+        # WR-04: tracked independently of `self._screen` so `__exit__` still
+        # calls `pygame.quit()` even if `pygame.display.set_mode` raises
+        # during first-frame setup (after `pygame.init()` already ran but
+        # before `self._screen` is ever assigned) -- otherwise a genuinely
+        # broken SDL video driver would leak initialized pygame/SDL state
+        # into whatever runs next in the same process.
+        self._initialized = False
 
     def __enter__(self) -> "Viewer":
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        if self._screen is not None:
+        if self._initialized:
             pygame.quit()
         return False
 
@@ -52,6 +59,7 @@ class Viewer:
             # evaluating deep into a run.
             h, w, _ = ev.best_frame.shape
             pygame.init()
+            self._initialized = True
             pygame.display.set_caption(self.caption)
             self._screen = pygame.display.set_mode((w * self.scale, h * self.scale))
             self._font = pygame.font.SysFont(None, 20)
