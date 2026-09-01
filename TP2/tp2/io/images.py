@@ -26,4 +26,9 @@ def load_target(path: str | Path, size: tuple[int, int]) -> np.ndarray:
 
 def save_png(frame: np.ndarray, path: str | Path) -> None:
     destination = Path(path)
-    Image.fromarray(np.asarray(frame, dtype=np.uint8), "RGB").save(destination, format="PNG")
+    # Explicit encoder parameters (matching scripts/make_assets.py's
+    # PNG_SAVE_KWARGS) so best.png does not depend on Pillow's per-release PNG
+    # encoder defaults (01-VERIFICATION.md gap #1 / IO-08).
+    Image.fromarray(np.asarray(frame, dtype=np.uint8), "RGB").save(
+        destination, format="PNG", optimize=False, compress_level=6
+    )

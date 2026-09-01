@@ -1,6 +1,6 @@
 # Image I/O and rasterization (permitted by the assignment).
 numpy>=1.26,<3
-Pillow>=10,<13
+Pillow==12.3.0
 
 # Development and optional later milestones (viewer / experiment charts).
 pytest>=8,<10
