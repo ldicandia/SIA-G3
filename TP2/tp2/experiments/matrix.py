@@ -67,10 +67,16 @@ def apply_overrides(baseline_raw: dict[str, Any], overrides: Mapping[str, Any]) 
     at all. Never a recursive per-key merge of a nested operator-spec dict.
 
     `children_ratio` is the one special key this function resolves:
-    `children = round(children_ratio * baseline_raw["population"])`, using
-    Python's own `round()` (banker's rounding, matching Pattern 3's blend
-    coefficient precedent from 02-01/02-02). `children_ratio` itself never
-    survives into the returned dict -- only the resolved `children` does.
+    `children = round(children_ratio * population)`, using Python's own
+    `round()` (banker's rounding, matching Pattern 3's blend coefficient
+    precedent from 02-01/02-02) against the EFFECTIVE (already-overridden)
+    population, never the raw baseline's -- `overrides` can independently
+    set `"population"` to a different value (e.g. a tracer-scale
+    `scale_overrides.population`), and resolving the ratio against the
+    baseline's unmodified population in that case would silently produce a
+    K/N ratio in the actually-run config that does not match the ratio the
+    cell's label claims. `children_ratio` itself never survives into the
+    returned dict -- only the resolved `children` does.
     """
     result = dict(baseline_raw)
     for key, value in overrides.items():
@@ -79,7 +85,7 @@ def apply_overrides(baseline_raw: dict[str, Any], overrides: Mapping[str, Any]) 
         result[key] = value
     if "children_ratio" in overrides:
         ratio = overrides["children_ratio"]
-        result["children"] = round(ratio * baseline_raw["population"])
+        result["children"] = round(ratio * result["population"])
     return result
 
 

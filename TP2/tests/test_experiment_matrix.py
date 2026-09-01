@@ -93,6 +93,19 @@ def test_apply_overrides_children_ratio_matches_expected_rounding(ratio, populat
     assert result["children"] == expected
 
 
+def test_apply_overrides_children_ratio_resolves_against_the_overridden_population() -> None:
+    """WR-01 regression: a cell that overrides BOTH `population` (e.g. a
+    tracer-scale `scale_overrides.population`) and `children_ratio` must
+    resolve `children` against the cell's own EFFECTIVE population, never
+    the raw baseline's -- otherwise the resolved K/N ratio in the actually-
+    run config silently drifts from the ratio the cell's label claims."""
+    baseline = {"population": 30, "children": 40}
+    result = apply_overrides(baseline, {"population": 6, "children_ratio": 2.0})
+    assert result["population"] == 6
+    assert result["children"] == round(2.0 * 6)  # 12, NOT round(2.0 * 30) == 60
+    assert "children_ratio" not in result
+
+
 # --- load_matrix_spec validation ------------------------------------------------
 
 
