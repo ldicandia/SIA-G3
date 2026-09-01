@@ -15,11 +15,11 @@ import numpy as np
 import PIL
 
 from .engine.events import GenerationEvent, RunResult
-from .engine.config import build_run_config, load_config
+from .engine.config import ConfigError as EngineConfigError, build_run_config, load_config
 from .engine.fitness import Evaluator
 from .engine.genome import Population, active_count, random_population
 from .engine.loop import Run
-from .io.artifacts import prepare_run_dir, write_run_json, write_triangles_json
+from .io.artifacts import RunDirError, prepare_run_dir, write_run_json, write_triangles_json
 from .io.images import load_target, save_png
 from .io.metrics import MetricsWriter
 
@@ -195,7 +195,20 @@ def main(argv: list[str] | None = None) -> int:
                            {"python": platform.python_version(), "numpy": np.__version__, "pillow": PIL.__version__}, _git_sha())
             with MetricsWriter(run_dir / "metrics.csv") as writer:
                 writer.write(event)
-    except (ConfigError, ValueError, OSError) as exc:
+    except (ConfigError, EngineConfigError, RunDirError, OSError) as exc:
+        # Catches this module's own ConfigError, the engine's ConfigError
+        # (build_run_config's validation errors), RunDirError (a
+        # user-facing --out problem: outside the project or already
+        # populated), and OSError (file I/O). Deliberately NOT a bare
+        # ValueError: several operator factories
+        # raise plain ValueError for internal invariant violations rather
+        # than user-facing config problems (e.g. selection.py's
+        # "selection requires non-empty population and non-negative count"
+        # guards). Catching that here would report a genuine engine bug as
+        # an argparse usage error -- printing the CLI usage banner and
+        # discarding the traceback -- making it indistinguishable from a
+        # user typo in --triangles (REVIEW.md WR-05). Let an unexpected
+        # ValueError propagate with its traceback intact instead.
         build_parser().error(str(exc))
     print(run_dir)
     return 0
