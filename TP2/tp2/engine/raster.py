@@ -14,11 +14,16 @@ def render(genes: np.ndarray, size: tuple[int, int], background: tuple[int, int,
     """Render active triangles in chromosome order as an RGB uint8 frame."""
     width, height = size
     triangles = np.asarray(genes).reshape(-1, GENES_PER_TRIANGLE)
+    active = triangles[triangles[:, ACTIVE] >= ACTIVE_THRESHOLD]
     # RGB is load-bearing: RGBA here overwrites alpha rather than doing "over" blending.
     canvas = Image.new("RGB", size, background)
     draw = ImageDraw.Draw(canvas, "RGBA")
-    for triangle in triangles[triangles[:, ACTIVE] >= ACTIVE_THRESHOLD]:
-        coords = np.rint(triangle[:6].reshape(3, 2) * np.array([width, height])).astype(int)
-        color = tuple(np.rint(triangle[[R, G, B, A]] * 255).astype(np.uint8).tolist())
-        draw.polygon([tuple(point) for point in coords], fill=color)
+    if active.size:
+        # Batch the per-triangle numpy math (rint/astype/tolist) once across
+        # the whole active set instead of once per triangle: same arithmetic
+        # and the same per-triangle draw order, far fewer numpy/Python calls.
+        coords_all = np.rint(active[:, :6].reshape(-1, 3, 2) * np.array([width, height])).astype(int).tolist()
+        colors_all = np.rint(active[:, [R, G, B, A]] * 255).astype(np.uint8).tolist()
+        for coords, color in zip(coords_all, colors_all):
+            draw.polygon([tuple(point) for point in coords], fill=tuple(color))
     return np.asarray(canvas, dtype=np.uint8)
