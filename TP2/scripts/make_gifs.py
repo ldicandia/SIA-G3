@@ -71,6 +71,25 @@ RUN_SPECS: list[GifSpec] = [
         "Misma bandera bajo selección ruleta (configs/roulette_demo.json), "
         "para contrastar presión de selección contra flag_ar_elite.gif",
     ),
+    GifSpec(
+        "mona_lisa_elite.gif",
+        "assets/gif_extra/mona_lisa.jpg",
+        "configs/baseline.json",
+        1,
+        "Mona Lisa (Leonardo da Vinci, dominio público, vía Wikimedia Commons) bajo selección "
+        "elite (configs/baseline.json) — un guiño a 'EvoLisa', el nombre del hill climber (1+1); "
+        "objetivo fuera de la matriz formal de 75 corridas, presupuesto de 20 triángulos igual "
+        "al resto de los GIFs, sin pretensión de fidelidad.",
+    ),
+    GifSpec(
+        "girl_pearl_earring_elite.gif",
+        "assets/gif_extra/girl_pearl_earring.jpg",
+        "configs/baseline.json",
+        1,
+        "La joven de la perla (Johannes Vermeer, dominio público, vía Wikimedia Commons) bajo "
+        "selección elite (configs/baseline.json) — segundo retrato, para variar la complejidad "
+        "del objetivo; también fuera de la matriz formal de 75 corridas.",
+    ),
 ]
 
 
