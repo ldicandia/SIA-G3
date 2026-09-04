@@ -87,6 +87,13 @@ class Run:
             frame_cache.update({row.tobytes(): frame for row, frame in zip(child_genes, child_frames)})
             children = Population(child_genes, child_fitness)
             population = self.config.survival(population, children, self.rng, ctx=gen_ctx)
+            # Bound frame_cache to the genes actually alive in the new
+            # population: every future lookup in _event is scoped to
+            # population.genes, and any bytes key dropped by survival's
+            # replacement is never looked up again. Without this prune the
+            # cache accumulates every genome's frame ever rendered for the
+            # whole run (unbounded memory growth over long horizons).
+            frame_cache = {row.tobytes(): frame_cache[row.tobytes()] for row in population.genes}
             elapsed = time.perf_counter() - started
             ctx = GenerationContext(generation, self.config.horizon, self.evaluator.renders, elapsed, population.fitness)
             reason = self.config.stop.check(ctx, population)
