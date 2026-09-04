@@ -116,6 +116,10 @@ Las figuras estáticas de arriba comparan curvas de fitness agregadas, pero no m
 
 ![flag_ar_roulette.gif: la misma bandera bajo selección ruleta (configs/roulette_demo.json) — punto de comparación de presión de selección contra flag_ar_elite.gif](../plots/gifs/flag_ar_roulette.gif)
 
+![mona_lisa_elite.gif: Mona Lisa (Leonardo da Vinci, dominio público, vía Wikimedia Commons) bajo selección elite (configs/baseline.json) — un guiño a "EvoLisa", el nombre del hill climber (1+1) presentado más abajo; objetivo fuera de la matriz formal de 75 corridas, mismo presupuesto de 20 triángulos que el resto de los GIFs, sin pretensión de fidelidad](../plots/gifs/mona_lisa_elite.gif)
+
+![girl_pearl_earring_elite.gif: La joven de la perla (Johannes Vermeer, dominio público, vía Wikimedia Commons) bajo selección elite (configs/baseline.json) — segundo retrato, para variar la complejidad del objetivo más allá de las tres formas sintéticas; también fuera de la matriz formal de 75 corridas](../plots/gifs/girl_pearl_earring_elite.gif)
+
 ## Comparación contra el (1+1) hill climber
 
 Como punto de comparación honesto, implementamos también un **(1+1) hill climber** — una reproducción fiel del estilo EvoLisa: población de un único individuo, sin cruza, que acepta una mutación solo si mejora estrictamente el fitness actual, reutilizando el mismo `Evaluator` y el mismo operador de mutación configurado que usa el AG. Lo llamamos, en todo momento, "el hill climber (1+1)" — nunca "AG base" ni ningún nombre que sugiera que pertenece a la familia de los algoritmos genéticos, porque no lo es: no tiene población, no tiene cruza y no tiene selección.
