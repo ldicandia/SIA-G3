@@ -106,6 +106,16 @@ La matriz de experimentos que respalda esta presentación tiene **3 brazos** (se
 
 ![Evidence for: selection-pressure differences are real and visible at equal render budget across all 7 registered methods](../plots/fig_selection_fitness.png)
 
+## Evolución visual
+
+Las figuras estáticas de arriba comparan curvas de fitness agregadas, pero no muestran cómo se ve el AG evolucionando cuadro a cuadro. Las siguientes animaciones se generan con `scripts/make_gifs.py`, que corre el motor real (la misma composición pública `load_config` / `build_run_config` / `Evaluator` / `Run` que usa `tp2/cli.py`) y muestrea aproximadamente 60 cuadros cada ~50 de las 3000 generaciones totales de la corrida — no un volcado de un cuadro por generación.
+
+![flag_ar_elite.gif: bandera argentina bajo selección elite (configs/baseline.json)](../plots/gifs/flag_ar_elite.gif)
+
+![pictogram_elite.gif: pictograma, una forma visualmente más compleja que la bandera, bajo el mismo operador elite (configs/baseline.json)](../plots/gifs/pictogram_elite.gif)
+
+![flag_ar_roulette.gif: la misma bandera bajo selección ruleta (configs/roulette_demo.json) — punto de comparación de presión de selección contra flag_ar_elite.gif](../plots/gifs/flag_ar_roulette.gif)
+
 ## Comparación contra el (1+1) hill climber
 
 Como punto de comparación honesto, implementamos también un **(1+1) hill climber** — una reproducción fiel del estilo EvoLisa: población de un único individuo, sin cruza, que acepta una mutación solo si mejora estrictamente el fitness actual, reutilizando el mismo `Evaluator` y el mismo operador de mutación configurado que usa el AG. Lo llamamos, en todo momento, "el hill climber (1+1)" — nunca "AG base" ni ningún nombre que sugiera que pertenece a la familia de los algoritmos genéticos, porque no lo es: no tiene población, no tiene cruza y no tiene selección.
