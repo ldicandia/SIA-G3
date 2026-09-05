@@ -33,6 +33,12 @@ from tp2.io.images import load_target  # noqa: E402
 
 CANVAS = (128, 128)
 TRIANGLES = 20
+# The 2 downloaded portrait targets (Mona Lisa, Girl with a Pearl Earring) are
+# meaningfully more detailed than the 3 flat synthetic shapes, so they use a
+# larger per-spec triangle budget (GifSpec.triangles override) for a more
+# legible, higher-resolution GIF -- explicitly requested over the plan's
+# original shared-budget default.
+PORTRAIT_TRIANGLES = 60
 TARGET_FRAME_COUNT = 60
 GIF_SCALE = 2
 GIF_FRAME_DURATION_MS = 80
@@ -46,6 +52,7 @@ class GifSpec:
     config: str
     seed: int
     caption: str
+    triangles: int = TRIANGLES
 
 
 RUN_SPECS: list[GifSpec] = [
@@ -78,8 +85,10 @@ RUN_SPECS: list[GifSpec] = [
         1,
         "Mona Lisa (Leonardo da Vinci, dominio público, vía Wikimedia Commons) bajo selección "
         "elite (configs/baseline.json) — un guiño a 'EvoLisa', el nombre del hill climber (1+1); "
-        "objetivo fuera de la matriz formal de 75 corridas, presupuesto de 20 triángulos igual "
-        "al resto de los GIFs, sin pretensión de fidelidad.",
+        "objetivo fuera de la matriz formal de 75 corridas, con un presupuesto ampliado de "
+        f"{PORTRAIT_TRIANGLES} triángulos (vs. {TRIANGLES} en el resto de los GIFs) para mayor "
+        "detalle sobre un objetivo más complejo.",
+        triangles=PORTRAIT_TRIANGLES,
     ),
     GifSpec(
         "girl_pearl_earring_elite.gif",
@@ -88,7 +97,9 @@ RUN_SPECS: list[GifSpec] = [
         1,
         "La joven de la perla (Johannes Vermeer, dominio público, vía Wikimedia Commons) bajo "
         "selección elite (configs/baseline.json) — segundo retrato, para variar la complejidad "
-        "del objetivo; también fuera de la matriz formal de 75 corridas.",
+        f"del objetivo; también fuera de la matriz formal de 75 corridas, con el mismo "
+        f"presupuesto ampliado de {PORTRAIT_TRIANGLES} triángulos.",
+        triangles=PORTRAIT_TRIANGLES,
     ),
 ]
 
@@ -113,7 +124,7 @@ def capture_run(spec: GifSpec) -> list[np.ndarray]:
     target = load_target(image_path, CANVAS)
     evaluator = Evaluator(target, CANVAS)
     rng = np.random.default_rng(spec.seed)
-    run = Run(config, evaluator, TRIANGLES, rng)
+    run = Run(config, evaluator, spec.triangles, rng)
     keep = sampled_generations(config.horizon, TARGET_FRAME_COUNT)
 
     started = time.perf_counter()

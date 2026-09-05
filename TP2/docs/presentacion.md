@@ -116,9 +116,9 @@ Las figuras estáticas de arriba comparan curvas de fitness agregadas, pero no m
 
 ![flag_ar_roulette.gif: la misma bandera bajo selección ruleta (configs/roulette_demo.json) — punto de comparación de presión de selección contra flag_ar_elite.gif](../plots/gifs/flag_ar_roulette.gif)
 
-![mona_lisa_elite.gif: Mona Lisa (Leonardo da Vinci, dominio público, vía Wikimedia Commons) bajo selección elite (configs/baseline.json) — un guiño a "EvoLisa", el nombre del hill climber (1+1) presentado más abajo; objetivo fuera de la matriz formal de 75 corridas, mismo presupuesto de 20 triángulos que el resto de los GIFs, sin pretensión de fidelidad](../plots/gifs/mona_lisa_elite.gif)
+![mona_lisa_elite.gif: Mona Lisa (Leonardo da Vinci, dominio público, vía Wikimedia Commons) bajo selección elite (configs/baseline.json) — un guiño a "EvoLisa", el nombre del hill climber (1+1) presentado más abajo; objetivo fuera de la matriz formal de 75 corridas, con un presupuesto ampliado de 60 triángulos (vs. 20 en el resto de los GIFs) para mayor detalle sobre un objetivo más complejo](../plots/gifs/mona_lisa_elite.gif)
 
-![girl_pearl_earring_elite.gif: La joven de la perla (Johannes Vermeer, dominio público, vía Wikimedia Commons) bajo selección elite (configs/baseline.json) — segundo retrato, para variar la complejidad del objetivo más allá de las tres formas sintéticas; también fuera de la matriz formal de 75 corridas](../plots/gifs/girl_pearl_earring_elite.gif)
+![girl_pearl_earring_elite.gif: La joven de la perla (Johannes Vermeer, dominio público, vía Wikimedia Commons) bajo selección elite (configs/baseline.json) — segundo retrato, para variar la complejidad del objetivo más allá de las tres formas sintéticas; también fuera de la matriz formal de 75 corridas, con el mismo presupuesto ampliado de 60 triángulos](../plots/gifs/girl_pearl_earring_elite.gif)
 
 ## Comparación contra el (1+1) hill climber
 
