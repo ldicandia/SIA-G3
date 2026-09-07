@@ -160,7 +160,9 @@ def plot_arm(
     cell_dirs: dict[str, Path],
     title: str,
     out_path: Path,
+    x_col: str = "generation",
     y_col: str = "best_fitness",
+    x_label: str = "Generaciones (igual presupuesto de renders)",
     y_label: str = "Best fitness",
     n_seeds: int = 5,
 ) -> None:
@@ -169,15 +171,21 @@ def plot_arm(
     `cell_dirs` is iterated in a STABLE, explicit order (sorted keys) so the
     legend order is reproducible across runs, never dependent on dict-
     construction order.
+
+    Defaults to a generation x-axis, which stays an honest equal-render-budget
+    comparison ONLY because every cell passed here shares one `children`
+    count, making renders a fixed multiple of generations. An arm that varies
+    `children_ratio` must pass `x_col="renders"` instead -- see
+    `plot_survival_kn`, which does.
     """
     fig, ax = plt.subplots()
     for label in sorted(cell_dirs):
-        curves = load_seed_curves(cell_dirs[label], y_col=y_col)
+        curves = load_seed_curves(cell_dirs[label], x_col=x_col, y_col=y_col)
         grid_x, values = align_on_grid(curves)
         median, q1, q3 = median_iqr(values)
         ax.plot(grid_x, median, label=label)
         ax.fill_between(grid_x, q1, q3, alpha=0.2)
-    ax.set_xlabel("Renders (cumulative fitness evaluations)")
+    ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     # The "n=" here is this plan's own omitted-n prohibition's concrete
     # enforcement, not just a described intention.
@@ -190,8 +198,20 @@ def plot_arm(
     plt.close(fig)
 
 
-def plot_survival_kn(matrix_root: Path, out_path: Path, n_seeds: int = 5) -> None:
+def plot_survival_kn(
+    matrix_root: Path,
+    out_path: Path,
+    x_col: str = "renders",
+    x_label: str = "Renders (cumulative fitness evaluations)",
+    n_seeds: int = 5,
+) -> None:
     """Two panels (additive, exclusive), sharing the render-count x-axis.
+
+    This arm — and ONLY this arm — must stay on renders. Its cells vary
+    `children_ratio`, so at generation 3000 K/N=2.0 has spent 180,030 renders
+    against K/N=0.5's 45,030: a 4x compute difference that a generation axis
+    would silently fold into the curves. Every other figure's cells share one
+    children count, which is why they can plot against generations.
 
     Each panel plots the three K/N ratios `main_matrix.json` ships. The
     additive curve is expected to stay non-decreasing while the exclusive
@@ -203,12 +223,12 @@ def plot_survival_kn(matrix_root: Path, out_path: Path, n_seeds: int = 5) -> Non
         for ratio in SURVIVAL_RATIOS:
             cell_dir = matrix_root / f"survival_kn-krn-{ratio}-{strategy}"
             _require_dir(cell_dir, _matrix_missing_hint())
-            curves = load_seed_curves(cell_dir)
+            curves = load_seed_curves(cell_dir, x_col=x_col)
             grid_x, values = align_on_grid(curves)
             median, q1, q3 = median_iqr(values)
             ax.plot(grid_x, median, label=f"K/N={ratio}")
             ax.fill_between(grid_x, q1, q3, alpha=0.2)
-        ax.set_xlabel("Renders (cumulative fitness evaluations)")
+        ax.set_xlabel(x_label)
         ax.set_title(strategy)
     axes[0].set_ylabel("Best fitness")
     # One shared legend outside both panels, not one per panel: both axes
