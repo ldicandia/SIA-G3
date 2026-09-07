@@ -93,14 +93,24 @@ naturally.
 ## Running Experiments
 
 ```bash
-.venv/bin/python -m tp2.experiments.runner --spec configs/experiments/main_matrix.json --out runs/matrix --jobs 8
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  .venv/bin/python -m tp2.experiments.runner --spec configs/experiments/main_matrix.json --out runs/matrix --jobs 8
 ```
 
-This is a **long-running command** — multiple minutes on a multi-core machine, not a quick
-check. The shipped matrix spec is 15 cells (7 selection methods, 6 survival/`K:N` ratio
-combinations, and 2 crossover-honesty controls) times 5 seeds each = 75 independent runs,
-distributed across a process pool sized by `--jobs` (defaults to `min(cpu_count, 16)`). Do
-not expect this to finish in the time it takes to read this README.
+**Pin the BLAS/OpenMP thread counts to 1, as above — this is not optional.** The runner
+forks a process pool, and OpenMP is not fork-safe: each worker re-initializes a full thread
+pool for arrays far too small to benefit, and the synchronization overhead dominates
+everything else. Measured on the real runner (14 runs, 16 cores): 512s with `--jobs 4` and
+unpinned threads, versus 6.1s with `--jobs 4` and threads pinned — roughly **85x**. Counter-
+intuitively, raising `--jobs` while leaving threads unpinned makes it *worse*, because the
+oversubscription grows with the pool size. With threads pinned, more jobs help as expected.
+
+The shipped matrix spec is 22 cells (7 selection methods, those same 7 methods applied to
+parent selection only against an elite replacement, 6 survival/`K:N` ratio combinations, and
+2 crossover-honesty controls) times 5 seeds each = 110 independent runs, distributed across a
+process pool sized by `--jobs` (defaults to `min(cpu_count, 16)`). Pinned and at `--jobs 8`,
+the full matrix takes roughly 5 minutes on a 16-core machine; unpinned it is effectively
+unrunnable.
 
 Once a matrix run has completed, turn it into figures with a second, much smaller command:
 

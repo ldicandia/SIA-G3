@@ -112,8 +112,13 @@ class GeneratePlotsError(ValueError):
 def _matrix_missing_hint() -> str:
     return (
         "build the real 110-run matrix first: "
+        "OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 "
         "python -m tp2.experiments.runner --spec configs/experiments/main_matrix.json "
-        "--out runs/matrix --jobs 4"
+        "--out runs/matrix --jobs 8 "
+        "(the thread pins are REQUIRED, not tuning: the runner forks a process pool and "
+        "OpenMP is not fork-safe, so unpinned BLAS threads make the matrix roughly 85x "
+        "slower -- effectively unrunnable -- and raising --jobs without pinning makes it "
+        "worse still)"
     )
 
 
