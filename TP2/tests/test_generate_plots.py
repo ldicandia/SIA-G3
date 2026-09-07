@@ -1,4 +1,4 @@
-"""Unit tests for scripts/generate_plots.py's five-figure set.
+"""Unit tests for scripts/generate_plots.py's seven-figure set.
 
 All fixtures are hand-written, tiny, synthetic metrics.csv/run.json files
 under tmp_path -- never a dependency on any real (gitignored) run directory.
@@ -35,10 +35,12 @@ def _write_hillclimber_run(dir_path: Path, renders: list[float], best_fitness: l
         json.dump(payload, handle)
 
 
-def test_figure_claims_has_exactly_five_entries_each_a_specific_string():
+def test_figure_claims_has_exactly_the_expected_entries_each_a_specific_string():
     expected_files = {
         "fig_selection_fitness.png",
         "fig_selection_diversity.png",
+        "fig_selection_parents_fitness.png",
+        "fig_selection_parents_diversity.png",
         "fig_survival_kn.png",
         "fig_crossover_control.png",
         "fig_hillclimber_comparison.png",
@@ -118,13 +120,18 @@ def test_plot_hillclimber_comparison_refuses_to_label_a_run_missing_the_algorith
 
 def test_build_all_figures_raises_a_clear_error_naming_the_missing_cell(tmp_path):
     matrix_root = tmp_path / "matrix"
-    # Only build the selection arm's cells; survival_kn/crossover_control
+    # Only build both selection arms' cells; survival_kn/crossover_control
     # are deliberately absent, mirroring an unfinished/tracer-scale matrix.
+    # `selection_parents-*` must be present too: build_all_figures checks it
+    # BEFORE survival_kn, so omitting it would make this test fail on the
+    # wrong missing cell and stop exercising the survival_kn failure it
+    # was written to prove.
     for label in gp.SELECTION_LABELS:
-        for seed_index in range(2):
-            _write_metrics_csv(
-                matrix_root / f"selection-{label}" / f"seed{seed_index}" / "metrics.csv", [10, 20], [0.5, 0.6]
-            )
+        for arm in ("selection", "selection_parents"):
+            for seed_index in range(2):
+                _write_metrics_csv(
+                    matrix_root / f"{arm}-{label}" / f"seed{seed_index}" / "metrics.csv", [10, 20], [0.5, 0.6]
+                )
 
     plots_dir = tmp_path / "plots"
     plots_dir.mkdir()

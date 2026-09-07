@@ -1,4 +1,4 @@
-"""Build the five named, honestly-captioned comparative figures the
+"""Build the seven named, honestly-captioned comparative figures the
 presentation cites, reading pre-existing matrix and hill-climber run output.
 
 Never re-runs the GA -- every figure is read back from `runs/matrix/`
@@ -67,6 +67,19 @@ FIGURE_CLAIMS: dict[str, str] = {
         "selectors vs its preservation under low-pressure ones, supporting "
         "the premature-convergence analysis"
     ),
+    "fig_selection_parents_fitness.png": (
+        "Evidence for: the same 7 selection methods applied to parent "
+        "selection ONLY, against a common elite replacement -- the controlled "
+        "counterpart to fig_selection_fitness.png, where the method also "
+        "governs replacement and so nothing retains the best individual, "
+        "isolating the selection operator's own effect"
+    ),
+    "fig_selection_parents_diversity.png": (
+        "Evidence for EXP-04 with the selection operator isolated: the "
+        "diversity trace of the same 7 methods applied to parent selection "
+        "ONLY, against a common elite replacement, separating each method's "
+        "own effect on diversity from the replacement scheme's"
+    ),
     "fig_survival_kn.png": (
         "Evidence for Phase 3 Success Criterion 2, now aggregated across "
         "seeds: additive survival's best-fitness curve stays monotone while "
@@ -98,9 +111,9 @@ class GeneratePlotsError(ValueError):
 
 def _matrix_missing_hint() -> str:
     return (
-        "build the real 75-run matrix first: "
+        "build the real 110-run matrix first: "
         "python -m tp2.experiments.runner --spec configs/experiments/main_matrix.json "
-        "--out runs/matrix --jobs 8"
+        "--out runs/matrix --jobs 4"
     )
 
 
@@ -289,7 +302,7 @@ def plot_hillclimber_comparison(ga_cell_dir: Path, hillclimber_dir: Path, out_pa
 
 
 def build_all_figures(matrix_root: Path, hillclimber_dir: Path, plots_dir: Path) -> list[Path]:
-    """The full five-figure set, each built off `align_on_grid` + `median_iqr`."""
+    """The full seven-figure set, each built off `align_on_grid` + `median_iqr`."""
     outputs: list[Path] = []
 
     selection_cells = {label: matrix_root / f"selection-{label}" for label in SELECTION_LABELS}
@@ -307,6 +320,29 @@ def build_all_figures(matrix_root: Path, hillclimber_dir: Path, plots_dir: Path)
     out = plots_dir / "fig_selection_diversity.png"
     plot_arm(
         selection_cells, FIGURE_CLAIMS["fig_selection_diversity.png"], out,
+        y_col="diversity", y_label="Diversity (mean stdev/range across loci)", n_seeds=n_seeds,
+    )
+    outputs.append(out)
+
+    # The controlled counterpart arm: the SAME 7 labels, applied to `parents`
+    # only against a pinned elite replacement. Reuses SELECTION_LABELS rather
+    # than duplicating the list, so the two arms can never drift apart.
+    selection_parents_cells = {
+        label: matrix_root / f"selection_parents-{label}" for label in SELECTION_LABELS
+    }
+    for cell_dir in selection_parents_cells.values():
+        _require_dir(cell_dir, _matrix_missing_hint())
+
+    out = plots_dir / "fig_selection_parents_fitness.png"
+    plot_arm(
+        selection_parents_cells, FIGURE_CLAIMS["fig_selection_parents_fitness.png"], out,
+        y_col="best_fitness", y_label="Best fitness", n_seeds=n_seeds,
+    )
+    outputs.append(out)
+
+    out = plots_dir / "fig_selection_parents_diversity.png"
+    plot_arm(
+        selection_parents_cells, FIGURE_CLAIMS["fig_selection_parents_diversity.png"], out,
         y_col="diversity", y_label="Diversity (mean stdev/range across loci)", n_seeds=n_seeds,
     )
     outputs.append(out)
@@ -334,7 +370,7 @@ def build_all_figures(matrix_root: Path, hillclimber_dir: Path, plots_dir: Path)
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Build the five named comparative figures from pre-existing matrix "
+            "Build the seven named comparative figures from pre-existing matrix "
             "and hill-climber run output. Never re-runs the GA."
         )
     )
@@ -361,7 +397,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build the full five-figure set from real matrix and hill-climber output.
+    """Build the full seven-figure set from real matrix and hill-climber output.
 
     `--matrix-root` still accepts `runs/_matrix_tracer` (Task 1's tracer
     scope) for a fast, tiny-scale check of the CLI path; against that tiny

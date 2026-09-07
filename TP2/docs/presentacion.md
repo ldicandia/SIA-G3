@@ -8,7 +8,7 @@ date: "2026"
 
 ## Ejercicio 2 — Resumen
 
-Implementamos, íntegramente a mano y sin ninguna librería de Algoritmos Genéticos, un motor de AG que aproxima una imagen objetivo componiendo triángulos translúcidos sobre un canvas en blanco. El único input real del problema (sin contar los hiperparámetros) es la imagen a aproximar y la cantidad máxima de triángulos disponibles; el cromosoma, el operador de selección, la cruza, la mutación y el criterio de corte son todos configurables desde un único archivo JSON, sin tocar código. El resultado no se defiende "porque funciona", sino con una matriz de 75 corridas medidas, con 5 semillas por celda, que compara cuantitativamente cada familia de operadores estudiada en la cátedra.
+Implementamos, íntegramente a mano y sin ninguna librería de Algoritmos Genéticos, un motor de AG que aproxima una imagen objetivo componiendo triángulos translúcidos sobre un canvas en blanco. El único input real del problema (sin contar los hiperparámetros) es la imagen a aproximar y la cantidad máxima de triángulos disponibles; el cromosoma, el operador de selección, la cruza, la mutación y el criterio de corte son todos configurables desde un único archivo JSON, sin tocar código. El resultado no se defiende "porque funciona", sino con una matriz de 110 corridas medidas, con 5 semillas por celda, que compara cuantitativamente cada familia de operadores estudiada en la cátedra.
 
 ## Estructura del cromosoma
 
@@ -102,9 +102,15 @@ Sucede porque la ruleta asigna probabilidad de selección proporcional al fitnes
 
 ## Matriz de operadores
 
-La matriz de experimentos que respalda esta presentación tiene **3 brazos** (selección, con 7 métodos: elite, ruleta, universal, ranking, Boltzmann y ambas variantes de torneo; supervivencia K/N, con 6 combinaciones de razón K/N × estrategia; y honestidad de la cruza, con 2 celdas), **15 celdas** en total, **5 semillas por celda**, para **75 corridas** totales — barridas de a un factor por vez (one-factor-at-a-time) sobre `configs/baseline.json`. Esto **no** es el cruce completo de todos los factores contra todos los factores (que hubiera requerido del orden de 720 corridas): decidimos deliberadamente no correr ese cruce completo, porque el diseño one-factor-at-a-time aísla el efecto de cada operador sin confundirlo con el resto, a una fracción del costo computacional y de análisis. `../plots/fig_selection_fitness.png` muestra que las diferencias de presión de selección son reales y visibles, al mismo presupuesto de renders, en los siete métodos registrados.
+La matriz de experimentos que respalda esta presentación tiene **4 brazos** (selección, con 7 métodos: elite, ruleta, universal, ranking, Boltzmann y ambas variantes de torneo; selección sobre padres, con esos mismos 7 métodos aplicados únicamente a la selección de padres contra un reemplazo elite; supervivencia K/N, con 6 combinaciones de razón K/N × estrategia; y honestidad de la cruza, con 2 celdas), **22 celdas** en total, **5 semillas por celda**, para **110 corridas** totales — barridas de a un factor por vez (one-factor-at-a-time) sobre `configs/baseline.json`. Esto **no** es el cruce completo de todos los factores contra todos los factores (que hubiera requerido del orden de 720 corridas): decidimos deliberadamente no correr ese cruce completo, porque el diseño one-factor-at-a-time aísla el efecto de cada operador sin confundirlo con el resto, a una fracción del costo computacional y de análisis. `../plots/fig_selection_fitness.png` muestra que las diferencias de presión de selección son reales y visibles, al mismo presupuesto de renders, en los siete métodos registrados.
 
 ![Evidence for: selection-pressure differences are real and visible at equal render budget across all 7 registered methods](../plots/fig_selection_fitness.png)
+
+Ese primer brazo aplica el método bajo estudio tanto a la selección de padres como al reemplazo, de modo que en las variantes proporcionales de baja presión nada retiene al mejor individuo: es el comportamiento no elitista correcto, pero por sí solo invita a concluir que esos métodos "no funcionan". El segundo brazo corre los mismos 7 métodos restringidos únicamente a la selección de padres, contra un reemplazo elite común. `../plots/fig_selection_parents_fitness.png` y `../plots/fig_selection_parents_diversity.png` permiten entonces comparar ambos diseños y separar el efecto propio del operador de selección del efecto del esquema de reemplazo.
+
+![Evidence for: the same 7 selection methods applied to parent selection ONLY, against a common elite replacement -- the controlled counterpart to fig_selection_fitness.png, where the method also governs replacement and so nothing retains the best individual, isolating the selection operator's own effect](../plots/fig_selection_parents_fitness.png)
+
+![Evidence for EXP-04 with the selection operator isolated: the diversity trace of the same 7 methods applied to parent selection ONLY, against a common elite replacement, separating each method's own effect on diversity from the replacement scheme's](../plots/fig_selection_parents_diversity.png)
 
 ## Evolución visual
 
@@ -131,7 +137,7 @@ Como punto de comparación honesto, implementamos también un **(1+1) hill climb
 ## Conclusiones
 
 - Construimos un motor de Algoritmos Genéticos completo y hecho a mano — seis métodos de selección, ambas estrategias de supervivencia, los cuatro cruces y las cuatro variantes de mutación — sobre un cromosoma de longitud fija con flag de actividad, sin ninguna librería de AG.
-- La comparación cuantitativa (75 corridas, 5 semillas por celda, presupuesto de renders equiparado) muestra diferencias reales y medibles entre métodos de selección, y confirma el comportamiento esperado de ambas estrategias de supervivencia bajo K > N.
+- La comparación cuantitativa (110 corridas, 5 semillas por celda, presupuesto de renders equiparado) muestra diferencias reales y medibles entre métodos de selección, y confirma el comportamiento esperado de ambas estrategias de supervivencia bajo K > N.
 - Dos hallazgos que podrían parecer errores — la cruza posicional destructiva y la curva no monótona de la supervivencia exclusiva — están instrumentados y reportados como comportamiento esperado del diseño, respaldados por su propia figura.
 - El hill climber (1+1) es un punto de comparación honesto, no un espantapájaros: se reporta el resultado real de la comparación, gane quien gane.
 - Limitación abierta: la matriz de 75 corridas publicada corre sobre un fitness ajustado antes de que se corrigiera un bug de acumulación float32 en el cálculo de SSE (Fase 1) y antes del ajuste de probabilidad de mutación de la Fase 2/3; el desvío numérico medido es de cuarto-quinto decimal a la escala de horizonte usada y no se espera que cambie ninguna conclusión cualitativa, pero se deja registrado como una salvedad honesta más que ocultarla.

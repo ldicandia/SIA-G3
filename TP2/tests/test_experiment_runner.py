@@ -1,5 +1,5 @@
 """Edge cases for the matrix runner (EXP-01/EXP-02): a seeds=1 cell, seed and
-path uniqueness at the real 75-job scale (computed without running any of
+path uniqueness at the real 110-job scale (computed without running any of
 them), the silent-failure guard, and ordering-independence of cell identity.
 
 Fixtures `project_root` comes from `tests/conftest.py`.
@@ -79,23 +79,23 @@ def test_seeds_one_runs_one_replicate_per_cell_without_error(matrix_out_root, pr
         assert (run_dir / "run.json").exists(), run_dir
 
 
-# --- seed and path uniqueness at the real 75-job scale (no execution) ------
+# --- seed and path uniqueness at the real 110-job scale (no execution) ------
 
 
-def test_derive_seed_has_no_collision_over_the_full_75_job_space() -> None:
+def test_derive_seed_has_no_collision_over_the_full_110_job_space() -> None:
     spec = load_matrix_spec(MAIN_MATRIX_PATH)
     jobs = build_jobs(spec)
-    assert len(jobs) == 75  # 15 cells x 5 seeds
+    assert len(jobs) == 110  # 22 cells x 5 seeds
     seeds = {job.seed for job in jobs}
-    assert len(seeds) == 75, "derive_seed collided somewhere across the 75-job space"
+    assert len(seeds) == 110, "derive_seed collided somewhere across the 110-job space"
 
 
-def test_planned_output_paths_are_all_unique_over_the_full_75_job_space() -> None:
+def test_planned_output_paths_are_all_unique_over_the_full_110_job_space() -> None:
     spec = load_matrix_spec(MAIN_MATRIX_PATH)
     jobs = build_jobs(spec)
-    assert len(jobs) == 75
+    assert len(jobs) == 110
     paths = {str(job.out_dir) for job in jobs}
-    assert len(paths) == 75, "a planned output path collided somewhere across the 75-job space"
+    assert len(paths) == 110, "a planned output path collided somewhere across the 110-job space"
 
 
 # --- silent-failure guard ---------------------------------------------------
