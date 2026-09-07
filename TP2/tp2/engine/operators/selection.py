@@ -16,7 +16,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .registry import BLEND_MAX_DEPTH, SELECTION
-from .sampling import sample_from_weights
+from .sampling import SCALING_MODES, sample_from_weights, scale_fitness
 
 __all__ = [
     "elite_counts",
@@ -142,23 +142,44 @@ def make_blend(
     return select
 
 
+def _validate_scaling(scaling: str | None, sigma_c: float | None) -> tuple[str, float]:
+    """Validate the optional fitness-scaling knob at BUILD time.
+
+    Default is "none": CATEDRA.md defines Ruleta on raw relative aptitude, so
+    scaling is an opt-in extra, never a redefinition. The default must leave
+    results byte-identical to every already-archived run.
+    """
+    from tp2.engine.config import ConfigError
+
+    mode = "none" if scaling is None else scaling
+    if mode not in SCALING_MODES:
+        raise ConfigError(f"scaling must be one of {SCALING_MODES}, got {scaling!r}")
+    if sigma_c is not None and (isinstance(sigma_c, bool) or not isinstance(sigma_c, (int, float)) or sigma_c <= 0):
+        raise ConfigError(f"sigma_c must be a number > 0, got {sigma_c!r}")
+    return mode, 2.0 if sigma_c is None else float(sigma_c)
+
+
 @SELECTION.register("roulette")
-def make_roulette():
+def make_roulette(scaling: str | None = None, sigma_c: float | None = None):
     """SEL-02: Roulette selection over relative aptitude wheel."""
+    mode, c = _validate_scaling(scaling, sigma_c)
+
     def select(fitness: np.ndarray, k: int, rng: np.random.Generator, ctx: Any = None) -> np.ndarray:
         if k < 0 or fitness.size == 0:
             raise ValueError("selection requires non-empty population and non-negative count")
-        return sample_from_weights(fitness, k, mode="roulette", rng=rng)
+        return sample_from_weights(scale_fitness(fitness, mode, c), k, mode="roulette", rng=rng)
     return select
 
 
 @SELECTION.register("universal")
-def make_universal():
+def make_universal(scaling: str | None = None, sigma_c: float | None = None):
     """SEL-03: Stochastic Universal Sampling (SUS) over relative aptitude wheel."""
+    mode, c = _validate_scaling(scaling, sigma_c)
+
     def select(fitness: np.ndarray, k: int, rng: np.random.Generator, ctx: Any = None) -> np.ndarray:
         if k < 0 or fitness.size == 0:
             raise ValueError("selection requires non-empty population and non-negative count")
-        return sample_from_weights(fitness, k, mode="sus", rng=rng)
+        return sample_from_weights(scale_fitness(fitness, mode, c), k, mode="sus", rng=rng)
     return select
 
 

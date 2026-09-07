@@ -1,0 +1,321 @@
+{
+  "baseline": "../baseline.json",
+  "base_seed": 20260901,
+  "seeds": 5,
+  "out_root": "runs/matrix_bsweep",
+  "image": "../../assets/flag_ar.png",
+  "canvas": 128,
+  "triangles": 30,
+  "arms": {
+    "bsweep": {
+      "t0_0.15-tc_0.002-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.002,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.002,
+          "k": 0.01
+        }
+      },
+      "t0_0.15-tc_0.002-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.002,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.002,
+          "k": 0.05
+        }
+      },
+      "t0_0.15-tc_0.01-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.01,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.01,
+          "k": 0.01
+        }
+      },
+      "t0_0.15-tc_0.01-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.01,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.01,
+          "k": 0.05
+        }
+      },
+      "t0_0.15-tc_0.05-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.05,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.05,
+          "k": 0.01
+        }
+      },
+      "t0_0.15-tc_0.05-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.05,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 0.15,
+          "tc": 0.05,
+          "k": 0.05
+        }
+      },
+      "t0_1.0-tc_0.002-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.002,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.002,
+          "k": 0.01
+        }
+      },
+      "t0_1.0-tc_0.002-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.002,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.002,
+          "k": 0.05
+        }
+      },
+      "t0_1.0-tc_0.01-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.01,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.01,
+          "k": 0.01
+        }
+      },
+      "t0_1.0-tc_0.01-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.01,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.01,
+          "k": 0.05
+        }
+      },
+      "t0_1.0-tc_0.05-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.05,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.05,
+          "k": 0.01
+        }
+      },
+      "t0_1.0-tc_0.05-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.05,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.05,
+          "k": 0.05
+        }
+      },
+      "t0_1.0-tc_0.5-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.5,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.5,
+          "k": 0.01
+        }
+      },
+      "t0_1.0-tc_0.5-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.5,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 1.0,
+          "tc": 0.5,
+          "k": 0.05
+        }
+      },
+      "t0_5.0-tc_0.002-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.002,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.002,
+          "k": 0.01
+        }
+      },
+      "t0_5.0-tc_0.002-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.002,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.002,
+          "k": 0.05
+        }
+      },
+      "t0_5.0-tc_0.01-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.01,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.01,
+          "k": 0.01
+        }
+      },
+      "t0_5.0-tc_0.01-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.01,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.01,
+          "k": 0.05
+        }
+      },
+      "t0_5.0-tc_0.05-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.05,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.05,
+          "k": 0.01
+        }
+      },
+      "t0_5.0-tc_0.05-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.05,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.05,
+          "k": 0.05
+        }
+      },
+      "t0_5.0-tc_0.5-k_0.01": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.5,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.5,
+          "k": 0.01
+        }
+      },
+      "t0_5.0-tc_0.5-k_0.05": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.5,
+          "k": 0.05
+        },
+        "replacement": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.5,
+          "k": 0.05
+        }
+      }
+    }
+  }
+}

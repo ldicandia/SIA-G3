@@ -1,0 +1,73 @@
+{
+  "baseline": "../baseline.json",
+  "base_seed": 20260901,
+  "seeds": 5,
+  "out_root": "runs/matrix_scaling",
+  "image": "../../assets/flag_ar.png",
+  "canvas": 128,
+  "triangles": 30,
+  "arms": {
+    "scaling": {
+      "roulette-none": {
+        "parents": {
+          "method": "roulette",
+          "scaling": "none"
+        },
+        "replacement": {
+          "method": "roulette",
+          "scaling": "none"
+        }
+      },
+      "roulette-offset": {
+        "parents": {
+          "method": "roulette",
+          "scaling": "offset"
+        },
+        "replacement": {
+          "method": "roulette",
+          "scaling": "offset"
+        }
+      },
+      "roulette-sigma": {
+        "parents": {
+          "method": "roulette",
+          "scaling": "sigma"
+        },
+        "replacement": {
+          "method": "roulette",
+          "scaling": "sigma"
+        }
+      },
+      "universal-none": {
+        "parents": {
+          "method": "universal",
+          "scaling": "none"
+        },
+        "replacement": {
+          "method": "universal",
+          "scaling": "none"
+        }
+      },
+      "universal-offset": {
+        "parents": {
+          "method": "universal",
+          "scaling": "offset"
+        },
+        "replacement": {
+          "method": "universal",
+          "scaling": "offset"
+        }
+      },
+      "universal-sigma": {
+        "parents": {
+          "method": "universal",
+          "scaling": "sigma"
+        },
+        "replacement": {
+          "method": "universal",
+          "scaling": "sigma"
+        }
+      }
+    }
+  }
+}
