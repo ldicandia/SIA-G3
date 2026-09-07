@@ -1,0 +1,24 @@
+{
+  "baseline": "../baseline.json",
+  "base_seed": 20260901,
+  "seeds": 5,
+  "out_root": "runs/matrix_boltzmann",
+  "image": "../../assets/flag_ar.png",
+  "canvas": 128,
+  "triangles": 30,
+  "arms": {
+    "selection": {
+      "boltzmann": {
+        "parents": {
+          "method": "boltzmann",
+          "t0": 5.0,
+          "tc": 0.5,
+          "k": 0.01
+        },
+        "replacement": {
+          "method": "elite"
+        }
+      }
+    }
+  }
+}

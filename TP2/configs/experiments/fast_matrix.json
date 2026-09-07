@@ -27,7 +27,7 @@
       },
       "boltzmann": {
         "parents": {"method": "boltzmann", "t0": 5.0, "tc": 0.5, "k": 0.01},
-        "replacement": {"method": "boltzmann", "t0": 5.0, "tc": 0.5, "k": 0.01}
+        "replacement": {"method": "elite"}
       },
       "tournament_deterministic": {
         "parents": {"method": "tournament_deterministic", "m": 3},

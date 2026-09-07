@@ -254,8 +254,17 @@ def build_jobs(spec: MatrixSpec) -> list[CellJob]:
 
 def run_matrix(spec: MatrixSpec, jobs: int) -> list[CellRunSummary]:
     job_list = build_jobs(spec)
+    total = len(job_list)
+    results: list[CellRunSummary] = []
     with multiprocessing.Pool(jobs) as pool:
-        return pool.map(run_cell_seed, job_list)
+        for idx, summary in enumerate(pool.imap_unordered(run_cell_seed, job_list), start=1):
+            results.append(summary)
+            status = "OK" if summary.ok else f"FAILED ({summary.error})"
+            print(
+                f"[{idx}/{total}] Finalizado {summary.cell_id} (seed {summary.replicate_index}): {status} ({summary.renders} renders)",
+                flush=True,
+            )
+    return results
 
 
 def build_parser() -> argparse.ArgumentParser:
