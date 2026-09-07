@@ -2,7 +2,7 @@
   "baseline": "../baseline.json",
   "base_seed": 20260901,
   "seeds": 5,
-  "out_root": "runs/matrix",
+  "out_root": "runs/_matrix_fast",
   "image": "../../assets/flag_ar.png",
   "canvas": 128,
   "triangles": 30,

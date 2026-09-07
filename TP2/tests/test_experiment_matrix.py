@@ -1,6 +1,6 @@
 """Pure matrix-cell generation tests (EXP-01/EXP-02): product_cells,
 apply_overrides, load_matrix_spec validation, and the shipped
-configs/experiments/main_matrix.json's resolved 15-cell x 5-seed design.
+configs/experiments/main_matrix.json's resolved 22-cell x 5-seed design.
 
 No process is spawned anywhere in this file -- that is `test_experiment_runner.py`'s job.
 """
@@ -158,26 +158,36 @@ def test_load_matrix_spec_resolves_baseline_relative_to_spec_dir(tmp_path: Path)
     assert spec.seeds == 2
 
 
-# --- configs/experiments/main_matrix.json: the resolved 15-cell design ---------
+# --- configs/experiments/main_matrix.json: the resolved 22-cell design ---------
 
 
-def test_main_matrix_parses_and_builds_fifteen_cells() -> None:
+def test_main_matrix_parses_and_builds_twenty_two_cells() -> None:
     spec = load_matrix_spec(MAIN_MATRIX_PATH)
     cells = build_cells(spec)
-    assert len(cells) == 15
+    assert len(cells) == 22
+    # `selection-` and `selection_parents-` are disjoint prefixes (hyphen vs
+    # underscore), so the original filter keeps matching only the original arm.
     selection = [c for c in cells if c.cell_id.startswith("selection-")]
+    selection_parents = [c for c in cells if c.cell_id.startswith("selection_parents-")]
     survival = [c for c in cells if c.cell_id.startswith("survival_kn-")]
     crossover = [c for c in cells if c.cell_id.startswith("crossover_control-")]
     assert len(selection) == 7
+    assert len(selection_parents) == 7
     assert len(survival) == 6
     assert len(crossover) == 2
+    # The pinned elite replacement IS the experimental design of this arm --
+    # it is what isolates the selection operator's own effect from the
+    # `selection` arm, where the method also governs replacement and therefore
+    # nothing retains the best individual. Protect it mechanically.
+    for cell in selection_parents:
+        assert cell.overrides["replacement"] == {"method": "elite"}
 
 
 def test_main_matrix_seeds_and_total_run_count() -> None:
     spec = load_matrix_spec(MAIN_MATRIX_PATH)
     cells = build_cells(spec)
     assert spec.seeds == 5
-    assert len(cells) * spec.seeds == 75
+    assert len(cells) * spec.seeds == 110
 
 
 def test_main_matrix_survival_kn_cells_carry_children_ratio_never_hardcoded_children() -> None:

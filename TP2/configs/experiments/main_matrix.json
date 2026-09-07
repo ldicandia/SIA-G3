@@ -34,6 +34,36 @@
         "replacement": {"method": "tournament_probabilistic", "threshold": 0.75}
       }
     },
+    "selection_parents": {
+      "elite": {
+        "parents": {"method": "elite"},
+        "replacement": {"method": "elite"}
+      },
+      "roulette": {
+        "parents": {"method": "roulette"},
+        "replacement": {"method": "elite"}
+      },
+      "universal": {
+        "parents": {"method": "universal"},
+        "replacement": {"method": "elite"}
+      },
+      "ranking": {
+        "parents": {"method": "ranking"},
+        "replacement": {"method": "elite"}
+      },
+      "boltzmann": {
+        "parents": {"method": "boltzmann", "t0": 5.0, "tc": 0.5, "k": 0.01},
+        "replacement": {"method": "elite"}
+      },
+      "tournament_deterministic": {
+        "parents": {"method": "tournament_deterministic", "m": 3},
+        "replacement": {"method": "elite"}
+      },
+      "tournament_probabilistic": {
+        "parents": {"method": "tournament_probabilistic", "threshold": 0.75},
+        "replacement": {"method": "elite"}
+      }
+    },
     "survival_kn": {
       "krn-0.5-additive": {"children_ratio": 0.5, "survival": {"method": "additive"}},
       "krn-0.5-exclusive": {"children_ratio": 0.5, "survival": {"method": "exclusive"}},
