@@ -1,0 +1,37 @@
+{
+  "baseline": "../baseline.json",
+  "base_seed": 20260901,
+  "seeds": 5,
+  "out_root": "runs/matrix_mutation",
+  "image": "../../assets/flag_ar.png",
+  "canvas": 128,
+  "triangles": 30,
+  "arms": {
+    "mutation": {
+      "gene": {
+        "mutation": {"method": "gene", "probability": 0.9}
+      },
+      "multigen_limited": {
+        "mutation": {"method": "multigen_limited", "m": 5, "probability": 0.9}
+      },
+      "multigen_uniform": {
+        "mutation": {"method": "multigen_uniform", "probability": 0.9}
+      },
+      "complete": {
+        "mutation": {"method": "complete", "probability": 0.9}
+      },
+      "matched-multigen_limited": {
+        "mutation": {"method": "multigen_limited", "m": 5, "probability": 0.3}
+      },
+      "matched-multigen_uniform": {
+        "mutation": {"method": "multigen_uniform", "probability": 0.0027273}
+      },
+      "matched-complete": {
+        "mutation": {"method": "complete", "probability": 0.0027273}
+      },
+      "gene-non_uniform": {
+        "mutation": {"method": "gene", "probability": 0.9, "schedule": "non_uniform", "b": 5.0}
+      }
+    }
+  }
+}

@@ -112,16 +112,46 @@ process pool sized by `--jobs` (defaults to `min(cpu_count, 16)`). Pinned and at
 the full matrix takes roughly 5 minutes on a 16-core machine; unpinned it is effectively
 unrunnable.
 
-Once a matrix run has completed, turn it into figures with a second, much smaller command:
+The mutation operators live in a **second, separate spec**, because their cells override
+`mutation` rather than any dimension `main_matrix.json` sweeps:
+
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  .venv/bin/python -m tp2.experiments.runner --spec configs/experiments/mutation_matrix.json \
+  --out runs/matrix_mutation --jobs 8
+```
+
+That spec is 8 cells × 5 seeds = 40 runs (roughly 2 minutes, pinned, on 16 cores): the four
+cátedra scopes at the baseline's own `Pm = 0.9`, three of them repeated with `Pm` rescaled so
+every cell mutates the same **expected 0.9 genes per child**, and one Michalewicz
+`non_uniform` schedule. The rate-matched cells are not optional decoration — on a 30-triangle
+chromosome (330 loci) the same `Pm = 0.9` means 0.9 mutated genes for `gene` and 297 for
+`multigen_uniform`, so comparing the four scopes at equal `Pm` compares four different search
+radii rather than four operators.
+
+Once both matrices have run, turn them into figures with a second, much smaller command:
 
 ```bash
 .venv/bin/python scripts/generate_plots.py
 ```
 
-This reads the `metrics.csv` / `run.json` files `runs/matrix/` and `runs/hillclimber/`
-already contain and writes five comparative figures under `plots/` — it never re-runs the
-GA, so it can be re-run any time (after tweaking a plot's styling, for example) at
-effectively zero cost.
+This reads the `metrics.csv` / `run.json` files `runs/matrix/`, `runs/matrix_mutation/` and
+`runs/hillclimber/` already contain and writes **eleven** comparative figures under `plots/` —
+it never re-runs the GA, so it can be re-run any time (after tweaking a plot's styling, for
+example) at effectively zero cost. If `runs/matrix_mutation/` does not exist the two mutation
+figures are skipped with a note on stderr rather than failing the whole build.
+
+The figures' titles are the `FIGURE_CLAIMS` strings — English sentences naming the claim each
+figure is evidence for, which is the right caption beside the code and the wrong one on a
+Spanish slide. The presentation's own variants of the three newest figures are built
+separately, from the same functions and the same data, with Spanish captions and operator
+names:
+
+```bash
+.venv/bin/python scripts/make_deck_figures.py
+```
+
+They land in `plots/deck/` and are the ones `docs/Presentacion.pptx` embeds.
 
 ## Running the Hill-Climber Baseline
 
