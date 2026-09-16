@@ -1,0 +1,7 @@
+build/
+.venv/
+__pycache__/
+*.py[cod]
+runs_validation/
+plots/*.png
+.pytest_cache/
