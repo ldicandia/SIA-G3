@@ -556,14 +556,42 @@ int run_train(int argc, char** argv) {
     record.wall_time_seconds = wall_time;
 
     Matrix preds = model->predict(data.X);
-    for (std::size_t i = 0; i < data.X.rows(); ++i) {
-        tp3::PredictionRecord pr;
-        for (std::size_t j = 0; j < data.X.cols(); ++j) {
-            pr.input.push_back(data.X(i, j));
+    if (data.y.cols() > 1) {
+        for (std::size_t i = 0; i < data.X.rows(); ++i) {
+            tp3::PredictionRecord pr;
+            // pr.input is left empty to bound run-JSON size for 784-dim image rows
+            std::size_t pred_idx = 0;
+            double max_pred = preds(i, 0);
+            for (std::size_t j = 1; j < preds.cols(); ++j) {
+                if (preds(i, j) > max_pred) {
+                    max_pred = preds(i, j);
+                    pred_idx = j;
+                }
+            }
+            std::size_t exp_idx = 0;
+            double max_exp = data.y(i, 0);
+            for (std::size_t j = 1; j < data.y.cols(); ++j) {
+                if (data.y(i, j) > max_exp) {
+                    max_exp = data.y(i, j);
+                    exp_idx = j;
+                }
+            }
+            pr.predicted_class = static_cast<int>(pred_idx);
+            pr.expected_class = static_cast<int>(exp_idx);
+            pr.expected = static_cast<double>(exp_idx);
+            pr.predicted = static_cast<double>(pred_idx);
+            record.predictions.push_back(pr);
         }
-        pr.expected = data.y(i, 0);
-        pr.predicted = preds(i, 0);
-        record.predictions.push_back(pr);
+    } else {
+        for (std::size_t i = 0; i < data.X.rows(); ++i) {
+            tp3::PredictionRecord pr;
+            for (std::size_t j = 0; j < data.X.cols(); ++j) {
+                pr.input.push_back(data.X(i, j));
+            }
+            pr.expected = data.y(i, 0);
+            pr.predicted = preds(i, 0);
+            record.predictions.push_back(pr);
+        }
     }
 
     std::filesystem::path written = tp3::write_run_json(record, config.output_dir);

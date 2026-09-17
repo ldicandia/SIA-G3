@@ -12,6 +12,8 @@ struct PredictionRecord {
     std::vector<double> input;
     double expected;
     double predicted;
+    int predicted_class = -1;
+    int expected_class = -1;
 };
 
 // Everything one `tp3 validate` run stores for Python to analyse.

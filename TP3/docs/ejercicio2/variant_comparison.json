@@ -1,0 +1,298 @@
+{
+  "lr_variants": [
+    {
+      "run_name": "lr_0.01",
+      "learning_rate": 0.01,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "val_accuracy": 0.9413419043792688,
+      "per_class_recall": {
+        "0": 0.9527027027027027,
+        "1": 0.9821958456973294,
+        "2": 0.9194630872483222,
+        "3": 0.9215686274509803,
+        "4": 0.928082191780822,
+        "5": 0.7037037037037037,
+        "6": 0.9763513513513513,
+        "7": 0.9584664536741214,
+        "8": null,
+        "9": 0.9292929292929293
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/lr_0.01/mlp_42_1789682185244779.json",
+      "val_run_json": "runs/digits/lr_0.01_val/mlp_42_1789682185805402.json"
+    },
+    {
+      "run_name": "baseline",
+      "learning_rate": 0.05,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "val_accuracy": 0.9413419043792688,
+      "per_class_recall": {
+        "0": 0.9662162162162162,
+        "1": 0.9821958456973294,
+        "2": 0.9362416107382551,
+        "3": 0.8888888888888888,
+        "4": 0.910958904109589,
+        "5": 0.7777777777777778,
+        "6": 0.9628378378378378,
+        "7": 0.9488817891373802,
+        "8": null,
+        "9": 0.9595959595959596
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/baseline/mlp_42_1789682044061948.json",
+      "val_run_json": "runs/digits/baseline_val/mlp_42_1789682044604300.json"
+    },
+    {
+      "run_name": "lr_2.0",
+      "learning_rate": 2,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "val_accuracy": 0.5628766572920851,
+      "per_class_recall": {
+        "0": 0.8040540540540541,
+        "1": 0.8605341246290801,
+        "2": 0.0,
+        "3": 0.9640522875816994,
+        "4": 0.7705479452054794,
+        "5": 0.0,
+        "6": 0.8006756756756757,
+        "7": 0.36741214057507987,
+        "8": null,
+        "9": 0.003367003367003367
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/lr_2.0/mlp_42_1789682190168601.json",
+      "val_run_json": "runs/digits/lr_2.0_val/mlp_42_1789682190705909.json"
+    }
+  ],
+  "architecture_variants": [
+    {
+      "run_name": "arch_16",
+      "layer_sizes": [
+        784,
+        16,
+        10
+      ],
+      "n_params": 12730,
+      "learning_rate": 0.05,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.9389312977099237,
+      "per_class_recall": {
+        "0": 0.9527027027027027,
+        "1": 0.973293768545994,
+        "2": 0.9161073825503355,
+        "3": 0.8954248366013072,
+        "4": 0.9452054794520548,
+        "5": 0.7962962962962963,
+        "6": 0.9695945945945946,
+        "7": 0.9584664536741214,
+        "8": null,
+        "9": 0.9225589225589226
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/arch_16/mlp_42_1789682238029939.json",
+      "val_run_json": "runs/digits/arch_16_val/mlp_42_1789682238545997.json"
+    },
+    {
+      "run_name": "baseline",
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "n_params": 25450,
+      "learning_rate": 0.05,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.9413419043792688,
+      "per_class_recall": {
+        "0": 0.9662162162162162,
+        "1": 0.9821958456973294,
+        "2": 0.9362416107382551,
+        "3": 0.8888888888888888,
+        "4": 0.910958904109589,
+        "5": 0.7777777777777778,
+        "6": 0.9628378378378378,
+        "7": 0.9488817891373802,
+        "8": null,
+        "9": 0.9595959595959596
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/baseline/mlp_42_1789682044061948.json",
+      "val_run_json": "runs/digits/baseline_val/mlp_42_1789682044604300.json"
+    },
+    {
+      "run_name": "arch_32-16",
+      "layer_sizes": [
+        784,
+        32,
+        16,
+        10
+      ],
+      "n_params": 25818,
+      "learning_rate": 0.05,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.9477701888308557,
+      "per_class_recall": {
+        "0": 0.956081081081081,
+        "1": 0.9821958456973294,
+        "2": 0.9261744966442953,
+        "3": 0.9248366013071896,
+        "4": 0.9212328767123288,
+        "5": 0.8148148148148148,
+        "6": 0.972972972972973,
+        "7": 0.9584664536741214,
+        "8": null,
+        "9": 0.9595959595959596
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/arch_32-16/mlp_42_1789682242919323.json",
+      "val_run_json": "runs/digits/arch_32-16_val/mlp_42_1789682243471203.json"
+    }
+  ],
+  "optimizer_variants": [
+    {
+      "run_name": "baseline",
+      "optimizer": "sgd",
+      "learning_rate": 0.05,
+      "epochs": 10,
+      "architecture": [
+        784,
+        32,
+        10
+      ],
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "val_accuracy": 0.9413419043792688,
+      "per_class_recall": {
+        "0": 0.9662162162162162,
+        "1": 0.9821958456973294,
+        "2": 0.9362416107382551,
+        "3": 0.8888888888888888,
+        "4": 0.910958904109589,
+        "5": 0.7777777777777778,
+        "6": 0.9628378378378378,
+        "7": 0.9488817891373802,
+        "8": null,
+        "9": 0.9595959595959596
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/baseline/mlp_42_1789682044061948.json",
+      "val_run_json": "runs/digits/baseline_val/mlp_42_1789682044604300.json"
+    },
+    {
+      "run_name": "opt_momentum",
+      "optimizer": "momentum",
+      "learning_rate": 0.05,
+      "epochs": 10,
+      "architecture": [
+        784,
+        32,
+        10
+      ],
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "val_accuracy": 0.892326235435918,
+      "per_class_recall": {
+        "0": 0.875,
+        "1": 0.9406528189910979,
+        "2": 0.912751677852349,
+        "3": 0.7124183006535948,
+        "4": 0.8938356164383562,
+        "5": 0.7222222222222222,
+        "6": 0.956081081081081,
+        "7": 0.9456869009584664,
+        "8": null,
+        "9": 0.9292929292929293
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/opt_momentum/mlp_42_1789682307036358.json",
+      "val_run_json": "runs/digits/opt_momentum_val/mlp_42_1789682307588170.json"
+    },
+    {
+      "run_name": "opt_adam",
+      "optimizer": "adam",
+      "learning_rate": 0.05,
+      "epochs": 10,
+      "architecture": [
+        784,
+        32,
+        10
+      ],
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "val_accuracy": 0.8674166331860185,
+      "per_class_recall": {
+        "0": 0.9121621621621622,
+        "1": 0.9673590504451038,
+        "2": 0.8456375838926175,
+        "3": 0.8529411764705882,
+        "4": 0.797945205479452,
+        "5": 0.2777777777777778,
+        "6": 0.956081081081081,
+        "7": 0.7859424920127795,
+        "8": null,
+        "9": 0.9191919191919192
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/opt_adam/mlp_42_1789682327854518.json",
+      "val_run_json": "runs/digits/opt_adam_val/mlp_42_1789682328422810.json"
+    }
+  ],
+  "selected": {
+    "layer_sizes": [
+      784,
+      32,
+      16,
+      10
+    ],
+    "learning_rate": 0.01,
+    "optimizer": "sgd",
+    "activation": "sigmoid",
+    "epochs": 10,
+    "val_accuracy": 0.9312977099236641,
+    "per_class_recall": {
+      "0": 0.972972972972973,
+      "1": 0.9851632047477745,
+      "2": 0.9228187919463087,
+      "3": 0.8954248366013072,
+      "4": 0.9143835616438356,
+      "5": 0.5740740740740741,
+      "6": 0.9695945945945946,
+      "7": 0.9616613418530351,
+      "8": null,
+      "9": 0.8855218855218855
+    },
+    "train_run_json": "runs/digits/combined_best/mlp_42_1789682458691725.json",
+    "val_run_json": "runs/digits/combined_best_val/mlp_42_1789682459247288.json"
+  },
+  "selection_rule": "maximize val_accuracy; ties broken by fewer n_params, then lower learning_rate, then alphabetically-first optimizer name"
+}

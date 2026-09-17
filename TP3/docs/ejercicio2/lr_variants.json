@@ -1,0 +1,85 @@
+{
+  "variants": [
+    {
+      "run_name": "lr_0.01",
+      "learning_rate": 0.01,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "val_accuracy": 0.9413419043792688,
+      "per_class_recall": {
+        "0": 0.9527027027027027,
+        "1": 0.9821958456973294,
+        "2": 0.9194630872483222,
+        "3": 0.9215686274509803,
+        "4": 0.928082191780822,
+        "5": 0.7037037037037037,
+        "6": 0.9763513513513513,
+        "7": 0.9584664536741214,
+        "8": null,
+        "9": 0.9292929292929293
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/lr_0.01/mlp_42_1789682185244779.json",
+      "val_run_json": "runs/digits/lr_0.01_val/mlp_42_1789682185805402.json"
+    },
+    {
+      "run_name": "baseline",
+      "learning_rate": 0.05,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "val_accuracy": 0.9413419043792688,
+      "per_class_recall": {
+        "0": 0.9662162162162162,
+        "1": 0.9821958456973294,
+        "2": 0.9362416107382551,
+        "3": 0.8888888888888888,
+        "4": 0.910958904109589,
+        "5": 0.7777777777777778,
+        "6": 0.9628378378378378,
+        "7": 0.9488817891373802,
+        "8": null,
+        "9": 0.9595959595959596
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/baseline/mlp_42_1789682044061948.json",
+      "val_run_json": "runs/digits/baseline_val/mlp_42_1789682044604300.json"
+    },
+    {
+      "run_name": "lr_2.0",
+      "learning_rate": 2,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "layer_sizes": [
+        784,
+        32,
+        10
+      ],
+      "val_accuracy": 0.5628766572920851,
+      "per_class_recall": {
+        "0": 0.8040540540540541,
+        "1": 0.8605341246290801,
+        "2": 0.0,
+        "3": 0.9640522875816994,
+        "4": 0.7705479452054794,
+        "5": 0.0,
+        "6": 0.8006756756756757,
+        "7": 0.36741214057507987,
+        "8": null,
+        "9": 0.003367003367003367
+      },
+      "has_non_finite_loss": false,
+      "train_run_json": "runs/digits/lr_2.0/mlp_42_1789682190168601.json",
+      "val_run_json": "runs/digits/lr_2.0_val/mlp_42_1789682190705909.json"
+    }
+  ]
+}

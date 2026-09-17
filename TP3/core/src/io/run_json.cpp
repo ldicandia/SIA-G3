@@ -86,7 +86,12 @@ std::string to_json(const RunRecord& r) {
     for (std::size_t i = 0; i < r.predictions.size(); ++i) {
         const PredictionRecord& p = r.predictions[i];
         out += "    {\"input\": " + number_array(p.input) + ", \"expected\": " + number(p.expected) +
-               ", \"predicted\": " + number(p.predicted) + "}";
+               ", \"predicted\": " + number(p.predicted);
+        if (p.predicted_class >= 0) {
+            out += ", \"predicted_class\": " + std::to_string(p.predicted_class) +
+                   ", \"expected_class\": " + std::to_string(p.expected_class);
+        }
+        out += "}";
         out += (i + 1 < r.predictions.size()) ? ",\n" : "\n";
     }
     out += "  ]\n";

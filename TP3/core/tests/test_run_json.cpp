@@ -63,3 +63,27 @@ TEST_CASE("to_json emits extended fields when populated") {
     CHECK(json.find("\"dataset_path\": \"data/test.csv\"") != std::string::npos);
     CHECK(json.find("\"wall_time_seconds\": 1.234") != std::string::npos);
 }
+
+TEST_CASE("to_json emits predicted_class and expected_class when set") {
+    tp3::RunRecord r;
+    r.case_name = "t_mc";
+    r.seed = 42;
+    r.activation = "sigmoid";
+    r.learning_rate = 0.05;
+    r.epochs = 5;
+    r.n_inputs = 784;
+    r.loss_per_epoch = {0.8, 0.4};
+    r.final_weights = {0.1};
+    r.bias = 0.0;
+    
+    tp3::PredictionRecord pr;
+    pr.input = {};
+    pr.expected = 3.0;
+    pr.predicted = 7.0;
+    pr.predicted_class = 7;
+    pr.expected_class = 3;
+    r.predictions.push_back(pr);
+
+    const std::string json = tp3::to_json(r);
+    CHECK(json.find("{\"input\": [], \"expected\": 3, \"predicted\": 7, \"predicted_class\": 7, \"expected_class\": 3}") != std::string::npos);
+}

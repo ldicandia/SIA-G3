@@ -1,0 +1,21 @@
+{
+  "format_version": 1,
+  "model_type": "mlp",
+  "layer_sizes": [
+    784,
+    32,
+    10
+  ],
+  "activation": "sigmoid",
+  "use_softmax_output": true,
+  "loss": "cross_entropy",
+  "optimizer": "sgd",
+  "learning_rate": 0.05,
+  "epochs": 10,
+  "seed": 42,
+  "dataset_kind": "csv",
+  "dataset_format": "digits",
+  "dataset_path": "data/derived/digits/train.csv",
+  "output_dir": "runs/digits/baseline",
+  "progress_interval_epochs": 5
+}
