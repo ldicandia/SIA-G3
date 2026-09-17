@@ -1,0 +1,22 @@
+{
+  "identity": {
+    "train_mse": 0.030936725822564848,
+    "test_mse": 0.027762171181232143,
+    "test_r2": 0.6894628775224845,
+    "clip_fraction": 0.0948,
+    "saturation_fraction": 0.10386666666666666
+  },
+  "sigmoid": {
+    "train_mse": 0.011011145244483614,
+    "test_mse": 0.010311616300470271,
+    "test_r2": 0.8846581690914361,
+    "clip_fraction": 0.0,
+    "saturation_fraction": 0.0804
+  },
+  "selected_model": "sigmoid",
+  "selection_rule": "higher test_r2; tie (<=0.01) breaks to sigmoid to avoid post-hoc [0,1] clipping",
+  "source_runs": {
+    "identity": "runs/fraud/identity_full/perceptron_42_1789679501335485.json",
+    "sigmoid": "runs/fraud/sigmoid_full/perceptron_42_1789679579296872.json"
+  }
+}

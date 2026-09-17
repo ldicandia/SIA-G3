@@ -1,0 +1,78 @@
+{
+  "n_rows": 7500,
+  "n_cols": 11,
+  "columns": {
+    "timestamp": {
+      "min": 1700001808.0,
+      "max": 1731534222.0,
+      "mean": 1715783865.2932,
+      "count": 7500
+    },
+    "amount_usd": {
+      "min": 1.0,
+      "max": 2000.0,
+      "mean": 109.07079333333333,
+      "count": 7500
+    },
+    "quantity_purchased": {
+      "min": 1.0,
+      "max": 24.0,
+      "mean": 5.855466666666667,
+      "count": 7500
+    },
+    "session_duration_seconds": {
+      "min": 5.0,
+      "max": 726.8,
+      "mean": 280.18862666666666,
+      "count": 7500
+    },
+    "days_since_last_purchase": {
+      "min": 0.0,
+      "max": 142.32,
+      "mean": 13.703097333333332,
+      "count": 7500
+    },
+    "account_age_days": {
+      "min": 1.0,
+      "max": 3649.0,
+      "mean": 1664.7996,
+      "count": 7500
+    },
+    "device_screen_resolution": {
+      "min": 1006733.0,
+      "max": 8310940.0,
+      "mean": 3175686.4425333333,
+      "count": 7500
+    },
+    "time_since_last_login_s": {
+      "min": 10.0,
+      "max": 40160.8,
+      "mean": 3589.3625866666666,
+      "count": 7500
+    },
+    "items_viewed_before_purchase": {
+      "min": 1.0,
+      "max": 29.0,
+      "mean": 8.612933333333334,
+      "count": 7500
+    },
+    "big_model_fraud_probability": {
+      "min": 0.000897,
+      "max": 1.0,
+      "mean": 0.4227853397333334,
+      "count": 7500
+    },
+    "flagged_fraud": {
+      "min": 0.0,
+      "max": 1.0,
+      "mean": 0.11586666666666667,
+      "count": 7500
+    }
+  },
+  "duplicates": 0,
+  "flagged_fraud": {
+    "positive": 869,
+    "negative": 6631,
+    "positive_rate": 0.11586666666666667
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "selected_model": "sigmoid",
+  "k_folds": 5,
+  "per_fold": [
+    {
+      "fold": 0,
+      "precision": 0.3157894736842105,
+      "recall": 1.0,
+      "f1": 0.4799999999999999,
+      "n_test": 1500,
+      "n_positive": 174
+    },
+    {
+      "fold": 1,
+      "precision": 0.3333333333333333,
+      "recall": 1.0,
+      "f1": 0.5,
+      "n_test": 1500,
+      "n_positive": 175
+    },
+    {
+      "fold": 2,
+      "precision": 0.35080645161290325,
+      "recall": 1.0,
+      "f1": 0.5194029850746269,
+      "n_test": 1500,
+      "n_positive": 174
+    },
+    {
+      "fold": 3,
+      "precision": 0.33524904214559387,
+      "recall": 1.0,
+      "f1": 0.5021520803443329,
+      "n_test": 1500,
+      "n_positive": 175
+    },
+    {
+      "fold": 4,
+      "precision": 0.3301158301158301,
+      "recall": 1.0,
+      "f1": 0.4963715529753266,
+      "n_test": 1500,
+      "n_positive": 171
+    }
+  ],
+  "mean": {
+    "precision": 0.33305882617837423,
+    "recall": 1.0,
+    "f1": 0.4995853236788573
+  },
+  "std": {
+    "precision": 0.011195913273309665,
+    "recall": 0.0,
+    "f1": 0.012596929190631661
+  },
+  "baseline_accuracy_always_negative": 0.8841333333333333
+}

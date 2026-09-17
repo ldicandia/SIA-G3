@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "model_type": "perceptron",
+  "activation": "sigmoid",
+  "loss": "mse",
+  "optimizer": "sgd",
+  "learning_rate": 0.01,
+  "epochs": 50,
+  "seed": 42,
+  "dataset_kind": "csv",
+  "dataset_format": "plain",
+  "dataset_path": "data/derived/fraud_train.csv",
+  "dataset_target_column": "big_model_fraud_probability",
+  "output_dir": "runs/fraud/sigmoid",
+  "progress_interval_epochs": 10
+}
