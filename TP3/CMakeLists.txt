@@ -12,14 +12,13 @@ endif()
 add_compile_options(-Wall -Wextra)
 
 # Engine: globbed recursively so all core components are automatically included
-file(GLOB_RECURSE TP3_CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/core/*.cpp)
-list(REMOVE_ITEM TP3_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/core/main.cpp)
-list(FILTER TP3_CORE_SOURCES EXCLUDE REGEX "/core/tests/")
+file(GLOB_RECURSE TP3_CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/core/src/*.cpp)
+list(REMOVE_ITEM TP3_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/core/src/main.cpp)
 add_library(tp3_core STATIC ${TP3_CORE_SOURCES})
-target_include_directories(tp3_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core)
+target_include_directories(tp3_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core/include)
 
 # CLI binary.
-add_executable(tp3 core/main.cpp)
+add_executable(tp3 core/src/main.cpp)
 target_link_libraries(tp3 PRIVATE tp3_core)
 
 # doctest runner: globbed so new test files register automatically.
