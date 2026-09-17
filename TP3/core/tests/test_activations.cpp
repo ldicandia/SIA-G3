@@ -7,10 +7,13 @@
 
 #include "activations.hpp"
 #include "doctest.h"
+#include "matrix.hpp"
 
 using tp3::Activation;
+using tp3::Matrix;
 using tp3::activation_by_name;
 using tp3::activation_names;
+using tp3::softmax_rows;
 
 TEST_CASE("step: f is the bipolar sign with step(0) == +1, df is 1 everywhere") {
     const Activation a = activation_by_name("step");
@@ -62,4 +65,32 @@ TEST_CASE("lookup: byte-exact names, unknown/empty/case-variant throw, fixed ord
     for (const std::string& n : activation_names()) {
         CHECK(std::string(activation_by_name(n).name) == n);
     }
+}
+
+TEST_CASE("softmax_rows: numerical stability for large logits and row sums equal 1") {
+    Matrix logits_small = Matrix::from_rows({{0.0, 1.0, 2.0}});
+    Matrix logits_large = Matrix::from_rows({{1000.0, 1001.0, 1002.0}});
+
+    Matrix sm_small = softmax_rows(logits_small);
+    Matrix sm_large = softmax_rows(logits_large);
+
+    CHECK(sm_small.rows() == 1);
+    CHECK(sm_small.cols() == 3);
+    CHECK(sm_small(0, 0) == doctest::Approx(0.0900305732).epsilon(1e-6));
+    CHECK(sm_small(0, 1) == doctest::Approx(0.2447284711).epsilon(1e-6));
+    CHECK(sm_small(0, 2) == doctest::Approx(0.6652409558).epsilon(1e-6));
+
+    CHECK(sm_large(0, 0) == doctest::Approx(0.0900305732).epsilon(1e-6));
+    CHECK(sm_large(0, 1) == doctest::Approx(0.2447284711).epsilon(1e-6));
+    CHECK(sm_large(0, 2) == doctest::Approx(0.6652409558).epsilon(1e-6));
+
+    CHECK(sm_large(0, 0) == doctest::Approx(sm_small(0, 0)));
+    CHECK(sm_large(0, 1) == doctest::Approx(sm_small(0, 1)));
+    CHECK(sm_large(0, 2) == doctest::Approx(sm_small(0, 2)));
+
+    CHECK_FALSE(std::isnan(sm_large(0, 0)));
+    CHECK_FALSE(std::isinf(sm_large(0, 0)));
+
+    Matrix empty_m;
+    CHECK_THROWS_AS(softmax_rows(empty_m), std::invalid_argument);
 }

@@ -27,6 +27,10 @@ struct RunRecord {
     std::vector<double> final_weights;
     double bias;
     std::vector<PredictionRecord> predictions;
+    std::string dataset_path;
+    double wall_time_seconds = 0.0;
+    std::string loss_name;
+    std::string optimizer_name;
 };
 
 // Pure: fixed key order, %.17g numbers (non-finite -> null), 2-space indent,

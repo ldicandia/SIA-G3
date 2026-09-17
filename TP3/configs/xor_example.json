@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "model_type": "mlp",
+  "layer_sizes": [2, 2, 1],
+  "activation": "tanh",
+  "use_softmax_output": false,
+  "loss": "mse",
+  "optimizer": "sgd",
+  "learning_rate": 0.1,
+  "epochs": 200,
+  "seed": 42,
+  "dataset_kind": "validation",
+  "dataset_case": "xor",
+  "output_dir": "runs",
+  "progress_interval_epochs": 50
+}

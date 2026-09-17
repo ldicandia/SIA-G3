@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "model_type": "perceptron",
+  "activation": "tanh",
+  "beta": 1.0,
+  "dataset_kind": "csv",
+  "dataset_path": "data/data and documentation/fraud_dataset.csv",
+  "dataset_format": "plain",
+  "dataset_target_column": "flagged_fraud",
+  "learning_rate": 0.0001,
+  "epochs": 10,
+  "seed": 42,
+  "loss": "mse",
+  "optimizer": "sgd",
+  "progress_interval_epochs": 1
+}

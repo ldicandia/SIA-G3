@@ -228,3 +228,117 @@ TEST_CASE("MLP [2,2,1] and [2,3,2,1] learn XOR at seed 42 (VAL-04, VAL-05)") {
         CHECK(train.loss_per_epoch.back() < 0.05);
     }
 }
+
+TEST_CASE("MLP loss, optimizer, and softmax validation") {
+    std::mt19937_64 rng(42);
+
+    SUBCASE("cross_entropy requires use_softmax_output=true") {
+        CHECK_THROWS_AS(MLP({2, 2, 1}, "tanh", 0.1, rng,
+                            std::make_unique<tp3::CrossEntropyLoss>(),
+                            std::make_unique<tp3::SgdOptimizer>(0.1),
+                            /*use_softmax_output=*/false),
+                        std::invalid_argument);
+    }
+
+    SUBCASE("mse rejects use_softmax_output=true") {
+        CHECK_THROWS_AS(MLP({2, 2, 1}, "tanh", 0.1, rng,
+                            std::make_unique<tp3::MseLoss>(),
+                            std::make_unique<tp3::SgdOptimizer>(0.1),
+                            /*use_softmax_output=*/true),
+                        std::invalid_argument);
+    }
+
+    SUBCASE("null loss or optimizer throws") {
+        CHECK_THROWS_AS(MLP({2, 2, 1}, "tanh", 0.1, rng,
+                            nullptr,
+                            std::make_unique<tp3::SgdOptimizer>(0.1),
+                            false),
+                        std::invalid_argument);
+        CHECK_THROWS_AS(MLP({2, 2, 1}, "tanh", 0.1, rng,
+                            std::make_unique<tp3::MseLoss>(),
+                            nullptr,
+                            false),
+                        std::invalid_argument);
+    }
+}
+
+TEST_CASE("MLP layer_activations matches predict and preserves shapes (ENG-15)") {
+    std::mt19937_64 rng(42);
+
+    SUBCASE("standard non-softmax MLP") {
+        MLP model({2, 3, 2, 1}, "tanh", 0.1, rng);
+        Matrix X = Matrix::from_rows({{-1.0, 1.0}, {0.5, -0.5}, {1.0, 1.0}});
+
+        auto layers = model.layer_activations(X);
+        CHECK(layers.size() == 4);
+        CHECK(layers[0] == X);
+        CHECK(layers[1].rows() == 3);
+        CHECK(layers[1].cols() == 3);
+        CHECK(layers[2].rows() == 3);
+        CHECK(layers[2].cols() == 2);
+        CHECK(layers[3].rows() == 3);
+        CHECK(layers[3].cols() == 1);
+        CHECK(layers.back() == model.predict(X));
+    }
+
+    SUBCASE("softmax output MLP") {
+        std::mt19937_64 rng_sm(42);
+        MLP model_sm({4, 5, 3}, "tanh", 0.05, rng_sm,
+                     std::make_unique<tp3::CrossEntropyLoss>(),
+                     std::make_unique<tp3::SgdOptimizer>(0.05),
+                     /*use_softmax_output=*/true);
+
+        Matrix X = Matrix::from_rows({{0.1, 0.2, 0.3, 0.4}, {-0.1, -0.2, 0.5, 0.0}});
+        auto layers = model_sm.layer_activations(X);
+        CHECK(layers.size() == 3);
+        CHECK(layers[0] == X);
+        CHECK(layers.back() == model_sm.predict(X));
+
+        Matrix pred = model_sm.predict(X);
+        CHECK(pred.rows() == 2);
+        CHECK(pred.cols() == 3);
+        for (std::size_t r = 0; r < pred.rows(); ++r) {
+            double sum = pred(r, 0) + pred(r, 1) + pred(r, 2);
+            CHECK(sum == doctest::Approx(1.0).epsilon(1e-6));
+        }
+    }
+}
+
+TEST_CASE("Optimizer selection diverges backprop effect (SGD vs Momentum)") {
+    Matrix W0 = Matrix::from_rows({{0.15, -0.25}, {0.35, 0.45}});
+    Matrix b0 = Matrix::from_rows({{0.10, -0.20}});
+    Matrix W1 = Matrix::from_rows({{0.50}, {-0.40}});
+    Matrix b1 = Matrix::from_rows({{0.05}});
+
+    std::mt19937_64 rng1(42);
+    std::mt19937_64 rng2(42);
+
+    MLP model_sgd({2, 2, 1}, "tanh", 0.1, rng1,
+                  std::make_unique<tp3::MseLoss>(),
+                  std::make_unique<tp3::SgdOptimizer>(0.1),
+                  false);
+    model_sgd.set_weights_and_biases({W0, W1}, {b0, b1});
+
+    MLP model_mom({2, 2, 1}, "tanh", 0.1, rng2,
+                  std::make_unique<tp3::MseLoss>(),
+                  std::make_unique<tp3::MomentumOptimizer>(0.1, 0.9),
+                  false);
+    model_mom.set_weights_and_biases({W0, W1}, {b0, b1});
+
+    const tp3::Dataset data = tp3::xor_dataset();
+
+    model_sgd.fit(data.X, data.y, 5);
+    model_mom.fit(data.X, data.y, 5);
+
+    auto w_sgd = model_sgd.flat_weights();
+    auto w_mom = model_mom.flat_weights();
+
+    bool has_diff = false;
+    for (std::size_t i = 0; i < w_sgd.size(); ++i) {
+        if (std::abs(w_sgd[i] - w_mom[i]) > 1e-9) {
+            has_diff = true;
+            break;
+        }
+    }
+    CHECK(has_diff);
+}

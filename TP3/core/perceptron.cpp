@@ -1,21 +1,38 @@
 #include "perceptron.hpp"
 
+#include <cmath>
 #include <stdexcept>
 
 namespace tp3 {
 
 SimplePerceptron::SimplePerceptron(std::size_t n_inputs, const std::string& activation_name,
                                    double learning_rate, std::mt19937_64& rng)
+    : SimplePerceptron(n_inputs, activation_name, learning_rate, rng,
+                       std::make_unique<MseLoss>(),
+                       std::make_unique<SgdOptimizer>(learning_rate)) {}
+
+SimplePerceptron::SimplePerceptron(std::size_t n_inputs, const std::string& activation_name,
+                                   double learning_rate, std::mt19937_64& rng,
+                                   std::unique_ptr<Loss> loss,
+                                   std::unique_ptr<Optimizer> optimizer)
     : n_inputs_(n_inputs),
       activation_(activation_by_name(activation_name)),
       learning_rate_(learning_rate),
+      loss_(std::move(loss)),
+      optimizer_(std::move(optimizer)),
       w_(Matrix::random(n_inputs, 1, rng, -0.5, 0.5)),
-      bias_(std::uniform_real_distribution<double>(-0.5, 0.5)(rng)) {
+      bias_(1, 1, std::uniform_real_distribution<double>(-0.5, 0.5)(rng)) {
     if (n_inputs == 0) {
         throw std::invalid_argument("SimplePerceptron: n_inputs must be > 0");
     }
-    if (!(learning_rate > 0.0)) {
+    if (!std::isfinite(learning_rate) || !(learning_rate > 0.0)) {
         throw std::invalid_argument("SimplePerceptron: learning_rate must be > 0");
+    }
+    if (!loss_) {
+        throw std::invalid_argument("SimplePerceptron: loss cannot be null");
+    }
+    if (!optimizer_) {
+        throw std::invalid_argument("SimplePerceptron: optimizer cannot be null");
     }
 }
 
@@ -25,10 +42,11 @@ void SimplePerceptron::set_weights(const Matrix& w, double bias) {
                                     std::to_string(w.rows()) + "x" + std::to_string(w.cols()));
     }
     w_ = w;
-    bias_ = bias;
+    bias_ = Matrix(1, 1, bias);
 }
 
-TrainResult SimplePerceptron::fit(const Matrix& X, const Matrix& y, int epochs) {
+TrainResult SimplePerceptron::fit(const Matrix& X, const Matrix& y, int epochs,
+                                  std::function<void(int epoch, double loss)> on_epoch) {
     if (X.rows() == 0) {
         throw std::invalid_argument("fit: X has zero rows");
     }
@@ -52,18 +70,19 @@ TrainResult SimplePerceptron::fit(const Matrix& X, const Matrix& y, int epochs) 
 
     for (int epoch = 0; epoch < epochs; ++epoch) {
         for (std::size_t i = 0; i < X.rows(); ++i) {
-            double h = bias_;
-            for (std::size_t j = 0; j < n_inputs_; ++j) {
-                h += w_(j, 0) * X(i, j);
-            }
-            const double o = activation_.f(h);
-            const double delta = (y(i, 0) - o) * activation_.df(h);
-            for (std::size_t j = 0; j < n_inputs_; ++j) {
-                w_(j, 0) += learning_rate_ * delta * X(i, j);
-            }
-            bias_ += learning_rate_ * delta;
+            Matrix x_row = X.row(i);
+            Matrix h = (x_row * w_) + bias_;
+            Matrix o = h.apply(activation_.f);
+            Matrix target_row = y.row(i);
+            Matrix delta = loss_->output_delta(target_row, o, h, activation_.df);
+            optimizer_->update(w_, x_row.transpose() * delta, 0);
+            optimizer_->update(bias_, delta, 1);
         }
-        result.loss_per_epoch.push_back(mean_squared_error(y, predict(X)));
+        const double current_loss = loss_->compute(y, predict(X));
+        result.loss_per_epoch.push_back(current_loss);
+        if (on_epoch) {
+            on_epoch(epoch + 1, current_loss);
+        }
     }
     return result;
 }
@@ -73,7 +92,7 @@ Matrix SimplePerceptron::predict(const Matrix& X) const {
         throw std::invalid_argument("predict: X has " + std::to_string(X.cols()) + " columns, expected " +
                                     std::to_string(n_inputs_));
     }
-    return ((X * w_) + bias_).apply(activation_.f);
+    return ((X * w_) + bias_(0, 0)).apply(activation_.f);
 }
 
 std::vector<double> SimplePerceptron::flat_weights() const {

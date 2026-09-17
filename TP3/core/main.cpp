@@ -18,8 +18,17 @@
 #include <string>
 #include <vector>
 
+#include <chrono>
+#include <fstream>
+#include <sstream>
+
+#include "config.hpp"
+#include "data/csv.hpp"
+#include "io/model_io.hpp"
 #include "io/run_json.hpp"
+#include "loss.hpp"
 #include "mlp.hpp"
+#include "optimizer.hpp"
 #include "perceptron.hpp"
 #include "validation/datasets.hpp"
 
@@ -72,6 +81,7 @@ const CaseSpec* find_case(const std::string& name) {
 
 void print_usage(std::ostream& os) {
     os << "usage: tp3 validate <case> [--seed N] [--epochs N] [--lr F] [--out DIR]\n"
+       << "       tp3 train --config <path>.json [--out DIR] [--save-model PATH] [--resume-from PATH]\n"
        << "       tp3 --help\n"
        << "\n"
        << "cases: " << case_names() << "\n"
@@ -307,6 +317,286 @@ int run_validate(int argc, char** argv) {
     return 0;
 }
 
+int run_train(int argc, char** argv) {
+    std::string config_path;
+    std::string out_dir_override;
+    std::string save_model_path;
+    std::string resume_from_path;
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--config") {
+            if (i + 1 >= argc) {
+                return usage_error("missing argument for --config");
+            }
+            config_path = argv[++i];
+        } else if (arg == "--out") {
+            if (i + 1 >= argc) {
+                return usage_error("missing argument for --out");
+            }
+            out_dir_override = argv[++i];
+        } else if (arg == "--save-model") {
+            if (i + 1 >= argc) {
+                return usage_error("missing argument for --save-model");
+            }
+            save_model_path = argv[++i];
+        } else if (arg == "--resume-from") {
+            if (i + 1 >= argc) {
+                return usage_error("missing argument for --resume-from");
+            }
+            resume_from_path = argv[++i];
+        } else {
+            return usage_error("unknown flag for train: " + arg);
+        }
+    }
+
+    if (config_path.empty()) {
+        return usage_error("missing required --config flag");
+    }
+
+    std::ifstream f(config_path);
+    if (!f.is_open()) {
+        std::cerr << "error: cannot open config file: " << config_path << "\n";
+        return 2;
+    }
+    std::stringstream buffer;
+    buffer << f.rdbuf();
+    std::string json_text = buffer.str();
+    if (json_text.empty()) {
+        std::cerr << "error: config file is empty: " << config_path << "\n";
+        return 2;
+    }
+
+    tp3::RunConfig config;
+    try {
+        config = tp3::RunConfig::parse(json_text);
+    } catch (const std::exception& e) {
+        std::string msg = e.what();
+        std::cerr << "error: " << msg << "\n";
+        if (msg.rfind("unknown ", 0) == 0) {
+            return 1;
+        }
+        return 2;
+    }
+
+    if (!out_dir_override.empty()) {
+        config.output_dir = out_dir_override;
+    }
+    if (!resume_from_path.empty()) {
+        config.resume_from = resume_from_path;
+    }
+
+    tp3::ModelSnapshot snap;
+    bool is_resuming = !config.resume_from.empty();
+    if (is_resuming) {
+        try {
+            snap = tp3::load_model(config.resume_from);
+        } catch (const std::exception& e) {
+            std::cerr << "error loading model to resume: " << e.what() << "\n";
+            return 2;
+        }
+
+        if (config.model_type != snap.model_type) {
+            std::cerr << "error: model_type mismatch: config has '" << config.model_type
+                      << "', snapshot has '" << snap.model_type << "'\n";
+            return 2;
+        }
+        if (config.model_type == "mlp" && config.layer_sizes != snap.layer_sizes) {
+            std::cerr << "error: layer_sizes mismatch between config and snapshot\n";
+            return 2;
+        }
+        if (config.activation != snap.activation) {
+            std::cerr << "error: activation mismatch: config has '" << config.activation
+                      << "', snapshot has '" << snap.activation << "'\n";
+            return 2;
+        }
+        if (config.use_softmax_output != snap.use_softmax_output) {
+            std::cerr << "error: use_softmax_output mismatch between config and snapshot\n";
+            return 2;
+        }
+        if (config.loss != snap.run_config.loss) {
+            std::cerr << "error: loss mismatch: config has '" << config.loss
+                      << "', snapshot has '" << snap.run_config.loss << "'\n";
+            return 2;
+        }
+        if (config.optimizer_name != snap.run_config.optimizer_name) {
+            std::cerr << "error: optimizer mismatch: config has '" << config.optimizer_name
+                      << "', snapshot has '" << snap.run_config.optimizer_name << "'\n";
+            return 2;
+        }
+        if (snap.epochs_completed > config.epochs) {
+            std::cerr << "error: snapshot already completed " << snap.epochs_completed
+                      << " epochs; config requested " << config.epochs << "\n";
+            return 2;
+        }
+    }
+
+    std::mt19937_64 rng(config.seed);
+    Dataset data;
+    if (config.dataset_kind == "validation") {
+        if (config.dataset_case == "and") {
+            data = tp3::and_dataset();
+        } else if (config.dataset_case == "linear") {
+            data = tp3::linear_dataset(50, rng);
+        } else if (config.dataset_case == "tanh") {
+            data = tp3::tanh_dataset(50, rng);
+        } else if (config.dataset_case == "xor") {
+            data = tp3::xor_dataset();
+        } else {
+            std::cerr << "error: unknown dataset_case: " << config.dataset_case << "\n";
+            return 2;
+        }
+    } else if (config.dataset_kind == "csv") {
+        if (config.dataset_format == "plain") {
+            auto plain = tp3::load_plain_csv(config.dataset_path, config.dataset_target_column);
+            data.X = std::move(plain.X);
+            data.y = std::move(plain.y);
+        } else if (config.dataset_format == "digits") {
+            auto img_csv = tp3::load_labeled_image_csv(config.dataset_path);
+            data.X = std::move(img_csv.images);
+            std::size_t num_classes = config.layer_sizes.back();
+            Matrix y_onehot(img_csv.labels.rows(), num_classes, 0.0);
+            for (std::size_t r = 0; r < img_csv.labels.rows(); ++r) {
+                std::size_t lbl = static_cast<std::size_t>(img_csv.labels(r, 0));
+                if (lbl < num_classes) {
+                    y_onehot(r, lbl) = 1.0;
+                }
+            }
+            data.y = std::move(y_onehot);
+        } else {
+            std::cerr << "error: unknown dataset_format: " << config.dataset_format << "\n";
+            return 2;
+        }
+    } else {
+        std::cerr << "error: unknown dataset_kind: " << config.dataset_kind << "\n";
+        return 2;
+    }
+
+    std::unique_ptr<tp3::Model> model;
+    if (config.model_type == "mlp") {
+        auto loss = tp3::loss_by_name(config.loss);
+        auto opt = tp3::optimizer_by_name(config.optimizer_name, config.learning_rate,
+                                          config.momentum_coefficient, config.adam_beta1,
+                                          config.adam_beta2, config.adam_epsilon);
+        model = std::make_unique<tp3::MLP>(config.layer_sizes, config.activation,
+                                            config.learning_rate, rng,
+                                            std::move(loss), std::move(opt),
+                                            config.use_softmax_output);
+    } else if (config.model_type == "perceptron") {
+        auto loss = tp3::loss_by_name(config.loss);
+        auto opt = tp3::optimizer_by_name(config.optimizer_name, config.learning_rate,
+                                          config.momentum_coefficient, config.adam_beta1,
+                                          config.adam_beta2, config.adam_epsilon);
+        model = std::make_unique<tp3::SimplePerceptron>(data.X.cols(), config.activation,
+                                                        config.learning_rate, rng,
+                                                        std::move(loss), std::move(opt));
+    } else {
+        std::cerr << "error: unknown model_type: " << config.model_type << "\n";
+        return 1;
+    }
+
+    int epochs_to_train = config.epochs;
+    int start_epoch = 0;
+    if (is_resuming) {
+        start_epoch = snap.epochs_completed;
+        epochs_to_train = config.epochs - snap.epochs_completed;
+        std::vector<Matrix> w_in, b_in;
+        tp3::unflatten_into(snap.flat_weights, snap.layer_sizes, w_in, b_in);
+        if (config.model_type == "mlp") {
+            static_cast<tp3::MLP*>(model.get())->set_weights_and_biases(w_in, b_in);
+        } else {
+            static_cast<tp3::SimplePerceptron*>(model.get())->set_weights(w_in[0], b_in[0](0, 0));
+        }
+    }
+
+    auto progress_cb = [&](int epoch, double loss) {
+        int global_epoch = start_epoch + epoch;
+        if ((global_epoch % config.progress_interval_epochs == 0) || (global_epoch == config.epochs)) {
+            std::cerr << "epoch=" << global_epoch << " loss=" << loss << "\n";
+        }
+    };
+
+    tp3::TrainResult train_result;
+    auto start_time = std::chrono::steady_clock::now();
+    if (epochs_to_train > 0) {
+        train_result = model->fit(data.X, data.y, epochs_to_train, progress_cb);
+    }
+    auto end_time = std::chrono::steady_clock::now();
+    double wall_time = std::chrono::duration<double>(end_time - start_time).count();
+
+    auto now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    std::string prefix = config.dataset_case.empty() ? config.model_type : config.dataset_case;
+    std::string case_id = prefix + "_" + std::to_string(config.seed) + "_" + std::to_string(now_us);
+
+    tp3::RunRecord record;
+    record.case_name = case_id;
+    record.seed = config.seed;
+    record.activation = config.activation;
+    record.learning_rate = config.learning_rate;
+    record.epochs = config.epochs;
+    record.n_inputs = data.X.cols();
+    record.layer_sizes = config.layer_sizes;
+
+    std::vector<double> full_loss;
+    if (is_resuming) {
+        full_loss = snap.loss_per_epoch_so_far;
+    }
+    full_loss.insert(full_loss.end(), train_result.loss_per_epoch.begin(), train_result.loss_per_epoch.end());
+    record.loss_per_epoch = std::move(full_loss);
+
+    record.final_weights = model->flat_weights();
+    record.bias = 0.0;
+    if (auto* sp = dynamic_cast<tp3::SimplePerceptron*>(model.get())) {
+        record.bias = sp->bias();
+    }
+    record.loss_name = config.loss;
+    record.optimizer_name = config.optimizer_name;
+    record.dataset_path = config.dataset_path;
+    record.wall_time_seconds = wall_time;
+
+    Matrix preds = model->predict(data.X);
+    for (std::size_t i = 0; i < data.X.rows(); ++i) {
+        tp3::PredictionRecord pr;
+        for (std::size_t j = 0; j < data.X.cols(); ++j) {
+            pr.input.push_back(data.X(i, j));
+        }
+        pr.expected = data.y(i, 0);
+        pr.predicted = preds(i, 0);
+        record.predictions.push_back(pr);
+    }
+
+    std::filesystem::path written = tp3::write_run_json(record, config.output_dir);
+    std::cout << "run metrics written to " << written.string() << "\n";
+
+    if (!save_model_path.empty()) {
+        tp3::ModelSnapshot snap_to_save;
+        snap_to_save.model_type = config.model_type;
+        snap_to_save.activation = config.activation;
+        snap_to_save.use_softmax_output = config.use_softmax_output;
+        snap_to_save.epochs_completed = config.epochs;
+        snap_to_save.loss_per_epoch_so_far = record.loss_per_epoch;
+        snap_to_save.run_config = config;
+
+        if (config.model_type == "mlp") {
+            auto* mlp = static_cast<tp3::MLP*>(model.get());
+            snap_to_save.layer_sizes = config.layer_sizes;
+            for (std::size_t l = 0; l < mlp->weights().size(); ++l) {
+                for (double w : mlp->weights()[l].data()) snap_to_save.flat_weights.push_back(w);
+                for (double b : mlp->biases()[l].data()) snap_to_save.flat_weights.push_back(b);
+            }
+        } else {
+            auto* sp = static_cast<tp3::SimplePerceptron*>(model.get());
+            snap_to_save.layer_sizes = {sp->n_inputs(), 1};
+            for (double w : sp->weights().data()) snap_to_save.flat_weights.push_back(w);
+            snap_to_save.flat_weights.push_back(sp->bias());
+        }
+        tp3::save_model(snap_to_save, save_model_path);
+    }
+
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -321,6 +611,14 @@ int main(int argc, char** argv) {
     if (command == "validate") {
         try {
             return run_validate(argc, argv);
+        } catch (const std::exception& e) {
+            std::cerr << "error: " << e.what() << "\n";
+            return 1;
+        }
+    }
+    if (command == "train") {
+        try {
+            return run_train(argc, argv);
         } catch (const std::exception& e) {
             std::cerr << "error: " << e.what() << "\n";
             return 1;

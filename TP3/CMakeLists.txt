@@ -11,16 +11,11 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
-# Engine: explicit source list so new modules (e.g. core/mlp.cpp) are added deliberately.
-add_library(tp3_core STATIC
-  core/matrix.cpp
-  core/activations.cpp
-  core/training.cpp
-  core/perceptron.cpp
-  core/mlp.cpp
-  core/validation/datasets.cpp
-  core/io/run_json.cpp
-)
+# Engine: globbed recursively so all core components are automatically included
+file(GLOB_RECURSE TP3_CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/core/*.cpp)
+list(REMOVE_ITEM TP3_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/core/main.cpp)
+list(FILTER TP3_CORE_SOURCES EXCLUDE REGEX "/core/tests/")
+add_library(tp3_core STATIC ${TP3_CORE_SOURCES})
 target_include_directories(tp3_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core)
 
 # CLI binary.
@@ -32,6 +27,7 @@ file(GLOB TP3_TEST_SOURCES CONFIGURE_DEPENDS core/tests/*.cpp)
 add_executable(tp3_tests ${TP3_TEST_SOURCES})
 target_link_libraries(tp3_tests PRIVATE tp3_core)
 target_include_directories(tp3_tests SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+target_compile_definitions(tp3_tests PRIVATE "TP3_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
 
 enable_testing()
 add_test(NAME tp3_tests COMMAND tp3_tests)

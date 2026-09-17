@@ -70,6 +70,18 @@ std::string to_json(const RunRecord& r) {
     out += "  \"loss_per_epoch\": " + number_array(r.loss_per_epoch) + ",\n";
     out += "  \"final_weights\": " + number_array(r.final_weights) + ",\n";
     out += "  \"bias\": " + number(r.bias) + ",\n";
+    if (!r.loss_name.empty()) {
+        out += "  \"loss\": " + quoted(r.loss_name) + ",\n";
+    }
+    if (!r.optimizer_name.empty()) {
+        out += "  \"optimizer\": " + quoted(r.optimizer_name) + ",\n";
+    }
+    if (!r.dataset_path.empty()) {
+        out += "  \"dataset_path\": " + quoted(r.dataset_path) + ",\n";
+    }
+    if (r.wall_time_seconds > 0.0) {
+        out += "  \"wall_time_seconds\": " + number(r.wall_time_seconds) + ",\n";
+    }
     out += "  \"predictions\": [\n";
     for (std::size_t i = 0; i < r.predictions.size(); ++i) {
         const PredictionRecord& p = r.predictions[i];

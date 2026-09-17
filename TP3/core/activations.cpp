@@ -1,5 +1,6 @@
 #include "activations.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -66,6 +67,35 @@ const std::vector<std::string>& activation_names() {
         return v;
     }();
     return names;
+}
+
+Matrix softmax_rows(const Matrix& logits) {
+    if (logits.rows() == 0 || logits.cols() == 0) {
+        throw std::invalid_argument("softmax_rows: logits matrix has zero rows or zero columns");
+    }
+
+    Matrix out(logits.rows(), logits.cols());
+    for (std::size_t i = 0; i < logits.rows(); ++i) {
+        double max_val = logits(i, 0);
+        for (std::size_t j = 1; j < logits.cols(); ++j) {
+            if (logits(i, j) > max_val) {
+                max_val = logits(i, j);
+            }
+        }
+
+        double sum_exp = 0.0;
+        for (std::size_t j = 0; j < logits.cols(); ++j) {
+            double val = std::exp(logits(i, j) - max_val);
+            out(i, j) = val;
+            sum_exp += val;
+        }
+
+        for (std::size_t j = 0; j < logits.cols(); ++j) {
+            out(i, j) /= sum_exp;
+        }
+    }
+
+    return out;
 }
 
 }  // namespace tp3

@@ -39,3 +39,27 @@ TEST_CASE("to_json emits the exact expected string for a tiny record") {
 
     CHECK(tp3::to_json(r) == expected);
 }
+
+TEST_CASE("to_json emits extended fields when populated") {
+    tp3::RunRecord r;
+    r.case_name = "t_ext";
+    r.seed = 42;
+    r.activation = "tanh";
+    r.learning_rate = 0.1;
+    r.epochs = 10;
+    r.n_inputs = 2;
+    r.loss_per_epoch = {0.5};
+    r.final_weights = {0.1, 0.2};
+    r.bias = 0.05;
+    r.loss_name = "mse";
+    r.optimizer_name = "sgd";
+    r.dataset_path = "data/test.csv";
+    r.wall_time_seconds = 1.234;
+    r.predictions = {{{1.0, 2.0}, 1.0, 0.9}};
+
+    const std::string json = tp3::to_json(r);
+    CHECK(json.find("\"loss\": \"mse\"") != std::string::npos);
+    CHECK(json.find("\"optimizer\": \"sgd\"") != std::string::npos);
+    CHECK(json.find("\"dataset_path\": \"data/test.csv\"") != std::string::npos);
+    CHECK(json.find("\"wall_time_seconds\": 1.234") != std::string::npos);
+}

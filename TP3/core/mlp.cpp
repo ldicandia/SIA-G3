@@ -8,9 +8,22 @@ namespace tp3 {
 
 MLP::MLP(const std::vector<std::size_t>& layer_sizes, const std::string& activation_name,
          double learning_rate, std::mt19937_64& rng)
+    : MLP(layer_sizes, activation_name, learning_rate, rng,
+          std::make_unique<MseLoss>(),
+          std::make_unique<SgdOptimizer>(learning_rate),
+          false) {}
+
+MLP::MLP(const std::vector<std::size_t>& layer_sizes, const std::string& activation_name,
+         double learning_rate, std::mt19937_64& rng,
+         std::unique_ptr<Loss> loss,
+         std::unique_ptr<Optimizer> optimizer,
+         bool use_softmax_output)
     : layer_sizes_(layer_sizes),
       activation_(activation_by_name(activation_name)),
-      learning_rate_(learning_rate) {
+      learning_rate_(learning_rate),
+      loss_(std::move(loss)),
+      optimizer_(std::move(optimizer)),
+      use_softmax_output_(use_softmax_output) {
     if (layer_sizes.size() < 2) {
         throw std::invalid_argument("MLP: layer_sizes must contain at least 2 layers, got " +
                                     std::to_string(layer_sizes.size()));
@@ -23,6 +36,19 @@ MLP::MLP(const std::vector<std::size_t>& layer_sizes, const std::string& activat
     if (!std::isfinite(learning_rate) || !(learning_rate > 0.0)) {
         throw std::invalid_argument("MLP: learning_rate must be a positive finite number, got " +
                                     std::to_string(learning_rate));
+    }
+    if (!loss_) {
+        throw std::invalid_argument("MLP: loss cannot be null");
+    }
+    if (!optimizer_) {
+        throw std::invalid_argument("MLP: optimizer cannot be null");
+    }
+
+    const bool is_cross_entropy = (std::string(loss_->name()) == "cross_entropy");
+    if (is_cross_entropy != use_softmax_output_) {
+        throw std::invalid_argument("MLP: loss '" + std::string(loss_->name()) +
+                                    "' is incompatible with use_softmax_output=" +
+                                    (use_softmax_output_ ? "true" : "false"));
     }
 
     const std::size_t num_weight_layers = layer_sizes_.size() - 1;
@@ -65,7 +91,8 @@ void MLP::set_weights_and_biases(const std::vector<Matrix>& weights, const std::
     biases_ = biases;
 }
 
-TrainResult MLP::fit(const Matrix& X, const Matrix& y, int epochs) {
+TrainResult MLP::fit(const Matrix& X, const Matrix& y, int epochs,
+                    std::function<void(int epoch, double loss)> on_epoch) {
     if (X.rows() == 0) {
         throw std::invalid_argument("fit: X has zero rows");
     }
@@ -104,7 +131,11 @@ TrainResult MLP::fit(const Matrix& X, const Matrix& y, int epochs) {
             for (std::size_t l = 0; l < num_weight_layers; ++l) {
                 Matrix h = (a * weights_[l]) + biases_[l];
                 H.push_back(h);
-                a = h.apply(activation_.f);
+                if (l == num_weight_layers - 1 && use_softmax_output_) {
+                    a = softmax_rows(h);
+                } else {
+                    a = h.apply(activation_.f);
+                }
                 A.push_back(a);
             }
 
@@ -113,8 +144,8 @@ TrainResult MLP::fit(const Matrix& X, const Matrix& y, int epochs) {
 
             // Output layer delta
             const Matrix target = y.row(i);
-            const Matrix err = target - A.back();
-            deltas[num_weight_layers - 1] = err.hadamard(H.back().apply(activation_.df));
+            deltas[num_weight_layers - 1] = loss_->output_delta(
+                target, A.back(), H.back(), use_softmax_output_ ? nullptr : activation_.df);
 
             // Hidden layer deltas backward
             for (std::size_t l = num_weight_layers - 1; l > 0; --l) {
@@ -122,38 +153,58 @@ TrainResult MLP::fit(const Matrix& X, const Matrix& y, int epochs) {
                 deltas[prev] = (deltas[l] * weights_[l].transpose()).hadamard(H[prev].apply(activation_.df));
             }
 
-            // Parameter updates (online gradient descent)
+            // Parameter updates via Optimizer
             for (std::size_t l = 0; l < num_weight_layers; ++l) {
-                weights_[l] = weights_[l] + (A[l].transpose() * deltas[l]) * learning_rate_;
-                biases_[l] = biases_[l] + deltas[l] * learning_rate_;
+                optimizer_->update(weights_[l], A[l].transpose() * deltas[l], 2 * l);
+                optimizer_->update(biases_[l], deltas[l], 2 * l + 1);
             }
         }
-        result.loss_per_epoch.push_back(mean_squared_error(y, predict(X)));
+
+        const double current_loss = loss_->compute(y, predict(X));
+        result.loss_per_epoch.push_back(current_loss);
+        if (on_epoch) {
+            on_epoch(epoch + 1, current_loss);
+        }
     }
 
     return result;
 }
 
-Matrix MLP::predict(const Matrix& X) const {
+std::vector<Matrix> MLP::layer_activations(const Matrix& X) const {
     if (X.cols() != layer_sizes_.front()) {
         throw std::invalid_argument("predict: X has " + std::to_string(X.cols()) + " columns, expected " +
                                     std::to_string(layer_sizes_.front()));
     }
 
-    Matrix out(X.rows(), layer_sizes_.back());
+    std::vector<Matrix> layers;
+    layers.reserve(layer_sizes_.size());
+    layers.push_back(X);
+
     const std::size_t num_weight_layers = layer_sizes_.size() - 1;
+    for (std::size_t l = 0; l < num_weight_layers; ++l) {
+        layers.emplace_back(X.rows(), layer_sizes_[l + 1]);
+    }
 
     for (std::size_t i = 0; i < X.rows(); ++i) {
         Matrix a = X.row(i);
         for (std::size_t l = 0; l < num_weight_layers; ++l) {
-            a = ((a * weights_[l]) + biases_[l]).apply(activation_.f);
-        }
-        for (std::size_t j = 0; j < layer_sizes_.back(); ++j) {
-            out(i, j) = a(0, j);
+            Matrix h = (a * weights_[l]) + biases_[l];
+            if (l == num_weight_layers - 1 && use_softmax_output_) {
+                a = softmax_rows(h);
+            } else {
+                a = h.apply(activation_.f);
+            }
+            for (std::size_t j = 0; j < layer_sizes_[l + 1]; ++j) {
+                layers[l + 1](i, j) = a(0, j);
+            }
         }
     }
 
-    return out;
+    return layers;
+}
+
+Matrix MLP::predict(const Matrix& X) const {
+    return layer_activations(X).back();
 }
 
 std::vector<double> MLP::flat_weights() const {
