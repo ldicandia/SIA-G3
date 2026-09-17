@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 
 # Ensure project root is in sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 try:
-    from scripts.fraud_preprocess import TARGET_COLUMN
+    from scripts.ejercicio1.fraud_preprocess import TARGET_COLUMN
 except ModuleNotFoundError:
     from fraud_preprocess import TARGET_COLUMN
 

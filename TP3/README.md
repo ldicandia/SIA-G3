@@ -40,7 +40,7 @@ ctest --test-dir build --output-on-failure && \
 ./build/tp3 validate linear --seed 42 --out runs_validation && \
 ./build/tp3 validate tanh --seed 42 --out runs_validation && \
 ./build/tp3 validate xor --seed 42 --out runs_validation && \
-.venv/bin/python scripts/plot_validation.py --in runs_validation --out plots
+.venv/bin/python scripts/validation/plot_validation.py --in runs_validation --out plots
 ```
 
 ---
@@ -141,7 +141,7 @@ El CLI `tp3 validate <caso>` permite ejecutar individualmente cada uno de los cu
 
 Para graficar las curvas de pérdida y los ajustes generados por las corridas de validación:
 ```bash
-.venv/bin/python scripts/plot_validation.py --in runs_validation --out plots
+.venv/bin/python scripts/validation/plot_validation.py --in runs_validation --out plots
 ```
 
 Los gráficos se generan en el directorio `plots/`:
@@ -195,7 +195,24 @@ TP3/
 │   ├── Enunciado TP3 - 2Q 2026.pdf
 │   └── xor_a_mano.md           # Cálculo a mano detallado para [2,2,1] y [2,3,2,1]
 ├── scripts/
-│   └── plot_validation.py     # Graficador matplotlib a partir de los JSON generados
+│   ├── validation/             # Scripts para corridas de validación
+│   │   └── plot_validation.py  # Graficador matplotlib a partir de los JSON generados
+│   ├── ejercicio1/             # Scripts para el Ejercicio 1 (Fraud TinyModel)
+│   │   ├── fraud_explore.py
+│   │   ├── fraud_preprocess.py
+│   │   ├── fraud_metrics.py
+│   │   ├── fraud_train_variant.py
+│   │   ├── fraud_sweep.py
+│   │   ├── fraud_generalization.py
+│   │   └── fraud_compare.py
+│   └── ejercicio2/             # Scripts para el Ejercicio 2 (Digits MLP)
+│       ├── digits_preprocess.py
+│       ├── digits_metrics.py
+│       ├── digits_train_variant.py
+│       ├── digits_lr_sweep.py
+│       ├── digits_architecture_sweep.py
+│       ├── digits_optimizer_sweep.py
+│       └── digits_compare.py
 ├── tests/                      # Suite de tests end-to-end en Python (pytest)
 │   ├── conftest.py             # Fixtures para invocar ./build/tp3 y parsear JSON
 │   ├── test_boundary.py        # Validación de aislamiento arquitectónico C++ / Python

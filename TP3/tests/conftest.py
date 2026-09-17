@@ -57,4 +57,4 @@ def run_validate(tp3_bin: Path, tmp_path: Path) -> Callable[..., RunResult]:
 
 @pytest.fixture(scope="session")
 def plot_script() -> Path:
-    return REPO_ROOT / "scripts" / "plot_validation.py"
+    return REPO_ROOT / "scripts" / "validation" / "plot_validation.py"

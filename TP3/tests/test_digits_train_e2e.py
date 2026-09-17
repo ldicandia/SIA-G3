@@ -1,8 +1,8 @@
 import glob
 import pytest
 from pathlib import Path
-from scripts.digits_metrics import accuracy, per_class_recall, load_class_predictions
-from scripts.digits_train_variant import build_config
+from scripts.ejercicio2.digits_metrics import accuracy, per_class_recall, load_class_predictions
+from scripts.ejercicio2.digits_train_variant import build_config
 
 
 def test_metrics_accuracy():

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from scripts.digits_lr_sweep import summarize_variant, NEW_LR_VARIANTS
+from scripts.ejercicio2.digits_lr_sweep import summarize_variant, NEW_LR_VARIANTS
 
 
 def test_lr_sweep_configuration():

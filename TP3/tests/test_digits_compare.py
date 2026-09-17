@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from scripts.digits_compare import select_best
+from scripts.ejercicio2.digits_compare import select_best
 
 
 def test_select_best_accuracy():

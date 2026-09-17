@@ -1,5 +1,5 @@
 import pytest
-from scripts.fraud_generalization import kfold_partition
+from scripts.ejercicio1.fraud_generalization import kfold_partition
 
 def test_kfold_partition():
     n = 7500

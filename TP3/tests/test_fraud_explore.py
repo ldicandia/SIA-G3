@@ -1,5 +1,5 @@
 import pytest
-from scripts.fraud_explore import compute_column_stats, count_duplicate_rows, class_balance
+from scripts.ejercicio1.fraud_explore import compute_column_stats, count_duplicate_rows, class_balance
 
 def test_compute_column_stats():
     rows = [

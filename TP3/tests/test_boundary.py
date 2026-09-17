@@ -79,4 +79,4 @@ def test_only_scripts_import_the_plotting_module() -> None:
         ]
 
     assert importers(TESTS) == []
-    assert importers(SCRIPTS) == [Path("scripts") / "plot_validation.py"]
+    assert importers(SCRIPTS) == [Path("scripts") / "validation" / "plot_validation.py"]

@@ -4,10 +4,14 @@ import sys
 from pathlib import Path
 
 # Ensure project root is in sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.digits_metrics import accuracy, per_class_recall, load_class_predictions
-from scripts.digits_train_variant import train_and_harvest
+try:
+    from scripts.ejercicio2.digits_metrics import accuracy, per_class_recall, load_class_predictions
+    from scripts.ejercicio2.digits_train_variant import train_and_harvest
+except ModuleNotFoundError:
+    from digits_metrics import accuracy, per_class_recall, load_class_predictions
+    from digits_train_variant import train_and_harvest
 
 NEW_OPTIMIZER_VARIANTS = ["momentum", "adam"]
 BASE_LAYER_SIZES = [784, 32, 10]

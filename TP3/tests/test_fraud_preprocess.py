@@ -1,7 +1,7 @@
 import pytest
 import math
 from pathlib import Path
-from scripts.fraud_preprocess import (
+from scripts.ejercicio1.fraud_preprocess import (
     split_indices,
     standardize_fit,
     standardize_apply,
@@ -44,7 +44,7 @@ def test_standardize_fit_and_apply():
     assert abs(sum(applied_c1) / len(applied_c1)) < 1e-9
 
 def test_headers_never_contain_flagged_fraud(tmp_path):
-    from scripts.fraud_preprocess import write_feature_csv
+    from scripts.ejercicio1.fraud_preprocess import write_feature_csv
     rows = [{"f1": "1.0", "big_model_fraud_probability": "0.5", "flagged_fraud": "1"}]
     stats = {"f1": {"mean": 0.0, "std": 1.0}}
     out_file = tmp_path / "test.csv"

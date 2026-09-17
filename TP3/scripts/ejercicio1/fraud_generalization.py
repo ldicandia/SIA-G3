@@ -6,10 +6,10 @@ import statistics
 import sys
 
 # Ensure project root is in sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
-    from scripts.fraud_preprocess import (
+    from scripts.ejercicio1.fraud_preprocess import (
         RAW_CSV,
         FEATURE_COLUMNS,
         TARGET_COLUMN,
@@ -17,8 +17,8 @@ try:
         standardize_fit,
         write_feature_csv
     )
-    from scripts.fraud_train_variant import build_config, run_tp3_train
-    from scripts.fraud_metrics import precision_recall_f1
+    from scripts.ejercicio1.fraud_train_variant import build_config, run_tp3_train
+    from scripts.ejercicio1.fraud_metrics import precision_recall_f1
 except ModuleNotFoundError:
     from fraud_preprocess import (
         RAW_CSV,

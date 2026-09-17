@@ -1,5 +1,5 @@
 import pytest
-from scripts.fraud_compare import (
+from scripts.ejercicio1.fraud_compare import (
     split_predictions,
     mse,
     r2,

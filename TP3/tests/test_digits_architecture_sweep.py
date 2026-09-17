@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from scripts.digits_architecture_sweep import n_params, NEW_ARCH_VARIANTS
+from scripts.ejercicio2.digits_architecture_sweep import n_params, NEW_ARCH_VARIANTS
 
 
 def test_n_params():

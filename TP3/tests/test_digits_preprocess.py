@@ -1,5 +1,5 @@
 from pathlib import Path
-from scripts.digits_preprocess import (
+from scripts.ejercicio2.digits_preprocess import (
     stratified_split_indices,
     label_counts,
     read_raw_lines,

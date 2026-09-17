@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from scripts.digits_optimizer_sweep import NEW_OPTIMIZER_VARIANTS
+from scripts.ejercicio2.digits_optimizer_sweep import NEW_OPTIMIZER_VARIANTS
 
 
 def test_optimizer_sweep_constants():

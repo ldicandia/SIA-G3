@@ -3,10 +3,10 @@ from pathlib import Path
 import sys
 
 # Ensure project root is in sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
-    from scripts.fraud_metrics import sweep, best_threshold_by_f1
+    from scripts.ejercicio1.fraud_metrics import sweep, best_threshold_by_f1
 except ModuleNotFoundError:
     from fraud_metrics import sweep, best_threshold_by_f1
 

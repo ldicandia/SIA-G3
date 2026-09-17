@@ -1,5 +1,5 @@
 import pytest
-from scripts.fraud_metrics import (
+from scripts.ejercicio1.fraud_metrics import (
     confusion_counts,
     precision_recall_f1,
     sweep,

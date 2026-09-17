@@ -6,7 +6,7 @@ import pytest
 
 def test_digits_test_csv_exactly_one_script_reference():
     """Standing guard for DIGIT-02: digits_test.csv must be opened by exactly one script."""
-    script_files = list(Path("scripts").glob("*.py"))
+    script_files = list(Path("scripts").rglob("*.py"))
     matches = []
     for sf in script_files:
         content = sf.read_text(encoding="utf-8")
