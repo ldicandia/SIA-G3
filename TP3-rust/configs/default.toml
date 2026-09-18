@@ -1,0 +1,13 @@
+[split]
+train_ratio = 0.70
+validation_ratio = 0.15
+seed = 42
+stratification_bins = 10
+
+[search]
+learning_rates = [0.001, 0.005, 0.01, 0.05]
+max_epochs = 2000
+patience = 100
+min_delta = 1e-8
+initialization_seed = 42
+
