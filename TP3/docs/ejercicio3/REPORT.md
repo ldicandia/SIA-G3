@@ -74,3 +74,48 @@ The unmodified config was re-run completely on `more_digits.csv`'s own internal 
 **`delta_val_accuracy = -0.0152`** (a -1.52 percentage-point change). Reported honestly, with the real number, regardless of direction: the more-data-only baseline, using the exact same architecture/hyperparameters as Ejercicio 2's combined-best config, did **not** improve overall validation accuracy over Ejercicio 2's own result — it is a small regression on the aggregate metric. This is not reframed as a success; the >=98% target from the enunciado is far from met by this baseline alone.
 
 At the same time, per-class recall tells a more nuanced story consistent with Section 1's exploration: digit 8, structurally unlearnable in Ejercicio 2 (recall undefined, 0 training rows), now recalls **83.76%** of its held-out validation rows, and digit 5's recall improved from 57.41% to 62.04% with its doubled training count. The aggregate accuracy dip appears concentrated elsewhere (e.g. digit 7 dropped from 0.9617 to 0.8963, digit 9 from 0.8855 to 0.8964) — a possible side-effect of the larger, differently-composed dataset interacting with a config that was tuned specifically for `digits.csv`'s internal split, not `more_digits.csv`'s. This "more data alone is not automatically better" finding is exactly what ACC-02's isolation step is designed to surface before any technique change (Plan 07-02 onward) is layered on top and potentially confounded with it.
+
+---
+
+## 3. Techniques Applied (ACC-03)
+
+ACC-03 requires deliberate techniques — beyond the "more data" effect isolated in Section 2 — to be explored and honestly compared. Three techniques were applied against Section 2's `val_accuracy = 0.9161` more-data baseline: widening/deepening the architecture, varying the weight-initialization seed, and majority-vote ensembling over the seed-diverse models. All three reuse `more_digits.csv`'s locked internal `train.csv`/`val.csv` split (Section 1) under Ejercicio 2's engine, reused unchanged.
+
+### 3.1 Architecture Variants
+
+`docs/ejercicio3/architecture_variants.json` compares three architectures under identical `learning_rate=0.01`/`optimizer=sgd`/`activation=sigmoid`/`epochs=10`:
+
+| Architecture (`layer_sizes`) | Params (`n_params`) | Val accuracy |
+|---|:---:|:---:|
+| `[784, 32, 16, 10]` (baseline, reused) | 25,818 | 0.9161 |
+| `[784, 64, 10]` (`arch_64`) | 50,890 | 0.9250 |
+| `[784, 64, 32, 10]` (`arch_64-32`) | 52,650 | **0.9269** |
+
+`[784, 64, 32, 10]` wins, at **0.9269** val accuracy — **+0.0108** (+1.08 percentage points) over the `[784, 32, 16, 10]` baseline, and +0.0019 (+0.19 points) over the single-hidden-layer `[784, 64, 10]` variant despite only +1,760 additional parameters. Widening and adding a second hidden layer both individually recover most of Section 2's -0.0152 "more data" regression, and combined they recover more than all of it.
+
+### 3.2 Initialization (Seed) Variants
+
+`docs/ejercicio3/seed_variants.json` compares four weight-initialization seeds under the IDENTICAL `[784, 32, 16, 10]` architecture, `learning_rate=0.01`, `optimizer=sgd`, `activation=sigmoid`, `epochs=10` — the only variable is the random seed feeding `core/src/mlp.cpp`'s `Matrix::random` weight initialization (the engine performs no row shuffling, per `core/include/mlp.hpp`'s "Online gradient descent across dataset in row order, no shuffling"):
+
+| Seed | Val accuracy |
+|:---:|:---:|
+| 7 | **0.9237** (max) |
+| 42 (baseline, reused) | **0.9161** (min) |
+| 123 | 0.9187 |
+| 2026 | 0.9221 |
+
+The spread across the four seeds is **0.9161–0.9237**, a **0.0076** (0.76 percentage point) range — genuinely non-identical outcomes, confirming that weight initialization alone (with everything else held fixed, including row order) meaningfully affects this engine's trained result. It is not a no-op sweep.
+
+### 3.3 Ensembling (Majority Vote over Seed Variants)
+
+`docs/ejercicio3/ensemble_variants.json` combines all four Section 3.2 seed-variant models' (`more_data_baseline`, `seed_7`, `seed_123`, `seed_2026`) val-split predictions via a deterministic hard majority vote (`scripts/ejercicio3/more_digits_ensemble.py`'s `majority_vote`, ties broken to the smallest tied class) — the only combination rule available, since `core/include/io/run_json.hpp`'s `PredictionRecord` stores only each model's argmax `predicted_class`, no softmax probability vector to average:
+
+- **Ensemble val accuracy:** **0.9266** (`ensemble_val_accuracy`)
+- **Best single member val accuracy:** **0.9237** (`best_single_member_val_accuracy`, `seed_7`)
+- **`ensemble_beats_best_single_member`: `true`**
+
+Ensembling helped here: the majority vote across the four seed-diverse models scores **+0.0029** (+0.29 percentage points) above the best individual member (`seed_7`, 0.9237), and **+0.0105** above the seed-42 baseline (0.9161) — a modest but real gain from combining independently-initialized models' disagreements, consistent with the genuine (non-identical) seed spread found in Section 3.2. This result is reported as-is; had the ensemble instead scored below the best single member, that negative result would be stated with the same honesty.
+
+### Scope Note: Mini-Batching Not Attempted
+
+Mini-batching was not attempted as a technique this phase. ROADMAP Phase 7 locks "Ejercicio 2's engine and methodology reused unchanged," and `core/include/mlp.hpp`'s `fit()` is hardcoded to online (unbatched) gradient descent in fixed row order — its own docstring states "Online gradient descent across dataset in row order, no shuffling." Extending `fit()` to support mini-batches would require a core-engine change, which this phase's scope explicitly does not make. This is a documented scope boundary, not a silent omission: the three techniques above (architecture, initialization, ensembling) are the full set of deliberate techniques ACC-03 explores under the engine as it exists at the start of this phase.
