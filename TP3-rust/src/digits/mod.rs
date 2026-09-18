@@ -1,7 +1,7 @@
+pub mod analyze;
 pub mod artifact;
 pub mod config;
 pub mod data;
-pub mod live;
+pub mod live_dashboard;
 pub mod metrics;
-pub mod study;
 pub mod training;

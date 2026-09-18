@@ -5,8 +5,8 @@ use clap::{Args, Parser, Subcommand};
 use tp3_rust::{
     config::AppConfig,
     data::load_fraud_dataset,
-    digits::live::{run_monitor, spawn_monitor_process},
-    exercise2, exercise3,
+    digits::live_dashboard::{run_monitor, spawn_monitor_process},
+    exercises::{exercise2, exercise3},
     experiment::{run_generalization, run_inspection, run_learning_comparison},
 };
 

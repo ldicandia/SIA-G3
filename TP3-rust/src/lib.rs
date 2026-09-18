@@ -1,8 +1,7 @@
 pub mod config;
 pub mod data;
 pub mod digits;
-pub mod exercise2;
-pub mod exercise3;
+pub mod exercises;
 pub mod experiment;
 pub mod loss;
 pub mod matrix;

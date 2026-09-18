@@ -3,10 +3,10 @@ use std::{net::SocketAddr, path::Path};
 use anyhow::{Context, Result};
 
 use crate::digits::{
+    analyze::{run_digit_evaluation, run_digit_training},
     artifact::DigitModelArtifact,
     config::DigitStudyConfig,
     data::load_digit_dataset,
-    study::{run_digit_evaluation, run_digit_training},
 };
 
 pub fn train(

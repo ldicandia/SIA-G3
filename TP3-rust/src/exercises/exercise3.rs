@@ -3,10 +3,10 @@ use std::{net::SocketAddr, path::Path};
 use anyhow::{Context, Result};
 
 use crate::digits::{
+    analyze::{run_digit_evaluation, run_digit_training, TrainingOutcome},
     artifact::DigitModelArtifact,
     config::DigitStudyConfig,
     data::load_digit_dataset,
-    study::{run_digit_evaluation, run_digit_training, TrainingOutcome},
 };
 
 const BASELINE_NAME: &str = "exercise2_winner_on_more_digits";
