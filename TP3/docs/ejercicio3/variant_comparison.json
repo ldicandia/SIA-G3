@@ -1,0 +1,278 @@
+{
+  "architecture_variants": [
+    {
+      "run_name": "more_data_baseline",
+      "layer_sizes": [
+        784,
+        32,
+        16,
+        10
+      ],
+      "n_params": 25818,
+      "learning_rate": 0.01,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.9161105815061964,
+      "per_class_recall": {
+        "0": 0.971830985915493,
+        "1": 0.9678217821782178,
+        "2": 0.9299719887955182,
+        "3": 0.9130434782608695,
+        "4": 0.9057142857142857,
+        "5": 0.6203703703703703,
+        "6": 0.9577464788732394,
+        "7": 0.8962765957446809,
+        "8": 0.8376068376068376,
+        "9": 0.896358543417367
+      },
+      "train_run_json": "runs/more_digits/more_data_baseline/mlp_42_1789696480458232.json",
+      "val_run_json": "runs/more_digits/more_data_baseline_val/mlp_42_1789696481152769.json"
+    },
+    {
+      "run_name": "arch_64",
+      "layer_sizes": [
+        784,
+        64,
+        10
+      ],
+      "n_params": 50890,
+      "learning_rate": 0.01,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.925007944073721,
+      "per_class_recall": {
+        "0": 0.9661971830985916,
+        "1": 0.9727722772277227,
+        "2": 0.9467787114845938,
+        "3": 0.8940217391304348,
+        "4": 0.9142857142857143,
+        "5": 0.7870370370370371,
+        "6": 0.9464788732394366,
+        "7": 0.9228723404255319,
+        "8": 0.8717948717948718,
+        "9": 0.8907563025210085
+      },
+      "train_run_json": "runs/more_digits/arch_64/mlp_42_1789696973459501.json",
+      "val_run_json": "runs/more_digits/arch_64_val/mlp_42_1789696974196698.json"
+    },
+    {
+      "run_name": "arch_64-32",
+      "layer_sizes": [
+        784,
+        64,
+        32,
+        10
+      ],
+      "n_params": 52650,
+      "learning_rate": 0.01,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.926914521766762,
+      "per_class_recall": {
+        "0": 0.9690140845070423,
+        "1": 0.9702970297029703,
+        "2": 0.9495798319327731,
+        "3": 0.9211956521739131,
+        "4": 0.9228571428571428,
+        "5": 0.7407407407407407,
+        "6": 0.9464788732394366,
+        "7": 0.9122340425531915,
+        "8": 0.8632478632478633,
+        "9": 0.896358543417367
+      },
+      "train_run_json": "runs/more_digits/arch_64-32/mlp_42_1789696980892208.json",
+      "val_run_json": "runs/more_digits/arch_64-32_val/mlp_42_1789696981604584.json"
+    }
+  ],
+  "seed_variants": [
+    {
+      "run_name": "seed_7",
+      "seed": 7,
+      "architecture": [
+        784,
+        32,
+        16,
+        10
+      ],
+      "n_params": 25818,
+      "learning_rate": 0.01,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.9237368922783603,
+      "per_class_recall": {
+        "0": 0.9859154929577465,
+        "1": 0.9702970297029703,
+        "2": 0.9523809523809523,
+        "3": 0.8940217391304348,
+        "4": 0.9142857142857143,
+        "5": 0.7129629629629629,
+        "6": 0.9549295774647887,
+        "7": 0.9148936170212766,
+        "8": 0.7948717948717948,
+        "9": 0.9047619047619048
+      },
+      "train_run_json": "runs/more_digits/seed_7/mlp_7_1789697096627643.json",
+      "val_run_json": "runs/more_digits/seed_7_val/mlp_7_1789697097313954.json"
+    },
+    {
+      "run_name": "more_data_baseline",
+      "seed": 42,
+      "architecture": [
+        784,
+        32,
+        16,
+        10
+      ],
+      "n_params": 25818,
+      "learning_rate": 0.01,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.9161105815061964,
+      "per_class_recall": {
+        "0": 0.971830985915493,
+        "1": 0.9678217821782178,
+        "2": 0.9299719887955182,
+        "3": 0.9130434782608695,
+        "4": 0.9057142857142857,
+        "5": 0.6203703703703703,
+        "6": 0.9577464788732394,
+        "7": 0.8962765957446809,
+        "8": 0.8376068376068376,
+        "9": 0.896358543417367
+      },
+      "train_run_json": "runs/more_digits/more_data_baseline/mlp_42_1789696480458232.json",
+      "val_run_json": "runs/more_digits/more_data_baseline_val/mlp_42_1789696481152769.json"
+    },
+    {
+      "run_name": "seed_123",
+      "seed": 123,
+      "architecture": [
+        784,
+        32,
+        16,
+        10
+      ],
+      "n_params": 25818,
+      "learning_rate": 0.01,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.9186526850969177,
+      "per_class_recall": {
+        "0": 0.971830985915493,
+        "1": 0.9752475247524752,
+        "2": 0.9495798319327731,
+        "3": 0.907608695652174,
+        "4": 0.8828571428571429,
+        "5": 0.7222222222222222,
+        "6": 0.952112676056338,
+        "7": 0.9175531914893617,
+        "8": 0.8205128205128205,
+        "9": 0.876750700280112
+      },
+      "train_run_json": "runs/more_digits/seed_123/mlp_123_1789697101443659.json",
+      "val_run_json": "runs/more_digits/seed_123_val/mlp_123_1789697102126178.json"
+    },
+    {
+      "run_name": "seed_2026",
+      "seed": 2026,
+      "architecture": [
+        784,
+        32,
+        16,
+        10
+      ],
+      "n_params": 25818,
+      "learning_rate": 0.01,
+      "optimizer": "sgd",
+      "epochs": 10,
+      "val_accuracy": 0.9221480775341595,
+      "per_class_recall": {
+        "0": 0.9661971830985916,
+        "1": 0.9777227722772277,
+        "2": 0.9523809523809523,
+        "3": 0.9103260869565217,
+        "4": 0.9,
+        "5": 0.6759259259259259,
+        "6": 0.9605633802816902,
+        "7": 0.8936170212765957,
+        "8": 0.8632478632478633,
+        "9": 0.9047619047619048
+      },
+      "train_run_json": "runs/more_digits/seed_2026/mlp_2026_1789697106276632.json",
+      "val_run_json": "runs/more_digits/seed_2026_val/mlp_2026_1789697106948636.json"
+    }
+  ],
+  "ensemble_variant": {
+    "members": [
+      "seed_7",
+      "more_data_baseline",
+      "seed_123",
+      "seed_2026"
+    ],
+    "member_val_accuracies": {
+      "seed_7": 0.9237368922783603,
+      "more_data_baseline": 0.9161105815061964,
+      "seed_123": 0.9186526850969177,
+      "seed_2026": 0.9221480775341595
+    },
+    "ensemble_val_accuracy": 0.9265967588179218,
+    "ensemble_per_class_recall": {
+      "0": 0.9830985915492958,
+      "1": 0.9752475247524752,
+      "2": 0.957983193277311,
+      "3": 0.907608695652174,
+      "4": 0.9142857142857143,
+      "5": 0.7037037037037037,
+      "6": 0.9549295774647887,
+      "7": 0.9175531914893617,
+      "8": 0.8547008547008547,
+      "9": 0.8879551820728291
+    },
+    "best_single_member_val_accuracy": 0.9237368922783603,
+    "ensemble_beats_best_single_member": true
+  },
+  "best_individual": {
+    "run_name": "arch_64-32",
+    "layer_sizes": [
+      784,
+      64,
+      32,
+      10
+    ],
+    "n_params": 52650,
+    "learning_rate": 0.01,
+    "optimizer": "sgd",
+    "epochs": 10,
+    "val_accuracy": 0.926914521766762,
+    "per_class_recall": {
+      "0": 0.9690140845070423,
+      "1": 0.9702970297029703,
+      "2": 0.9495798319327731,
+      "3": 0.9211956521739131,
+      "4": 0.9228571428571428,
+      "5": 0.7407407407407407,
+      "6": 0.9464788732394366,
+      "7": 0.9122340425531915,
+      "8": 0.8632478632478633,
+      "9": 0.896358543417367
+    },
+    "train_run_json": "runs/more_digits/arch_64-32/mlp_42_1789696980892208.json",
+    "val_run_json": "runs/more_digits/arch_64-32_val/mlp_42_1789696981604584.json"
+  },
+  "final_choice": {
+    "type": "single_model",
+    "run_name": "arch_64-32",
+    "layer_sizes": [
+      784,
+      64,
+      32,
+      10
+    ],
+    "learning_rate": 0.01,
+    "optimizer": "sgd",
+    "activation": "sigmoid",
+    "epochs": 10,
+    "val_accuracy": 0.926914521766762
+  },
+  "selection_rule": "maximize val_accuracy across the merged architecture+seed variant pool (Phase 6's select_best tie-break: fewer n_params, then lower learning_rate, then alphabetically-first optimizer); the ensemble replaces the single-model choice only if its val_accuracy is strictly higher, ties preferring the single model for lower deployment complexity"
+}
