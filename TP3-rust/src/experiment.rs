@@ -9,6 +9,7 @@ use crate::{
     config::AppConfig,
     data::{FraudDataset, StandardScaler, FEATURE_NAMES},
     loss::MeanSquaredError,
+    matrix::DenseMatrix,
     metrics::{
         best_accuracy_threshold, confusion_matrix, regression_metrics, threshold_sweep,
         RegressionMetrics, ThresholdMetrics,
@@ -60,40 +61,26 @@ pub fn run_learning_comparison(
         ("linear", Activation::Linear),
         ("sigmoid", Activation::Sigmoid),
     ] {
+        let trials = run_learning_trials(
+            name,
+            activation,
+            &config.search.learning_rates,
+            &features,
+            &all_indices,
+            &dataset.teacher_targets,
+            config,
+        )?;
         let mut best: Option<LearningRun> = None;
-        for &learning_rate in &config.search.learning_rates {
-            let mut model = SingleLayerPerceptron::new(
-                features.cols(),
-                activation,
-                config.search.initialization_seed,
-            )?;
-            let report = train_single_layer(
-                &mut model,
-                &features,
-                &dataset.teacher_targets,
-                &all_indices,
-                None,
-                &MeanSquaredError,
-                search_training_config(config, learning_rate),
-            )?;
-            let predictions = predict_single_indices(&model, &features, &all_indices)?;
-            let metrics = regression_metrics(&predictions, &dataset.teacher_targets)?;
+        for run in trials {
             trial_writer.serialize((
-                name,
-                learning_rate,
-                report.best_epoch,
-                metrics.mse,
-                metrics.rmse,
-                metrics.r2,
-                report.stopped_early,
+                run.name,
+                run.learning_rate,
+                run.report.best_epoch,
+                run.metrics.mse,
+                run.metrics.rmse,
+                run.metrics.r2,
+                run.report.stopped_early,
             ))?;
-            let run = LearningRun {
-                name,
-                learning_rate,
-                report,
-                predictions,
-                metrics,
-            };
             if best
                 .as_ref()
                 .is_none_or(|current| run.metrics.mse < current.metrics.mse)
@@ -140,49 +127,30 @@ pub fn run_generalization(dataset: &FraudDataset, config: &AppConfig, output: &P
         "stopped_early",
     ])?;
 
+    let trials = run_generalization_trials(
+        &config.search.learning_rates,
+        &train_scaled,
+        &split.train,
+        &split.validation,
+        &dataset.teacher_targets,
+        config,
+    )?;
     let mut best: Option<GeneralizationRun> = None;
-    for &learning_rate in &config.search.learning_rates {
-        let mut model = SingleLayerPerceptron::new(
-            train_scaled.cols(),
-            Activation::Sigmoid,
-            config.search.initialization_seed,
-        )?;
-        let report = train_single_layer(
-            &mut model,
-            &train_scaled,
-            &dataset.teacher_targets,
-            &split.train,
-            Some(&split.validation),
-            &MeanSquaredError,
-            search_training_config(config, learning_rate),
-        )?;
-        let train_predictions = predict_single_indices(&model, &train_scaled, &split.train)?;
-        let validation_predictions =
-            predict_single_indices(&model, &train_scaled, &split.validation)?;
-        let train_targets = select_values(&dataset.teacher_targets, &split.train);
-        let validation_targets = select_values(&dataset.teacher_targets, &split.validation);
-        let train_metrics = regression_metrics(&train_predictions, &train_targets)?;
-        let validation_metrics = regression_metrics(&validation_predictions, &validation_targets)?;
+    for trial in trials {
         trial_writer.serialize((
-            learning_rate,
-            report.best_epoch,
-            train_metrics.mse,
-            validation_metrics.mse,
-            validation_metrics.rmse,
-            validation_metrics.r2,
-            report.stopped_early,
+            trial.run.learning_rate,
+            trial.run.report.best_epoch,
+            trial.train_mse,
+            trial.run.validation_metrics.mse,
+            trial.run.validation_metrics.rmse,
+            trial.run.validation_metrics.r2,
+            trial.run.report.stopped_early,
         ))?;
-        let run = GeneralizationRun {
-            learning_rate,
-            report,
-            validation_predictions,
-            validation_metrics,
-        };
         if best
             .as_ref()
-            .is_none_or(|current| run.validation_metrics.mse < current.validation_metrics.mse)
+            .is_none_or(|current| trial.run.validation_metrics.mse < current.validation_metrics.mse)
         {
-            best = Some(run);
+            best = Some(trial.run);
         }
     }
     trial_writer.flush()?;
@@ -245,6 +213,68 @@ pub fn run_generalization(dataset: &FraudDataset, config: &AppConfig, output: &P
     Ok(())
 }
 
+fn run_learning_trial(
+    name: &'static str,
+    activation: Activation,
+    learning_rate: f64,
+    features: &DenseMatrix,
+    all_indices: &[usize],
+    teacher_targets: &[f64],
+    config: &AppConfig,
+) -> Result<LearningRun> {
+    let mut model = SingleLayerPerceptron::new(
+        features.cols(),
+        activation,
+        config.search.initialization_seed,
+    )?;
+    let report = train_single_layer(
+        &mut model,
+        features,
+        teacher_targets,
+        all_indices,
+        None,
+        &MeanSquaredError,
+        search_training_config(config, learning_rate),
+    )?;
+    let predictions = predict_single_indices(&model, features, all_indices)?;
+    let metrics = regression_metrics(&predictions, teacher_targets)?;
+    Ok(LearningRun {
+        name,
+        learning_rate,
+        report,
+        predictions,
+        metrics,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_learning_trials(
+    name: &'static str,
+    activation: Activation,
+    learning_rates: &[f64],
+    features: &DenseMatrix,
+    all_indices: &[usize],
+    teacher_targets: &[f64],
+    config: &AppConfig,
+) -> Result<Vec<LearningRun>> {
+    use rayon::prelude::*;
+
+    learning_rates
+        .par_iter()
+        .map(|&learning_rate| {
+            run_learning_trial(
+                name,
+                activation,
+                learning_rate,
+                features,
+                all_indices,
+                teacher_targets,
+                config,
+            )
+        })
+        .collect()
+}
+
 struct LearningRun {
     name: &'static str,
     learning_rate: f64,
@@ -258,6 +288,77 @@ struct GeneralizationRun {
     report: TrainingReport,
     validation_predictions: Vec<f64>,
     validation_metrics: RegressionMetrics,
+}
+
+struct GeneralizationTrial {
+    run: GeneralizationRun,
+    train_mse: f64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_generalization_trial(
+    learning_rate: f64,
+    train_scaled: &DenseMatrix,
+    train_indices: &[usize],
+    validation_indices: &[usize],
+    teacher_targets: &[f64],
+    config: &AppConfig,
+) -> Result<GeneralizationTrial> {
+    let mut model = SingleLayerPerceptron::new(
+        train_scaled.cols(),
+        Activation::Sigmoid,
+        config.search.initialization_seed,
+    )?;
+    let report = train_single_layer(
+        &mut model,
+        train_scaled,
+        teacher_targets,
+        train_indices,
+        Some(validation_indices),
+        &MeanSquaredError,
+        search_training_config(config, learning_rate),
+    )?;
+    let train_predictions = predict_single_indices(&model, train_scaled, train_indices)?;
+    let validation_predictions = predict_single_indices(&model, train_scaled, validation_indices)?;
+    let train_targets = select_values(teacher_targets, train_indices);
+    let validation_targets = select_values(teacher_targets, validation_indices);
+    let train_mse = regression_metrics(&train_predictions, &train_targets)?.mse;
+    let validation_metrics = regression_metrics(&validation_predictions, &validation_targets)?;
+    Ok(GeneralizationTrial {
+        run: GeneralizationRun {
+            learning_rate,
+            report,
+            validation_predictions,
+            validation_metrics,
+        },
+        train_mse,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_generalization_trials(
+    learning_rates: &[f64],
+    train_scaled: &DenseMatrix,
+    train_indices: &[usize],
+    validation_indices: &[usize],
+    teacher_targets: &[f64],
+    config: &AppConfig,
+) -> Result<Vec<GeneralizationTrial>> {
+    use rayon::prelude::*;
+
+    learning_rates
+        .par_iter()
+        .map(|&learning_rate| {
+            run_generalization_trial(
+                learning_rate,
+                train_scaled,
+                train_indices,
+                validation_indices,
+                teacher_targets,
+                config,
+            )
+        })
+        .collect()
 }
 
 fn search_training_config(config: &AppConfig, learning_rate: f64) -> TrainingConfig {

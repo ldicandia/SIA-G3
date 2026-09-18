@@ -53,6 +53,28 @@ model=single-layer learning_rate=0.01 epoch=2 train_loss=0.0141234567 validation
 
 El feature sólo controla la impresión. El entrenamiento, las métricas y los artefactos son idénticos con o sin él.
 
+### Paralelismo (multi-threading)
+
+El entrenamiento y la evaluación usan [`rayon`](https://docs.rs/rayon) para
+aprovechar varios núcleos, siempre activo (no requiere ningún feature ni
+flag; es parte normal del build). Se paraleliza:
+
+- el trabajo de entrenamiento independiente — el sweep de learning rates en
+  `compare`/`generalize`, los candidatos de `exercise2`/`exercise3`, y el
+  cálculo de gradientes dentro de cada mini-batch de los MLP de dígitos;
+- la evaluación por muestra — pérdida y accuracy sobre los índices de
+  train/validation/test, y el barrido de umbrales (`threshold_sweep`) usado
+  por `generalize`.
+
+En un dataset de fraude real esto midió entre 2x y 7x más rápido que la
+versión secuencial (según el tamaño del sweep y el dataset), sin cambiar el
+algoritmo ni los artefactos generados: sumar gradientes o pérdidas en
+distinto orden (por el reduce paralelo) puede producir diferencias de
+redondeo mínimas, pero no afecta las métricas finales de forma relevante.
+Los mensajes `eprintln!` de progreso de distintos candidatos
+(`exercise2`/`exercise3`) pueden intercalarse en la terminal, ya que corren
+en paralelo.
+
 ### Monitor gráfico en vivo
 
 El dashboard es opt-in. Al agregar `--live`, el comando de entrenamiento inicia automáticamente el monitor como un proceso separado:

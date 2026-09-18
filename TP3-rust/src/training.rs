@@ -125,7 +125,7 @@ pub fn train_step_perceptron(
     Ok(mistakes_by_epoch)
 }
 
-pub fn train_single_layer<L: Loss>(
+pub fn train_single_layer<L: Loss + Sync>(
     model: &mut SingleLayerPerceptron,
     features: &DenseMatrix,
     targets: &[f64],
@@ -221,7 +221,7 @@ pub fn train_single_layer<L: Loss>(
     })
 }
 
-pub fn train_mlp_scalar<L: Loss>(
+pub fn train_mlp_scalar<L: Loss + Sync>(
     model: &mut MultilayerPerceptron,
     features: &DenseMatrix,
     targets: &[f64],
@@ -382,41 +382,45 @@ fn apply_mlp_update(
     }
 }
 
-fn indexed_loss_single<L: Loss>(
+fn indexed_loss_single<L: Loss + Sync>(
     model: &SingleLayerPerceptron,
     features: &DenseMatrix,
     targets: &[f64],
     indices: &[usize],
     loss: &L,
 ) -> Result<f64, TrainingError> {
-    let total = indices.iter().try_fold(0.0, |total, &index| {
-        Ok::<_, TrainingError>(
-            total
-                + loss.sample(
-                    model.predict(features.row_unchecked(index))?,
-                    targets[index],
-                ),
-        )
-    })?;
+    use rayon::prelude::*;
+
+    let total = indices
+        .par_iter()
+        .map(|&index| {
+            Ok::<_, TrainingError>(loss.sample(
+                model.predict(features.row_unchecked(index))?,
+                targets[index],
+            ))
+        })
+        .try_reduce(|| 0.0, |left, right| Ok(left + right))?;
     Ok(total / indices.len() as f64)
 }
 
-fn indexed_loss_mlp<L: Loss>(
+fn indexed_loss_mlp<L: Loss + Sync>(
     model: &MultilayerPerceptron,
     features: &DenseMatrix,
     targets: &[f64],
     indices: &[usize],
     loss: &L,
 ) -> Result<f64, TrainingError> {
-    let total = indices.iter().try_fold(0.0, |total, &index| {
-        Ok::<_, TrainingError>(
-            total
-                + loss.sample(
-                    model.predict(features.row_unchecked(index))?[0],
-                    targets[index],
-                ),
-        )
-    })?;
+    use rayon::prelude::*;
+
+    let total = indices
+        .par_iter()
+        .map(|&index| {
+            Ok::<_, TrainingError>(loss.sample(
+                model.predict(features.row_unchecked(index))?[0],
+                targets[index],
+            ))
+        })
+        .try_reduce(|| 0.0, |left, right| Ok(left + right))?;
     Ok(total / indices.len() as f64)
 }
 
@@ -474,9 +478,11 @@ pub fn predict_single_indices(
     features: &DenseMatrix,
     indices: &[usize],
 ) -> Result<Vec<f64>, TrainingError> {
+    use rayon::prelude::*;
+
     validate_indices(features, indices)?;
     indices
-        .iter()
+        .par_iter()
         .map(|&index| Ok(model.predict(features.row_unchecked(index))?))
         .collect()
 }

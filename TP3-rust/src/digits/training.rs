@@ -143,14 +143,6 @@ fn train(
     }
 
     let topology = model.topology();
-    let mut activations = topology
-        .iter()
-        .map(|&size| vec![0.0; size])
-        .collect::<Vec<_>>();
-    let mut deltas = topology[1..]
-        .iter()
-        .map(|&size| vec![0.0; size])
-        .collect::<Vec<_>>();
     let mut gradients = model
         .layers
         .iter()
@@ -173,13 +165,7 @@ fn train(
     for epoch in 1..=epochs {
         order.shuffle(&mut rng);
         for batch in order.chunks(candidate.batch_size) {
-            zero_gradients(&mut gradients);
-            for &index in batch {
-                activations[0].copy_from_slice(features.row_unchecked(index));
-                forward_softmax(model, &mut activations);
-                backward(model, &activations, &mut deltas, labels[index]);
-                accumulate_gradients(&activations, &deltas, &mut gradients);
-            }
+            fill_batch_gradients(model, features, labels, batch, &topology, &mut gradients);
             apply_gradients(model, &gradients, &mut optimizer, candidate, batch.len());
         }
 
@@ -245,24 +231,37 @@ pub fn evaluate_digit_model(
     labels: &[usize],
     indices: &[usize],
 ) -> Result<DigitEvaluation, DigitTrainingError> {
+    use rayon::prelude::*;
+
     validate_inputs(model, features, labels, indices)?;
     let topology = model.topology();
-    let mut activations = topology
-        .iter()
-        .map(|&size| vec![0.0; size])
-        .collect::<Vec<_>>();
-    let mut predictions = Vec::with_capacity(indices.len());
+    let per_sample: Vec<(f64, usize)> = indices
+        .par_iter()
+        .map_init(
+            || {
+                topology
+                    .iter()
+                    .map(|&size| vec![0.0; size])
+                    .collect::<Vec<_>>()
+            },
+            |activations, &index| {
+                activations[0].copy_from_slice(features.row_unchecked(index));
+                forward_softmax(model, activations);
+                let probabilities = activations.last().unwrap();
+                let sample_loss = categorical_cross_entropy(probabilities, labels[index])
+                    .map_err(|_| DigitTrainingError::NonFinite)?;
+                Ok((sample_loss, argmax(probabilities)))
+            },
+        )
+        .collect::<Result<_, DigitTrainingError>>()?;
+
     let mut loss = 0.0;
     let mut correct = 0;
-    for &index in indices {
-        activations[0].copy_from_slice(features.row_unchecked(index));
-        forward_softmax(model, &mut activations);
-        let probabilities = activations.last().unwrap();
-        loss += categorical_cross_entropy(probabilities, labels[index])
-            .map_err(|_| DigitTrainingError::NonFinite)?;
-        let prediction = argmax(probabilities);
-        predictions.push(prediction);
+    let mut predictions = Vec::with_capacity(indices.len());
+    for (&index, &(sample_loss, prediction)) in indices.iter().zip(&per_sample) {
+        loss += sample_loss;
         correct += usize::from(prediction == labels[index]);
+        predictions.push(prediction);
     }
     Ok(DigitEvaluation {
         loss: loss / indices.len() as f64,
@@ -348,10 +347,66 @@ fn backward(
     }
 }
 
+fn fill_batch_gradients(
+    model: &MultilayerPerceptron,
+    features: &DenseMatrix,
+    labels: &[usize],
+    batch: &[usize],
+    topology: &[usize],
+    gradients: &mut [LayerValues],
+) {
+    use rayon::prelude::*;
+
+    let zeroed_gradients = || {
+        model
+            .layers
+            .iter()
+            .map(|layer| LayerValues {
+                weights: vec![0.0; layer.weights.len()],
+                biases: vec![0.0; layer.biases.len()],
+            })
+            .collect::<Vec<_>>()
+    };
+    let reduced = batch
+        .par_iter()
+        .map_init(
+            || {
+                let activations = topology.iter().map(|&size| vec![0.0; size]).collect();
+                let deltas = topology[1..].iter().map(|&size| vec![0.0; size]).collect();
+                (activations, deltas)
+            },
+            |(activations, deltas): &mut (Vec<Vec<f64>>, Vec<Vec<f64>>), &index| {
+                activations[0].copy_from_slice(features.row_unchecked(index));
+                forward_softmax(model, activations);
+                backward(model, activations, deltas, labels[index]);
+                let mut sample_gradients = zeroed_gradients();
+                accumulate_gradients(activations, deltas, &mut sample_gradients);
+                sample_gradients
+            },
+        )
+        .reduce(zeroed_gradients, |mut left, right| {
+            add_layer_values(&mut left, &right);
+            left
+        });
+    zero_gradients(gradients);
+    add_layer_values(gradients, &reduced);
+}
+
 fn zero_gradients(gradients: &mut [LayerValues]) {
     for layer in gradients {
         layer.weights.fill(0.0);
         layer.biases.fill(0.0);
+    }
+}
+
+fn add_layer_values(left: &mut [LayerValues], right: &[LayerValues]) {
+    for (left_layer, right_layer) in left.iter_mut().zip(right) {
+        for (l, r) in left_layer.weights.iter_mut().zip(&right_layer.weights) {
+            *l += r;
+        }
+        for (l, r) in left_layer.biases.iter_mut().zip(&right_layer.biases) {
+            *l += r;
+        }
     }
 }
 

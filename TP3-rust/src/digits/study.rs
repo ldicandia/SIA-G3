@@ -8,7 +8,9 @@ use crate::model::{Activation, MultilayerPerceptron};
 use super::{
     artifact::DigitModelArtifact,
     config::{CandidateConfig, DigitStudyConfig},
-    data::{class_counts, stratified_digit_split, DigitDataset, DIGIT_CLASSES, IMAGE_PIXELS},
+    data::{
+        class_counts, stratified_digit_split, DigitDataset, DigitSplit, DIGIT_CLASSES, IMAGE_PIXELS,
+    },
     live::LiveMetricsPublisher,
     metrics::{classification_metrics, ClassificationMetrics},
     training::{
@@ -55,36 +57,7 @@ pub fn run_digit_training(
     let split = stratified_digit_split(&dataset.labels, config.validation_ratio, config.split_seed);
     write_dataset_summary(dataset, &split.train, &split.validation, output)?;
 
-    let mut runs = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        eprintln!("training candidate '{}'", candidate.name);
-        let mut model = create_model(&candidate)?;
-        let report = train_digit_candidate(
-            &mut model,
-            &dataset.features,
-            &dataset.labels,
-            &split.train,
-            &split.validation,
-            &candidate,
-            Some(&publisher),
-        )?;
-        let validation = evaluate_digit_model(
-            &model,
-            &dataset.features,
-            &dataset.labels,
-            &split.validation,
-        )?;
-        runs.push(CandidateRun {
-            result: CandidateResult {
-                candidate,
-                best_epoch: report.best_epoch,
-                validation_loss: validation.loss,
-                validation_accuracy: validation.accuracy,
-                stopped_early: report.stopped_early,
-            },
-            report,
-        });
-    }
+    let runs = train_candidates(candidates, dataset, &split, &publisher)?;
 
     let best_index = select_best_index(&runs).context("candidate list cannot be empty")?;
     write_candidate_summary(&runs, output)?;
@@ -190,6 +163,55 @@ fn validate_candidates(candidates: &[CandidateConfig], input_size: usize) -> Res
         }
     }
     Ok(())
+}
+
+fn run_candidate(
+    candidate: CandidateConfig,
+    dataset: &DigitDataset,
+    split: &DigitSplit,
+    publisher: &LiveMetricsPublisher,
+) -> Result<CandidateRun> {
+    eprintln!("training candidate '{}'", candidate.name);
+    let mut model = create_model(&candidate)?;
+    let report = train_digit_candidate(
+        &mut model,
+        &dataset.features,
+        &dataset.labels,
+        &split.train,
+        &split.validation,
+        &candidate,
+        Some(publisher),
+    )?;
+    let validation = evaluate_digit_model(
+        &model,
+        &dataset.features,
+        &dataset.labels,
+        &split.validation,
+    )?;
+    Ok(CandidateRun {
+        result: CandidateResult {
+            candidate,
+            best_epoch: report.best_epoch,
+            validation_loss: validation.loss,
+            validation_accuracy: validation.accuracy,
+            stopped_early: report.stopped_early,
+        },
+        report,
+    })
+}
+
+fn train_candidates(
+    candidates: Vec<CandidateConfig>,
+    dataset: &DigitDataset,
+    split: &DigitSplit,
+    publisher: &LiveMetricsPublisher,
+) -> Result<Vec<CandidateRun>> {
+    use rayon::prelude::*;
+
+    candidates
+        .into_par_iter()
+        .map(|candidate| run_candidate(candidate, dataset, split, publisher))
+        .collect()
 }
 
 fn create_model(candidate: &CandidateConfig) -> Result<MultilayerPerceptron> {

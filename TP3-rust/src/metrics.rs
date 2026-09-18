@@ -146,8 +146,10 @@ pub fn threshold_sweep(
     let mut thresholds = scores.to_vec();
     thresholds.sort_by(|left, right| left.total_cmp(right));
     thresholds.dedup_by(|left, right| left.total_cmp(right) == Ordering::Equal);
+
+    use rayon::prelude::*;
     thresholds
-        .into_iter()
+        .into_par_iter()
         .map(|threshold| {
             Ok(ThresholdMetrics {
                 threshold,
