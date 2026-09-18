@@ -119,3 +119,72 @@ Ensembling helped here: the majority vote across the four seed-diverse models sc
 ### Scope Note: Mini-Batching Not Attempted
 
 Mini-batching was not attempted as a technique this phase. ROADMAP Phase 7 locks "Ejercicio 2's engine and methodology reused unchanged," and `core/include/mlp.hpp`'s `fit()` is hardcoded to online (unbatched) gradient descent in fixed row order — its own docstring states "Online gradient descent across dataset in row order, no shuffling." Extending `fit()` to support mini-batches would require a core-engine change, which this phase's scope explicitly does not make. This is a documented scope boundary, not a silent omission: the three techniques above (architecture, initialization, ensembling) are the full set of deliberate techniques ACC-03 explores under the engine as it exists at the start of this phase.
+
+---
+
+## 4. Separating "More Data" from Technique Effects (ACC-04)
+
+ACC-04 requires the "more data" effect (already isolated in Section 2, before any technique change) and the "technique" effect (Section 3's architecture/initialization/ensembling exploration) to be explicitly separated and attributed — never blended into one unexplained combined number.
+
+### Factor 1: "More Data" — the Numeric Row-Count Effect
+
+Section 2's `docs/ejercicio3/more_data_baseline.json` isolates this first, before any technique change: re-running Ejercicio 2's exact combined-best config (`[784, 32, 16, 10]`, lr=0.01, sgd, sigmoid, 10 epochs), unmodified, on `more_digits.csv`'s own internal train/val split alone yields `val_accuracy = 0.9161` versus Ejercicio 2's own `0.9313` — a **`delta_val_accuracy = -0.0152`** (-1.52 percentage points). On the aggregate metric alone, the extra 3,292 rows of `more_digits.csv` did **not** improve accuracy over Ejercicio 2's result; this is the "more data" effect's numeric contribution, reported honestly as a small net regression on the config that was tuned specifically for `digits.csv`'s distribution.
+
+### Factor 2: "More Data" — the Structural Class-Count Recovery
+
+Independent of the numeric row-count effect above, Section 1 documented a second, structural "more data" factor: **digit 8 rises from 0 training rows in `digits.csv` to 585 rows in `more_digits.csv`**, and **digit 5 rises from 271 rows (2.18%) to 542 rows** (doubling its representation). This is not a technique — no architecture, seed, or ensembling choice caused digit 8 to become classifiable; it became classifiable purely because the dataset itself changed to include examples of that class. Ejercicio 2's own final production check (`docs/ejercicio2/final_test_metrics.json`) reported an exact **0.0** digit 8 recall on `digits_test.csv` — a structural blindness from zero training examples, not a modeling failure. Section 5 below shows this structural gap closing to 85.47% recall once digit 8 has training examples at all, entirely attributable to this second "more data" factor rather than to any Section 3 technique.
+
+### Factor 3: "Technique" — the Deliberate Improvement on Top
+
+Section 3's ACC-03 techniques were applied on top of Section 2's `val_accuracy = 0.9161` baseline, using `more_digits.csv`'s locked internal split throughout (never `heldout.csv`). The best individual result — architecture `[784, 64, 32, 10]` (`arch_64-32`) — reached `val_accuracy = 0.926914521766762` (`docs/ejercicio3/variant_comparison.json`'s `best_individual`). The explicit "technique" contribution on top of the more-data baseline is:
+
+**`0.926914521766762 - 0.9161105815061964 = +0.0108`** (+1.08 percentage points)
+
+The seed-variant ensemble (`docs/ejercicio3/ensemble_variants.json`, `ensemble_val_accuracy = 0.9266`) came close but did not strictly beat `arch_64-32`'s individual result, so `choose_final`'s deterministic tie-break selected the single model (Section 5) — a genuine technique gain, not an assumed one.
+
+### What Cannot Be Cleanly Attributed to Either Bucket
+
+Both the `-0.0152` "more data" delta and the `+0.0108` "technique" gain above are measured consistently on `more_digits.csv`'s own internal validation split, so their arithmetic combination (`0.9161 + 0.0108 = 0.9269`) is directly additive and matches `best_individual`'s reported `val_accuracy` by construction — no residual is hidden there. Section 5's final heldout accuracy (`0.9285`, on a *different*, non-overlapping 3,147-row heldout split rather than the 3,147-row internal validation split) differs slightly from this `0.9269` figure; that ~0.16-percentage-point gap is ordinary sampling variance between two disjoint subsets of the same stratified population, not a fourth, unexplained factor requiring attribution — it is stated here explicitly rather than silently folded into either the "more data" or "technique" bucket.
+
+---
+
+## 5. Final Held-Out Check & Best Achievable Accuracy (ACC-01 close-out)
+
+This section documents the ONLY point in this entire phase that `data/derived/more_digits/heldout.csv` is read — a single, zero-additional-epoch harvest of the final selected configuration, executed once via `scripts/ejercicio3/more_digits_compare.py --final-check` and never re-run, mirroring Plan 06-04's exactly-once `digits_test.csv` discipline for Ejercicio 2.
+
+### Final Configuration Checked
+
+Per `docs/ejercicio3/variant_comparison.json`'s `final_choice`, the ensemble's `0.9266` val_accuracy did not strictly beat the best individual model's `0.926914521766762`, so the deterministic tie-break (ties/losses prefer the single model, for lower deployment complexity) selected the **single model** configuration:
+
+- **Architecture (`layer_sizes`):** `[784, 64, 32, 10]` (`run_name = arch_64-32`)
+- **Learning rate:** `0.01`
+- **Optimizer:** `sgd`
+- **Activation:** `sigmoid`
+- **Epochs:** `10`
+
+### Result
+
+`docs/ejercicio3/final_heldout_metrics.json` records, over all 3,147 rows of `data/derived/more_digits/heldout.csv`:
+
+- **Accuracy: 0.9285 (92.85%)**
+- **`meets_98_percent_target`: `false`**
+
+Stated plainly and honestly: the best achievable accuracy this phase reached on `more_digits.csv`'s held-out portion is **92.85%**, which **falls short of the >=98% target** CompanyX requested (per the enunciado's Ejercicio 3 prompt). The target is not redefined or softened here — 92.85% is the real, final, single number, reported as such.
+
+### Per-Class Recall (All Ten Digits)
+
+| Digit | Recall | Digit | Recall |
+|:---:|:---:|:---:|:---:|
+| 0 | 98.03% | 5 | 76.85% |
+| 1 | 98.02% | 6 | 92.11% |
+| 2 | 94.40% | 7 | 93.88% |
+| 3 | 90.22% | 8 | **85.47%** |
+| 4 | 92.57% | 9 | 90.20% |
+
+### Digit 8: From 0.0 to 85.47% Recall
+
+The clearest single contrast in this phase is **digit 8**'s recall: Ejercicio 2's final production check (`docs/ejercicio2/final_test_metrics.json`, `digits_test.csv`) reported an exact **0.0** recall for digit 8 — 0 out of 243 test instances correctly classified, a structural blindness from 0 training examples in `digits.csv` (cross-referenced in Section 4 above). On this phase's true production check, digit 8 recalls **85.47%** of its heldout examples. This gain traces almost entirely to Section 4's Factor 2 (the structural class-count recovery — 585 training rows now exist for digit 8) rather than to any Section 3 technique choice, since digit 8 could not have been learned by any architecture, seed, or ensembling variant while it had zero training examples in the first place.
+
+### Summary
+
+The three ACC-03 techniques (architecture, initialization, ensembling) are presented together in Section 3 as one deliberate, explainable comparison; `more_digits.csv`'s held-out portion was read exactly once, as the final ACC-01 production check, checking the deterministically-selected single-model configuration (`arch_64-32`); the best achievable accuracy — **92.85%**, short of the 98% target — is reported honestly; and ACC-04's "more data" (numeric row-count regression, plus the structural digit-8/digit-5 recovery) versus "technique" (+1.08 percentage points from architecture capacity) factors are explicitly separated in Section 4 above.
