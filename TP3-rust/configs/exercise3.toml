@@ -1,0 +1,39 @@
+validation_ratio = 0.20
+split_seed = 42
+
+[[candidates]]
+name = "adam_relu_128_64"
+topology = [784, 128, 64, 10]
+hidden_activation = "relu"
+optimizer = "adam"
+learning_rate = 0.001
+batch_size = 64
+max_epochs = 30
+patience = 5
+min_delta = 1e-5
+seed = 42
+
+[[candidates]]
+name = "adam_relu_128_64_small_lr"
+topology = [784, 128, 64, 10]
+hidden_activation = "relu"
+optimizer = "adam"
+learning_rate = 0.0005
+batch_size = 32
+max_epochs = 30
+patience = 5
+min_delta = 1e-5
+seed = 42
+
+[[candidates]]
+name = "momentum_relu_128_64"
+topology = [784, 128, 64, 10]
+hidden_activation = "relu"
+optimizer = "momentum"
+learning_rate = 0.01
+batch_size = 64
+max_epochs = 30
+patience = 5
+min_delta = 1e-5
+seed = 42
+momentum = 0.9

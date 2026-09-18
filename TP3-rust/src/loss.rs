@@ -36,6 +36,14 @@ impl Loss for MeanSquaredError {
     }
 }
 
+pub fn categorical_cross_entropy(probabilities: &[f64], target: usize) -> Result<f64, LossError> {
+    let probability = probabilities.get(target).ok_or(LossError::InvalidLengths)?;
+    if probabilities.is_empty() {
+        return Err(LossError::InvalidLengths);
+    }
+    Ok(-probability.max(f64::MIN_POSITIVE).ln())
+}
+
 #[cfg(test)]
 mod tests {
     use approx::assert_abs_diff_eq;
@@ -54,5 +62,17 @@ mod tests {
         let loss = MeanSquaredError;
         assert_eq!(loss.mean(&[], &[]), Err(LossError::InvalidLengths));
         assert_eq!(loss.mean(&[1.0], &[]), Err(LossError::InvalidLengths));
+    }
+
+    #[test]
+    fn cross_entropy_uses_the_target_probability() {
+        assert_abs_diff_eq!(
+            categorical_cross_entropy(&[0.1, 0.7, 0.2], 1).unwrap(),
+            -0.7_f64.ln()
+        );
+        assert_eq!(
+            categorical_cross_entropy(&[0.5, 0.5], 2),
+            Err(LossError::InvalidLengths)
+        );
     }
 }

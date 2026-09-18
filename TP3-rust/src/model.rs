@@ -9,6 +9,7 @@ pub enum Activation {
     Linear,
     Sigmoid,
     Tanh,
+    Relu,
 }
 
 impl Activation {
@@ -21,6 +22,7 @@ impl Activation {
                 exp / (1.0 + exp)
             }
             Self::Tanh => value.tanh(),
+            Self::Relu => value.max(0.0),
         }
     }
 
@@ -29,6 +31,7 @@ impl Activation {
             Self::Linear => 1.0,
             Self::Sigmoid => output * (1.0 - output),
             Self::Tanh => 1.0 - output.powi(2),
+            Self::Relu => f64::from(output > 0.0),
         }
     }
 }
@@ -126,7 +129,7 @@ impl SingleLayerPerceptron {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct DenseLayer {
     pub(crate) input_size: usize,
     pub(crate) output_size: usize,
@@ -135,7 +138,7 @@ pub(crate) struct DenseLayer {
     pub(crate) activation: Activation,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MultilayerPerceptron {
     pub(crate) layers: Vec<DenseLayer>,
 }
@@ -198,6 +201,31 @@ impl MultilayerPerceptron {
         topology.extend(self.layers.iter().map(|layer| layer.output_size));
         topology
     }
+
+    pub fn predict_probabilities(&self, input: &[f64]) -> Result<Vec<f64>, ModelError> {
+        let mut probabilities = self.predict(input)?;
+        softmax_in_place(&mut probabilities);
+        Ok(probabilities)
+    }
+
+    pub fn parameter_count(&self) -> usize {
+        self.layers
+            .iter()
+            .map(|layer| layer.weights.len() + layer.biases.len())
+            .sum()
+    }
+}
+
+pub(crate) fn softmax_in_place(values: &mut [f64]) {
+    let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mut total = 0.0;
+    for value in values.iter_mut() {
+        *value = (*value - maximum).exp();
+        total += *value;
+    }
+    for value in values {
+        *value /= total;
+    }
 }
 
 pub(crate) fn dot(left: &[f64], right: &[f64]) -> f64 {
@@ -249,5 +277,22 @@ mod tests {
             model.predict(&[1.0]),
             Err(ModelError::InputDimension { .. })
         ));
+    }
+
+    #[test]
+    fn softmax_is_stable_and_normalized() {
+        let mut values = vec![1000.0, 1001.0, 999.0];
+        softmax_in_place(&mut values);
+        assert!(values.iter().all(|value| value.is_finite()));
+        assert_abs_diff_eq!(values.iter().sum::<f64>(), 1.0, epsilon = 1e-12);
+        assert_eq!(
+            values
+                .iter()
+                .enumerate()
+                .max_by(|left, right| left.1.total_cmp(right.1))
+                .unwrap()
+                .0,
+            1
+        );
     }
 }

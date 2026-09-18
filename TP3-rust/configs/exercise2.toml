@@ -1,0 +1,76 @@
+validation_ratio = 0.20
+split_seed = 42
+
+[[candidates]]
+name = "sgd_sigmoid_lr_0_05"
+topology = [784, 32, 10]
+hidden_activation = "sigmoid"
+optimizer = "sgd"
+learning_rate = 0.05
+batch_size = 32
+max_epochs = 20
+patience = 4
+min_delta = 1e-5
+seed = 42
+
+[[candidates]]
+name = "sgd_sigmoid_lr_0_01"
+topology = [784, 32, 10]
+hidden_activation = "sigmoid"
+optimizer = "sgd"
+learning_rate = 0.01
+batch_size = 32
+max_epochs = 20
+patience = 4
+min_delta = 1e-5
+seed = 42
+
+[[candidates]]
+name = "sgd_relu_deep"
+topology = [784, 64, 32, 10]
+hidden_activation = "relu"
+optimizer = "sgd"
+learning_rate = 0.03
+batch_size = 64
+max_epochs = 20
+patience = 4
+min_delta = 1e-5
+seed = 42
+
+[[candidates]]
+name = "momentum_relu_deep"
+topology = [784, 64, 32, 10]
+hidden_activation = "relu"
+optimizer = "momentum"
+learning_rate = 0.01
+batch_size = 64
+max_epochs = 20
+patience = 4
+min_delta = 1e-5
+seed = 42
+momentum = 0.9
+
+[[candidates]]
+name = "adam_relu_wide"
+topology = [784, 64, 10]
+hidden_activation = "relu"
+optimizer = "adam"
+learning_rate = 0.001
+batch_size = 64
+max_epochs = 20
+patience = 4
+min_delta = 1e-5
+seed = 42
+
+[[candidates]]
+name = "adam_relu_deep"
+topology = [784, 64, 32, 10]
+hidden_activation = "relu"
+optimizer = "adam"
+learning_rate = 0.001
+batch_size = 64
+max_epochs = 20
+patience = 4
+min_delta = 1e-5
+seed = 42
+
