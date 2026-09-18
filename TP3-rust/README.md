@@ -53,6 +53,38 @@ model=single-layer learning_rate=0.01 epoch=2 train_loss=0.0141234567 validation
 
 El feature sólo controla la impresión. El entrenamiento, las métricas y los artefactos son idénticos con o sin él.
 
+### Monitor gráfico en vivo
+
+El dashboard es opt-in. Al agregar `--live`, el comando de entrenamiento inicia automáticamente el monitor como un proceso separado:
+
+```bash
+cargo run --release -- exercise2 train --live
+# o
+cargo run --release -- exercise3 train --live
+```
+
+El comando muestra el PID del monitor y su URL; por defecto se abre manualmente `http://127.0.0.1:7878` en un navegador. El monitor continúa ejecutándose de manera independiente al terminar el entrenamiento.
+
+La UI superpone todos los candidatos y los runs `search` y `refit` en los mismos gráficos, sin selector. Cada run tiene su propio color; train usa línea continua y evaluation/validation usa línea discontinua. Actualiza en vivo:
+
+- epoch;
+- train y evaluation/validation cross-entropy loss;
+- train y validation accuracy.
+
+Con `--live`, el loop de entrenamiento nunca escribe estos eventos directamente. Realiza un `try_send` no bloqueante hacia una cola acotada; un hilo de fondo independiente escribe `live_metrics.csv` y envía cada evento por UDP al proceso del monitor. Si la cola se llena, el evento se descarta en vez de detener el entrenamiento.
+
+Sin `--live` (el valor por defecto), el publisher es un no-op: cada publicación retorna inmediatamente y no crea cola, hilo, socket UDP ni `live_metrics.csv`.
+
+Las direcciones también son configurables:
+
+```bash
+cargo run --release -- exercise2 train --live \
+  --live-address 127.0.0.1:9001 \
+  --live-http-address 127.0.0.1:9000
+```
+
+El subcomando `monitor` también puede iniciarse manualmente para inspección o desarrollo. El monitor no necesita dependencias web externas: sirve HTML, CSS y canvas desde el propio binario y sólo escucha en localhost por defecto. El feature `training-logs` no es necesario para usarlo.
+
 La pérdida a lo largo de las épocas es el diagnóstico principal del entrenamiento. Siempre se generan:
 
 - `learning_curves.png`: MSE por época para comparar el perceptrón lineal con el sigmoide.
@@ -123,7 +155,7 @@ La corrida verificada seleccionó `[784,128,64,10]`, ReLU, Momentum, learning ra
 
 El ajuste de arquitectura y optimizador aportó 1,05 puntos porcentuales sobre el baseline controlado. El resultado final no alcanza el objetivo de 98%; se informa sin redefinir el objetivo. La presencia de 585 muestras del dígito 8 en `more_digits.csv` permite elevar su recall final de 0% a 93,83%.
 
-Ambos ejercicios generan `candidate_summary.csv`, `learning_history.csv`, `candidate_loss_curves.png`, `selected_learning_curve.png`, `selected_model.csv` y `selected_model.toml`. La evaluación agrega accuracy, loss, recall por clase, predicciones y matriz de confusión en CSV y PNG. El loss por época queda siempre disponible como dato y gráfico, aun sin activar la impresión por consola.
+Ambos ejercicios generan `candidate_summary.csv`, `learning_history.csv`, `candidate_loss_curves.png`, `selected_learning_curve.png`, `selected_model.csv` y `selected_model.toml`. Con `--live` también generan `live_metrics.csv`. La evaluación agrega accuracy, loss, recall por clase, predicciones y matriz de confusión en CSV y PNG. El loss por época queda siempre disponible como dato y gráfico, aun sin activar la impresión por consola.
 
 ## Diseño
 

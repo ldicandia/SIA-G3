@@ -1,10 +1,11 @@
-use std::path::PathBuf;
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use tp3_rust::{
     config::AppConfig,
     data::load_fraud_dataset,
+    digits::live::{run_monitor, spawn_monitor_process},
     exercise2, exercise3,
     experiment::{run_generalization, run_inspection, run_learning_comparison},
 };
@@ -37,6 +38,8 @@ enum Command {
         #[command(subcommand)]
         command: Exercise3Command,
     },
+    /// Run the separate live-training dashboard process.
+    Monitor(MonitorArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -89,6 +92,15 @@ struct Exercise2TrainArgs {
     /// Directory for models, metrics, histories, and plots.
     #[arg(long, default_value = "output/exercise2")]
     output: PathBuf,
+    /// Start the live dashboard in a separate process.
+    #[arg(long, default_value_t = false)]
+    live: bool,
+    /// UDP destination used by the non-blocking live-metrics publisher.
+    #[arg(long, default_value = "127.0.0.1:7879")]
+    live_address: SocketAddr,
+    /// HTTP address on which the automatically started dashboard is served.
+    #[arg(long, default_value = "127.0.0.1:7878")]
+    live_http_address: SocketAddr,
 }
 
 #[derive(Debug, Args)]
@@ -108,6 +120,25 @@ struct Exercise3TrainArgs {
     /// Directory for models, metrics, histories, and plots.
     #[arg(long, default_value = "output/exercise3")]
     output: PathBuf,
+    /// Start the live dashboard in a separate process.
+    #[arg(long, default_value_t = false)]
+    live: bool,
+    /// UDP destination used by the non-blocking live-metrics publisher.
+    #[arg(long, default_value = "127.0.0.1:7879")]
+    live_address: SocketAddr,
+    /// HTTP address on which the automatically started dashboard is served.
+    #[arg(long, default_value = "127.0.0.1:7878")]
+    live_http_address: SocketAddr,
+}
+
+#[derive(Debug, Args)]
+struct MonitorArgs {
+    /// UDP address on which training metrics are received.
+    #[arg(long, default_value = "127.0.0.1:7879")]
+    udp_address: SocketAddr,
+    /// HTTP address on which the live dashboard is served.
+    #[arg(long, default_value = "127.0.0.1:7878")]
+    http_address: SocketAddr,
 }
 
 #[derive(Debug, Args)]
@@ -150,7 +181,9 @@ fn main() -> Result<()> {
         }
         Command::Exercise2 { command } => match command {
             Exercise2Command::Train(args) => {
-                exercise2::train(&args.data, &args.config, &args.output)?;
+                let live_target =
+                    start_live_monitor(args.live, args.live_address, args.live_http_address)?;
+                exercise2::train(&args.data, &args.config, &args.output, live_target)?;
             }
             Exercise2Command::Evaluate(args) => {
                 exercise2::evaluate(&args.data, &args.model, &args.output)?;
@@ -158,14 +191,37 @@ fn main() -> Result<()> {
         },
         Command::Exercise3 { command } => match command {
             Exercise3Command::Train(args) => {
-                exercise3::train(&args.data, &args.baseline_model, &args.config, &args.output)?;
+                let live_target =
+                    start_live_monitor(args.live, args.live_address, args.live_http_address)?;
+                exercise3::train(
+                    &args.data,
+                    &args.baseline_model,
+                    &args.config,
+                    &args.output,
+                    live_target,
+                )?;
             }
             Exercise3Command::Evaluate(args) => {
                 exercise3::evaluate(&args.data, &args.model, &args.output)?;
             }
         },
+        Command::Monitor(args) => run_monitor(args.udp_address, args.http_address)?,
     }
     Ok(())
+}
+
+fn start_live_monitor(
+    enabled: bool,
+    udp_address: SocketAddr,
+    http_address: SocketAddr,
+) -> Result<Option<SocketAddr>> {
+    if !enabled {
+        return Ok(None);
+    }
+
+    let process_id = spawn_monitor_process(udp_address, http_address)?;
+    eprintln!("live dashboard process started (pid={process_id}): http://{http_address}");
+    Ok(Some(udp_address))
 }
 
 fn load_inputs(args: &ExperimentArgs) -> Result<(tp3_rust::data::FraudDataset, AppConfig)> {

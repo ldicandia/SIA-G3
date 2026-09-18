@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, net::SocketAddr, path::Path};
 
 use anyhow::{bail, Context, Result};
 use plotters::prelude::*;
@@ -9,6 +9,7 @@ use super::{
     artifact::DigitModelArtifact,
     config::{CandidateConfig, DigitStudyConfig},
     data::{class_counts, stratified_digit_split, DigitDataset, DIGIT_CLASSES, IMAGE_PIXELS},
+    live::LiveMetricsPublisher,
     metrics::{classification_metrics, ClassificationMetrics},
     training::{
         evaluate_digit_model, refit_digit_model, train_digit_candidate, DigitTrainingReport,
@@ -40,8 +41,13 @@ pub fn run_digit_training(
     config: &DigitStudyConfig,
     additional_candidates: &[CandidateConfig],
     output: &Path,
+    live_target: Option<SocketAddr>,
 ) -> Result<TrainingOutcome> {
     fs::create_dir_all(output)?;
+    let publisher = match live_target {
+        Some(target) => LiveMetricsPublisher::new(exercise, output, target)?,
+        None => LiveMetricsPublisher::disabled(exercise),
+    };
     let mut candidates = additional_candidates.to_vec();
     candidates.extend(config.candidates.clone());
     validate_candidates(&candidates, dataset.features.cols())?;
@@ -60,6 +66,7 @@ pub fn run_digit_training(
             &split.train,
             &split.validation,
             &candidate,
+            Some(&publisher),
         )?;
         let validation = evaluate_digit_model(
             &model,
@@ -98,6 +105,7 @@ pub fn run_digit_training(
         &all_indices,
         &best.result.candidate,
         best.result.best_epoch,
+        Some(&publisher),
     )?;
     let artifact = DigitModelArtifact {
         format_version: 1,
@@ -117,6 +125,10 @@ pub fn run_digit_training(
         artifact.selection_validation_loss,
         artifact.selected_epoch
     );
+    let dropped_events = publisher.dropped_events();
+    if dropped_events > 0 {
+        eprintln!("live metrics dropped {dropped_events} events to avoid blocking training");
+    }
 
     Ok(TrainingOutcome {
         artifact,

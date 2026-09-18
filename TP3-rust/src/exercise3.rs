@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{net::SocketAddr, path::Path};
 
 use anyhow::{Context, Result};
 
@@ -11,7 +11,13 @@ use crate::digits::{
 
 const BASELINE_NAME: &str = "exercise2_winner_on_more_digits";
 
-pub fn train(data: &Path, baseline_model: &Path, config: &Path, output: &Path) -> Result<()> {
+pub fn train(
+    data: &Path,
+    baseline_model: &Path,
+    config: &Path,
+    output: &Path,
+    live_target: Option<SocketAddr>,
+) -> Result<()> {
     let dataset = load_digit_dataset(data)
         .with_context(|| format!("failed to load digit dataset {}", data.display()))?;
     let baseline_artifact = DigitModelArtifact::load(baseline_model).with_context(|| {
@@ -30,6 +36,7 @@ pub fn train(data: &Path, baseline_model: &Path, config: &Path, output: &Path) -
         &config,
         &[baseline_candidate],
         output,
+        live_target,
     )?;
     write_comparison(&baseline_artifact, &outcome, output)?;
     Ok(())

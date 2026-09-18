@@ -11,6 +11,7 @@ use crate::{
 use super::{
     config::{CandidateConfig, OptimizerKind},
     data::DIGIT_CLASSES,
+    live::LiveMetricsPublisher,
 };
 
 #[derive(Clone, Debug)]
@@ -93,6 +94,7 @@ pub fn train_digit_candidate(
     train_indices: &[usize],
     validation_indices: &[usize],
     candidate: &CandidateConfig,
+    publisher: Option<&LiveMetricsPublisher>,
 ) -> Result<DigitTrainingReport, DigitTrainingError> {
     train(
         model,
@@ -103,6 +105,8 @@ pub fn train_digit_candidate(
         candidate,
         candidate.max_epochs,
         true,
+        "search",
+        publisher,
     )
 }
 
@@ -113,9 +117,10 @@ pub fn refit_digit_model(
     indices: &[usize],
     candidate: &CandidateConfig,
     epochs: usize,
+    publisher: Option<&LiveMetricsPublisher>,
 ) -> Result<DigitTrainingReport, DigitTrainingError> {
     train(
-        model, features, labels, indices, None, candidate, epochs, false,
+        model, features, labels, indices, None, candidate, epochs, false, "refit", publisher,
     )
 }
 
@@ -129,6 +134,8 @@ fn train(
     candidate: &CandidateConfig,
     epochs: usize,
     early_stopping: bool,
+    run: &str,
+    publisher: Option<&LiveMetricsPublisher>,
 ) -> Result<DigitTrainingReport, DigitTrainingError> {
     validate_inputs(model, features, labels, train_indices)?;
     if let Some(indices) = validation_indices {
@@ -201,6 +208,9 @@ fn train(
                 .map(|evaluation| evaluation.accuracy),
         });
         print_epoch(&candidate.name, history.last().unwrap());
+        if let Some(publisher) = publisher {
+            publisher.publish(&candidate.name, run, history.last().unwrap());
+        }
 
         if monitored_loss + candidate.min_delta < best_loss {
             best_loss = monitored_loss;
@@ -508,7 +518,7 @@ mod tests {
             let before = evaluate_digit_model(&model, &features, &labels, &[0])
                 .unwrap()
                 .loss;
-            refit_digit_model(&mut model, &features, &labels, &[0], &config, 1).unwrap();
+            refit_digit_model(&mut model, &features, &labels, &[0], &config, 1, None).unwrap();
             let after = evaluate_digit_model(&model, &features, &labels, &[0])
                 .unwrap()
                 .loss;
