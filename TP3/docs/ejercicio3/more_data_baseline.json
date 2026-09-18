@@ -1,0 +1,48 @@
+{
+  "ejercicio2_best_config": {
+    "layer_sizes": [
+      784,
+      32,
+      16,
+      10
+    ],
+    "learning_rate": 0.01,
+    "optimizer": "sgd",
+    "activation": "sigmoid",
+    "epochs": 10,
+    "val_accuracy": 0.9312977099236641,
+    "per_class_recall": {
+      "0": 0.972972972972973,
+      "1": 0.9851632047477745,
+      "2": 0.9228187919463087,
+      "3": 0.8954248366013072,
+      "4": 0.9143835616438356,
+      "5": 0.5740740740740741,
+      "6": 0.9695945945945946,
+      "7": 0.9616613418530351,
+      "8": null,
+      "9": 0.8855218855218855
+    },
+    "train_run_json": "runs/digits/combined_best/mlp_42_1789682458691725.json",
+    "val_run_json": "runs/digits/combined_best_val/mlp_42_1789682459247288.json"
+  },
+  "ejercicio2_val_accuracy": 0.9312977099236641,
+  "more_data_baseline": {
+    "val_accuracy": 0.9161105815061964,
+    "per_class_recall": {
+      "0": 0.971830985915493,
+      "1": 0.9678217821782178,
+      "2": 0.9299719887955182,
+      "3": 0.9130434782608695,
+      "4": 0.9057142857142857,
+      "5": 0.6203703703703703,
+      "6": 0.9577464788732394,
+      "7": 0.8962765957446809,
+      "8": 0.8376068376068376,
+      "9": 0.896358543417367
+    },
+    "train_run_json": "runs/more_digits/more_data_baseline/mlp_42_1789696480458232.json",
+    "val_run_json": "runs/more_digits/more_data_baseline_val/mlp_42_1789696481152769.json"
+  },
+  "delta_val_accuracy": -0.015187128417467721
+}
