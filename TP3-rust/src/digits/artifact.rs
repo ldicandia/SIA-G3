@@ -66,10 +66,7 @@ mod tests {
             patience: 1,
             min_delta: 0.0,
             seed: 4,
-            momentum: 0.9,
-            beta1: 0.9,
-            beta2: 0.999,
-            epsilon: 1e-8,
+            ..CandidateConfig::default()
         };
         let model = MultilayerPerceptron::new(
             &candidate.topology,

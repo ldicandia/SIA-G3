@@ -5,11 +5,7 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use plotters::prelude::*;
 
-use crate::{
-    data::{FraudDataset, FEATURE_NAMES},
-    metrics::ThresholdMetrics,
-    training::EpochMetrics,
-};
+use crate::{data::FraudDataset, metrics::ThresholdMetrics, training::EpochMetrics};
 
 use super::trials::LearningRun;
 
@@ -17,15 +13,33 @@ const BLUE: RGBColor = RGBColor(41, 98, 255);
 const ORANGE: RGBColor = RGBColor(245, 124, 0);
 const GREEN: RGBColor = RGBColor(0, 137, 123);
 const RED: RGBColor = RGBColor(211, 47, 47);
+/// A named metric drawn as one line of the threshold plot.
+type MetricSeries = (&'static str, RGBColor, fn(&ThresholdMetrics) -> f64);
+
+const PALETTE: [RGBColor; 6] = [
+    BLUE,
+    ORANGE,
+    GREEN,
+    RED,
+    RGBColor(123, 31, 162),
+    RGBColor(93, 64, 55),
+];
 
 pub(super) fn plot_feature_distributions(dataset: &FraudDataset, path: &Path) -> Result<()> {
-    let root = BitMapBackend::new(path, (1500, 1100)).into_drawing_area();
+    let rows = dataset.feature_names.len().div_ceil(3);
+    let height = 370 * rows as u32;
+    let root = BitMapBackend::new(path, (1500, height)).into_drawing_area();
     root.fill(&WHITE)?;
-    for (column, area) in root.split_evenly((3, 3)).into_iter().enumerate() {
+    for (column, area) in root
+        .split_evenly((rows, 3))
+        .into_iter()
+        .enumerate()
+        .take(dataset.feature_names.len())
+    {
         let values = (0..dataset.len())
             .map(|row| dataset.features.row_unchecked(row)[column])
             .collect::<Vec<_>>();
-        draw_histogram(&area, FEATURE_NAMES[column], &values, BLUE)?;
+        draw_histogram(&area, &dataset.feature_names[column], &values, BLUE)?;
     }
     root.present()?;
     Ok(())
@@ -134,7 +148,7 @@ pub(super) fn plot_learning_history(runs: &[LearningRun], path: &Path) -> Result
         .y_desc("log10 MSE")
         .draw()?;
     for (index, run) in runs.iter().enumerate() {
-        let color = if index == 0 { BLUE } else { ORANGE };
+        let color = PALETTE[index % PALETTE.len()];
         chart
             .draw_series(LineSeries::new(
                 run.report
@@ -160,9 +174,9 @@ pub(super) fn plot_prediction_comparison(
     targets: &[f64],
     path: &Path,
 ) -> Result<()> {
-    let root = BitMapBackend::new(path, (1200, 550)).into_drawing_area();
+    let root = BitMapBackend::new(path, (600 * runs.len() as u32, 550)).into_drawing_area();
     root.fill(&WHITE)?;
-    for (run, area) in runs.iter().zip(root.split_evenly((1, 2))) {
+    for (run, area) in runs.iter().zip(root.split_evenly((1, runs.len()))) {
         let min_prediction = run.predictions.iter().copied().fold(0.0, f64::min);
         let max_prediction = run.predictions.iter().copied().fold(1.0, f64::max);
         let mut chart = ChartBuilder::on(&area)
@@ -190,60 +204,77 @@ pub(super) fn plot_prediction_comparison(
     Ok(())
 }
 
-pub(super) fn plot_generalization_history(history: &[EpochMetrics], path: &Path) -> Result<()> {
-    if history.is_empty() {
+/// Train (light) and validation (solid) MSE per epoch for every CV fold.
+pub(super) fn plot_cv_histories(histories: &[(usize, &[EpochMetrics])], path: &Path) -> Result<()> {
+    if histories.iter().all(|(_, history)| history.is_empty()) {
         bail!("cannot plot an empty history");
     }
     let root = BitMapBackend::new(path, (1000, 650)).into_drawing_area();
     root.fill(&WHITE)?;
-    let values = history
+    let values = histories
         .iter()
-        .flat_map(|row| [row.train_loss.log10(), row.validation_loss.unwrap().log10()])
+        .flat_map(|(_, history)| {
+            history.iter().flat_map(|row| {
+                [
+                    row.train_loss,
+                    row.validation_loss.unwrap_or(row.train_loss),
+                ]
+            })
+        })
+        .map(f64::log10)
         .collect::<Vec<_>>();
+    let max_epoch = histories
+        .iter()
+        .map(|(_, history)| history.len())
+        .max()
+        .unwrap_or(2);
     let (min_y, max_y) = padded_range(&values);
     let mut chart = ChartBuilder::on(&root)
         .caption(
-            "Generalization learning curve (log10 MSE)",
+            "Cross-validation learning curves (log10 MSE)",
             ("sans-serif", 28),
         )
         .margin(20)
         .x_label_area_size(45)
         .y_label_area_size(60)
-        .build_cartesian_2d(1usize..history.len().max(2), min_y..max_y)?;
+        .build_cartesian_2d(1usize..max_epoch.max(2), min_y..max_y)?;
     chart
         .configure_mesh()
         .x_desc("epoch")
         .y_desc("log10 MSE")
         .draw()?;
-    for (label, color, values) in [
-        (
-            "train",
-            BLUE,
+    for (index, (fold, history)) in histories.iter().enumerate() {
+        let color = PALETTE[index % PALETTE.len()];
+        chart.draw_series(LineSeries::new(
             history
                 .iter()
-                .map(|row| (row.epoch, row.train_loss.log10()))
-                .collect::<Vec<_>>(),
-        ),
-        (
-            "validation",
-            ORANGE,
-            history
-                .iter()
-                .map(|row| (row.epoch, row.validation_loss.unwrap().log10()))
-                .collect::<Vec<_>>(),
-        ),
-    ] {
+                .map(|row| (row.epoch, row.train_loss.log10())),
+            color.mix(0.35).stroke_width(1),
+        ))?;
         chart
-            .draw_series(LineSeries::new(values, color.stroke_width(2)))?
-            .label(label)
+            .draw_series(LineSeries::new(
+                history
+                    .iter()
+                    .filter_map(|row| row.validation_loss.map(|loss| (row.epoch, loss.log10()))),
+                color.stroke_width(2),
+            ))?
+            .label(format!("fold {fold} validation"))
             .legend(move |(x, y)| PathElement::new([(x, y), (x + 20, y)], color));
     }
-    chart.configure_series_labels().border_style(BLACK).draw()?;
+    chart
+        .configure_series_labels()
+        .background_style(WHITE.mix(0.85))
+        .border_style(BLACK)
+        .draw()?;
     root.present()?;
     Ok(())
 }
 
-pub(super) fn plot_threshold_metrics(sweep: &[ThresholdMetrics], path: &Path) -> Result<()> {
+pub(super) fn plot_threshold_metrics(
+    sweep: &[ThresholdMetrics],
+    chosen: f64,
+    path: &Path,
+) -> Result<()> {
     if sweep.is_empty() {
         bail!("cannot plot an empty threshold sweep");
     }
@@ -252,7 +283,10 @@ pub(super) fn plot_threshold_metrics(sweep: &[ThresholdMetrics], path: &Path) ->
     let min_x = sweep.iter().map(|row| row.threshold).fold(1.0, f64::min);
     let max_x = sweep.iter().map(|row| row.threshold).fold(0.0, f64::max);
     let mut chart = ChartBuilder::on(&root)
-        .caption("Validation threshold trade-off", ("sans-serif", 28))
+        .caption(
+            "Out-of-fold threshold trade-off (development rows)",
+            ("sans-serif", 28),
+        )
         .margin(20)
         .x_label_area_size(45)
         .y_label_area_size(55)
@@ -262,38 +296,33 @@ pub(super) fn plot_threshold_metrics(sweep: &[ThresholdMetrics], path: &Path) ->
         .x_desc("threshold")
         .y_desc("metric")
         .draw()?;
-    for (label, color, values) in [
-        (
-            "precision",
-            BLUE,
-            sweep
-                .iter()
-                .map(|row| (row.threshold, row.precision()))
-                .collect::<Vec<_>>(),
-        ),
-        (
-            "recall",
-            ORANGE,
-            sweep
-                .iter()
-                .map(|row| (row.threshold, row.recall()))
-                .collect::<Vec<_>>(),
-        ),
-        (
-            "accuracy",
-            GREEN,
-            sweep
-                .iter()
-                .map(|row| (row.threshold, row.accuracy()))
-                .collect::<Vec<_>>(),
-        ),
-    ] {
+    let series: [MetricSeries; 4] = [
+        ("precision", BLUE, ThresholdMetrics::precision),
+        ("recall", ORANGE, ThresholdMetrics::recall),
+        ("f1", RED, ThresholdMetrics::f1),
+        ("accuracy", GREEN, ThresholdMetrics::accuracy),
+    ];
+    for (label, color, metric) in series {
         chart
-            .draw_series(LineSeries::new(values, color.stroke_width(2)))?
+            .draw_series(LineSeries::new(
+                sweep.iter().map(|row| (row.threshold, metric(row))),
+                color.stroke_width(2),
+            ))?
             .label(label)
             .legend(move |(x, y)| PathElement::new([(x, y), (x + 20, y)], color));
     }
-    chart.configure_series_labels().border_style(BLACK).draw()?;
+    chart
+        .draw_series(LineSeries::new(
+            vec![(chosen, 0.0), (chosen, 1.02)],
+            BLACK.stroke_width(1),
+        ))?
+        .label(format!("chosen = {chosen:.3}"))
+        .legend(|(x, y)| PathElement::new([(x, y), (x + 20, y)], BLACK));
+    chart
+        .configure_series_labels()
+        .background_style(WHITE.mix(0.85))
+        .border_style(BLACK)
+        .draw()?;
     root.present()?;
     Ok(())
 }

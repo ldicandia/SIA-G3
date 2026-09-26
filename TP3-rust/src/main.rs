@@ -7,7 +7,10 @@ use tp3_rust::{
     data::load_fraud_dataset,
     digits::live_dashboard::{run_monitor, spawn_monitor_process},
     exercises::{exercise2, exercise3},
-    experiment::{run_generalization, run_inspection, run_learning_comparison},
+    experiment::{
+        run_generalization, run_inspection, run_learning_comparison, run_scoring,
+        FraudModelArtifact,
+    },
 };
 
 #[derive(Debug, Parser)]
@@ -20,14 +23,16 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Validate and summarize the fraud dataset.
-    Inspect(DataArgs),
+    /// Validate and summarize the fraud dataset, and justify feature preprocessing.
+    Inspect(ExperimentArgs),
     /// Compare linear and sigmoid single-layer perceptrons on all samples.
     Compare(ExperimentArgs),
     /// Run the train/validation/test generalization study.
     Generalize(ExperimentArgs),
     /// Run inspection, learning comparison, and generalization.
     RunAll(ExperimentArgs),
+    /// Score a fraud CSV with a saved TinyModel (fraud_model.toml).
+    Score(ScoreArgs),
     /// Train or evaluate the handwritten-digit study from Exercise 2.
     Exercise2 {
         #[command(subcommand)]
@@ -48,6 +53,8 @@ enum Exercise2Command {
     Train(Exercise2TrainArgs),
     /// Evaluate the persisted model on digits_test.csv.
     Evaluate(DigitEvaluateArgs),
+    /// Resume training of a saved model for more epochs.
+    Continue(DigitContinueArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -56,15 +63,20 @@ enum Exercise3Command {
     Train(Exercise3TrainArgs),
     /// Evaluate the persisted model on digits_test.csv.
     Evaluate(DigitEvaluateArgs),
+    /// Resume training of a saved model for more epochs.
+    Continue(DigitContinueArgs),
 }
 
 #[derive(Debug, Args)]
-struct DataArgs {
-    /// Path to fraud_dataset.csv.
+struct ScoreArgs {
+    /// Path to a fraud CSV with the documented columns.
     #[arg(long)]
     data: PathBuf,
-    /// Directory where CSV metrics and PNG plots are written.
-    #[arg(long, default_value = "output")]
+    /// Persisted fraud_model.toml produced by `generalize`.
+    #[arg(long, default_value = "output/fraud_model.toml")]
+    model: PathBuf,
+    /// Directory where scores and metrics are written.
+    #[arg(long, default_value = "output/scoring")]
     output: PathBuf,
 }
 
@@ -111,6 +123,9 @@ struct Exercise3TrainArgs {
         default_value = "../TP3/data/data and documentation/more_digits.csv"
     )]
     data: PathBuf,
+    /// Exercise 2 dataset, used to document what changed in the new data.
+    #[arg(long, default_value = "../TP3/data/data and documentation/digits.csv")]
+    previous_data: PathBuf,
     /// Selected model from Exercise 2, used to define the controlled baseline.
     #[arg(long, default_value = "output/exercise2/selected_model.toml")]
     baseline_model: PathBuf,
@@ -142,6 +157,22 @@ struct MonitorArgs {
 }
 
 #[derive(Debug, Args)]
+struct DigitContinueArgs {
+    /// Dataset to keep training on (the same one used by `train`).
+    #[arg(long)]
+    data: PathBuf,
+    /// Persisted selected_model.toml to resume from.
+    #[arg(long)]
+    model: PathBuf,
+    /// Additional epochs to train.
+    #[arg(long)]
+    epochs: usize,
+    /// Directory for the continued model and its history.
+    #[arg(long)]
+    output: PathBuf,
+}
+
+#[derive(Debug, Args)]
 struct DigitEvaluateArgs {
     /// Path to the production-like digit dataset.
     #[arg(
@@ -161,9 +192,15 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Inspect(args) => {
+            let (dataset, config) = load_inputs(&args)?;
+            run_inspection(&dataset, &config.features, &args.output)?;
+        }
+        Command::Score(args) => {
             let dataset = load_fraud_dataset(&args.data)
                 .with_context(|| format!("failed to load {}", args.data.display()))?;
-            run_inspection(&dataset, &args.output)?;
+            let artifact = FraudModelArtifact::load(&args.model)
+                .with_context(|| format!("failed to load {}", args.model.display()))?;
+            run_scoring(&dataset, &artifact, &args.output)?;
         }
         Command::Compare(args) => {
             let (dataset, config) = load_inputs(&args)?;
@@ -175,7 +212,7 @@ fn main() -> Result<()> {
         }
         Command::RunAll(args) => {
             let (dataset, config) = load_inputs(&args)?;
-            run_inspection(&dataset, &args.output)?;
+            run_inspection(&dataset, &config.features, &args.output)?;
             run_learning_comparison(&dataset, &config, &args.output)?;
             run_generalization(&dataset, &config, &args.output)?;
         }
@@ -188,6 +225,9 @@ fn main() -> Result<()> {
             Exercise2Command::Evaluate(args) => {
                 exercise2::evaluate(&args.data, &args.model, &args.output)?;
             }
+            Exercise2Command::Continue(args) => {
+                exercise2::resume(&args.data, &args.model, args.epochs, &args.output)?;
+            }
         },
         Command::Exercise3 { command } => match command {
             Exercise3Command::Train(args) => {
@@ -195,6 +235,7 @@ fn main() -> Result<()> {
                     start_live_monitor(args.live, args.live_address, args.live_http_address)?;
                 exercise3::train(
                     &args.data,
+                    &args.previous_data,
                     &args.baseline_model,
                     &args.config,
                     &args.output,
@@ -203,6 +244,9 @@ fn main() -> Result<()> {
             }
             Exercise3Command::Evaluate(args) => {
                 exercise3::evaluate(&args.data, &args.model, &args.output)?;
+            }
+            Exercise3Command::Continue(args) => {
+                exercise3::resume(&args.data, &args.model, args.epochs, &args.output)?;
             }
         },
         Command::Monitor(args) => run_monitor(args.udp_address, args.http_address)?,

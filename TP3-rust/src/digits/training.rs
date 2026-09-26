@@ -1,12 +1,13 @@
+mod augment;
 mod backprop;
 mod optimizer;
 
 use rand::{seq::SliceRandom, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
-    loss::categorical_cross_entropy,
     matrix::DenseMatrix,
     model::{Activation, ModelError, MultilayerPerceptron},
 };
@@ -15,6 +16,13 @@ use super::{config::CandidateConfig, data::DIGIT_CLASSES, live_dashboard::LiveMe
 
 use backprop::*;
 use optimizer::*;
+
+/// Rows per parallel shard when scoring a whole dataset.
+const EVALUATION_SHARD: usize = 64;
+/// Smallest training shard; smaller shards spend more time on bookkeeping.
+const MIN_TRAINING_SHARD: usize = 4;
+/// Parameters summed per parallel task when reducing shard gradients.
+const REDUCTION_CHUNK: usize = 8192;
 
 #[derive(Clone, Debug)]
 pub struct DigitEpochMetrics {
@@ -32,6 +40,7 @@ pub struct DigitTrainingReport {
     pub best_validation_loss: f64,
     pub best_validation_accuracy: f64,
     pub stopped_early: bool,
+    pub seconds: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -70,16 +79,23 @@ pub fn train_digit_candidate(
         model,
         features,
         labels,
-        train_indices,
-        Some(validation_indices),
-        candidate,
-        candidate.max_epochs,
-        true,
-        "search",
-        publisher,
+        TrainingRun {
+            train_indices,
+            validation_indices: Some(validation_indices),
+            candidate,
+            epochs: candidate.max_epochs,
+            epoch_offset: 0,
+            early_stopping: true,
+            run: "search",
+            publisher,
+        },
     )
 }
 
+/// Trains from the model's current weights for a fixed number of epochs,
+/// without validation. `epoch_offset` continues the learning-rate schedule and
+/// random streams of a previous run, so a saved model can resume training.
+#[allow(clippy::too_many_arguments)]
 pub fn refit_digit_model(
     model: &mut MultilayerPerceptron,
     features: &DenseMatrix,
@@ -87,32 +103,60 @@ pub fn refit_digit_model(
     indices: &[usize],
     candidate: &CandidateConfig,
     epochs: usize,
+    epoch_offset: usize,
+    run: &str,
     publisher: Option<&LiveMetricsPublisher>,
 ) -> Result<DigitTrainingReport, DigitTrainingError> {
     train(
-        model, features, labels, indices, None, candidate, epochs, false, "refit", publisher,
+        model,
+        features,
+        labels,
+        TrainingRun {
+            train_indices: indices,
+            validation_indices: None,
+            candidate,
+            epochs,
+            epoch_offset,
+            early_stopping: false,
+            run,
+            publisher,
+        },
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+struct TrainingRun<'a> {
+    train_indices: &'a [usize],
+    validation_indices: Option<&'a [usize]>,
+    candidate: &'a CandidateConfig,
+    epochs: usize,
+    epoch_offset: usize,
+    early_stopping: bool,
+    run: &'a str,
+    publisher: Option<&'a LiveMetricsPublisher>,
+}
+
 fn train(
     model: &mut MultilayerPerceptron,
     features: &DenseMatrix,
     labels: &[usize],
-    train_indices: &[usize],
-    validation_indices: Option<&[usize]>,
-    candidate: &CandidateConfig,
-    epochs: usize,
-    early_stopping: bool,
-    run: &str,
-    publisher: Option<&LiveMetricsPublisher>,
+    settings: TrainingRun<'_>,
 ) -> Result<DigitTrainingReport, DigitTrainingError> {
-    validate_inputs(model, features, labels, train_indices)?;
-    if let Some(indices) = validation_indices {
+    let started = std::time::Instant::now();
+    let candidate = settings.candidate;
+    validate_inputs(model, features, labels, settings.train_indices)?;
+    if let Some(indices) = settings.validation_indices {
         validate_indices(features, indices)?;
     }
 
-    let topology = model.topology();
+    // A batch is split into shards that run forward/backward in parallel,
+    // each with its own buffers; their gradients are then summed.
+    let shard_size = candidate
+        .batch_size
+        .div_ceil(rayon::current_num_threads().max(1))
+        .max(MIN_TRAINING_SHARD);
+    let mut shards = (0..candidate.batch_size.div_ceil(shard_size))
+        .map(|_| BatchWorkspace::new(model, shard_size, true))
+        .collect::<Vec<_>>();
     let mut gradients = model
         .layers
         .iter()
@@ -122,9 +166,10 @@ fn train(
         })
         .collect::<Vec<_>>();
     let mut optimizer = OptimizerState::new(model);
-    let mut order = train_indices.to_vec();
-    let mut rng = ChaCha8Rng::seed_from_u64(candidate.seed);
-    let mut history = Vec::with_capacity(epochs);
+    let mut order = settings.train_indices.to_vec();
+    let mut rng =
+        ChaCha8Rng::seed_from_u64(candidate.seed.wrapping_add(settings.epoch_offset as u64));
+    let mut history = Vec::with_capacity(settings.epochs);
     let mut best_model = model.clone();
     let mut best_epoch = 0;
     let mut best_loss = f64::INFINITY;
@@ -132,15 +177,43 @@ fn train(
     let mut stale_epochs = 0;
     let mut stopped_early = false;
 
-    for epoch in 1..=epochs {
+    for local_epoch in 1..=settings.epochs {
+        let epoch = settings.epoch_offset + local_epoch;
+        let learning_rate = candidate.learning_rate_at(epoch);
         order.shuffle(&mut rng);
+        let augmentation = candidate.augments().then_some((candidate, epoch));
+        let dropout = (candidate.dropout > 0.0).then_some(Dropout {
+            probability: candidate.dropout,
+            seed: candidate.seed,
+            epoch,
+        });
         for batch in order.chunks(candidate.batch_size) {
-            fill_batch_gradients(model, features, labels, batch, &topology, &mut gradients);
-            apply_gradients(model, &gradients, &mut optimizer, candidate, batch.len());
+            let pieces = batch.chunks(shard_size).collect::<Vec<_>>();
+            let active = &mut shards[..pieces.len()];
+            let frozen: &MultilayerPerceptron = model;
+            active
+                .par_iter_mut()
+                .zip(pieces.par_iter())
+                .for_each(|(workspace, rows)| {
+                    load_inputs(workspace, features, rows, augmentation);
+                    forward_batch(frozen, workspace, rows, dropout.as_ref());
+                    backward_batch(
+                        frozen,
+                        workspace,
+                        labels,
+                        rows,
+                        batch.len(),
+                        dropout.is_some(),
+                    );
+                });
+            sum_shard_gradients(active, &mut gradients);
+            apply_gradients(model, &gradients, &mut optimizer, candidate, learning_rate);
         }
 
-        let train_evaluation = evaluate_digit_model(model, features, labels, train_indices)?;
-        let validation_evaluation = validation_indices
+        let train_evaluation =
+            evaluate_digit_model(model, features, labels, settings.train_indices)?;
+        let validation_evaluation = settings
+            .validation_indices
             .map(|indices| evaluate_digit_model(model, features, labels, indices))
             .transpose()?;
         let monitored_loss = validation_evaluation
@@ -164,26 +237,28 @@ fn train(
                 .map(|evaluation| evaluation.accuracy),
         });
         print_epoch(&candidate.name, history.last().unwrap());
-        if let Some(publisher) = publisher {
-            publisher.publish(&candidate.name, run, history.last().unwrap());
+        if let Some(publisher) = settings.publisher {
+            publisher.publish(&candidate.name, settings.run, history.last().unwrap());
         }
 
         if monitored_loss + candidate.min_delta < best_loss {
             best_loss = monitored_loss;
             best_accuracy = monitored_accuracy;
             best_epoch = epoch;
-            best_model = model.clone();
+            if settings.early_stopping {
+                best_model = model.clone();
+            }
             stale_epochs = 0;
         } else {
             stale_epochs += 1;
         }
-        if early_stopping && stale_epochs >= candidate.patience {
+        if settings.early_stopping && stale_epochs >= candidate.patience {
             stopped_early = true;
             break;
         }
     }
 
-    if early_stopping {
+    if settings.early_stopping {
         *model = best_model;
     }
     Ok(DigitTrainingReport {
@@ -192,97 +267,95 @@ fn train(
         best_validation_loss: best_loss,
         best_validation_accuracy: best_accuracy,
         stopped_early,
+        seconds: started.elapsed().as_secs_f64(),
     })
 }
 
-fn fill_batch_gradients(
-    model: &MultilayerPerceptron,
-    features: &DenseMatrix,
-    labels: &[usize],
-    batch: &[usize],
-    topology: &[usize],
-    gradients: &mut [LayerValues],
-) {
-    use rayon::prelude::*;
-
-    let zeroed_gradients = || {
-        model
-            .layers
-            .iter()
-            .map(|layer| LayerValues {
-                weights: vec![0.0; layer.weights.len()],
-                biases: vec![0.0; layer.biases.len()],
-            })
-            .collect::<Vec<_>>()
-    };
-    let reduced = batch
-        .par_iter()
-        .map_init(
-            || {
-                let activations = topology.iter().map(|&size| vec![0.0; size]).collect();
-                let deltas = topology[1..].iter().map(|&size| vec![0.0; size]).collect();
-                (activations, deltas)
-            },
-            |(activations, deltas): &mut (Vec<Vec<f64>>, Vec<Vec<f64>>), &index| {
-                activations[0].copy_from_slice(features.row_unchecked(index));
-                forward_softmax(model, activations);
-                backward(model, activations, deltas, labels[index]);
-                let mut sample_gradients = zeroed_gradients();
-                accumulate_gradients(activations, deltas, &mut sample_gradients);
-                sample_gradients
-            },
-        )
-        .reduce(zeroed_gradients, |mut left, right| {
-            add_layer_values(&mut left, &right);
-            left
-        });
-    zero_gradients(gradients);
-    add_layer_values(gradients, &reduced);
-}
-
+/// Mean cross-entropy, accuracy and predictions, computed in batched forward
+/// passes without dropout or augmentation.
 pub fn evaluate_digit_model(
     model: &MultilayerPerceptron,
     features: &DenseMatrix,
     labels: &[usize],
     indices: &[usize],
 ) -> Result<DigitEvaluation, DigitTrainingError> {
-    use rayon::prelude::*;
-
     validate_inputs(model, features, labels, indices)?;
-    let topology = model.topology();
-    let per_sample: Vec<(f64, usize)> = indices
-        .par_iter()
-        .map_init(
-            || {
-                topology
-                    .iter()
-                    .map(|&size| vec![0.0; size])
-                    .collect::<Vec<_>>()
-            },
-            |activations, &index| {
-                activations[0].copy_from_slice(features.row_unchecked(index));
-                forward_softmax(model, activations);
-                let probabilities = activations.last().unwrap();
-                let sample_loss = categorical_cross_entropy(probabilities, labels[index])
-                    .map_err(|_| DigitTrainingError::NonFinite)?;
-                Ok((sample_loss, argmax(probabilities)))
-            },
-        )
-        .collect::<Result<_, DigitTrainingError>>()?;
-
+    let probabilities = predict_digit_probabilities(model, features, indices)?;
     let mut loss = 0.0;
     let mut correct = 0;
     let mut predictions = Vec::with_capacity(indices.len());
-    for (&index, &(sample_loss, prediction)) in indices.iter().zip(&per_sample) {
-        loss += sample_loss;
+    for (&index, row) in indices
+        .iter()
+        .zip(probabilities.as_chunks::<DIGIT_CLASSES>().0)
+    {
+        let prediction = argmax(row);
+        loss -= row[labels[index]].max(f64::MIN_POSITIVE).ln();
         correct += usize::from(prediction == labels[index]);
         predictions.push(prediction);
+    }
+    if !loss.is_finite() {
+        return Err(DigitTrainingError::NonFinite);
     }
     Ok(DigitEvaluation {
         loss: loss / indices.len() as f64,
         accuracy: correct as f64 / indices.len() as f64,
         predictions,
     })
+}
+
+/// Softmax probabilities for every row, used by ensembles.
+pub fn predict_digit_probabilities(
+    model: &MultilayerPerceptron,
+    features: &DenseMatrix,
+    indices: &[usize],
+) -> Result<Vec<f64>, DigitTrainingError> {
+    validate_indices(features, indices)?;
+    if indices.is_empty() {
+        return Err(DigitTrainingError::EmptyTrainingSet);
+    }
+    let shards = indices
+        .par_chunks(EVALUATION_SHARD)
+        .map_init(
+            || BatchWorkspace::new(model, EVALUATION_SHARD, false),
+            |workspace, rows| {
+                load_inputs(workspace, features, rows, None);
+                forward_batch(model, workspace, rows, None);
+                workspace.probabilities(rows.len(), DIGIT_CLASSES).to_vec()
+            },
+        )
+        .collect::<Vec<_>>();
+    Ok(shards.concat())
+}
+
+/// `target = sum of the shard gradients`, reduced in parallel chunks.
+fn sum_shard_gradients(shards: &[BatchWorkspace], target: &mut [LayerValues]) {
+    for (layer, values) in target.iter_mut().enumerate() {
+        values
+            .weights
+            .par_chunks_mut(REDUCTION_CHUNK)
+            .enumerate()
+            .for_each(|(chunk, output)| {
+                let start = chunk * REDUCTION_CHUNK;
+                let end = start + output.len();
+                output.copy_from_slice(&shards[0].gradients[layer].weights[start..end]);
+                for shard in &shards[1..] {
+                    for (sum, &value) in output
+                        .iter_mut()
+                        .zip(&shard.gradients[layer].weights[start..end])
+                    {
+                        *sum += value;
+                    }
+                }
+            });
+        values
+            .biases
+            .copy_from_slice(&shards[0].gradients[layer].biases);
+        for shard in &shards[1..] {
+            for (sum, &value) in values.biases.iter_mut().zip(&shard.gradients[layer].biases) {
+                *sum += value;
+            }
+        }
+    }
 }
 
 fn validate_inputs(
@@ -343,7 +416,7 @@ fn print_epoch(_candidate: &str, _metrics: &DigitEpochMetrics) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::digits::config::OptimizerKind;
+    use crate::{digits::config::OptimizerKind, model::softmax_in_place};
 
     fn candidate(optimizer: OptimizerKind) -> CandidateConfig {
         CandidateConfig {
@@ -357,11 +430,17 @@ mod tests {
             patience: 1,
             min_delta: 0.0,
             seed: 2,
-            momentum: 0.9,
-            beta1: 0.9,
-            beta2: 0.999,
-            epsilon: 1e-8,
+            ..CandidateConfig::default()
         }
+    }
+
+    fn tiny_model(config: &CandidateConfig) -> MultilayerPerceptron {
+        MultilayerPerceptron::new(
+            &config.topology,
+            &[Activation::Tanh, Activation::Linear],
+            config.seed,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -374,20 +453,81 @@ mod tests {
             OptimizerKind::Adam,
         ] {
             let config = candidate(optimizer);
-            let mut model = MultilayerPerceptron::new(
-                &config.topology,
-                &[Activation::Tanh, Activation::Linear],
-                config.seed,
-            )
-            .unwrap();
+            let mut model = tiny_model(&config);
             let before = evaluate_digit_model(&model, &features, &labels, &[0])
                 .unwrap()
                 .loss;
-            refit_digit_model(&mut model, &features, &labels, &[0], &config, 1, None).unwrap();
+            refit_digit_model(
+                &mut model,
+                &features,
+                &labels,
+                &[0],
+                &config,
+                1,
+                0,
+                "test",
+                None,
+            )
+            .unwrap();
             let after = evaluate_digit_model(&model, &features, &labels, &[0])
                 .unwrap()
                 .loss;
             assert!(after < before, "{optimizer:?}: {before} -> {after}");
+        }
+    }
+
+    /// The batched backward pass must match a finite-difference gradient.
+    #[test]
+    fn batch_gradient_matches_finite_differences() {
+        let features =
+            DenseMatrix::from_rows(vec![vec![0.3, -0.7], vec![-0.2, 0.5], vec![0.9, 0.1]]).unwrap();
+        let labels = [1, 4, 7];
+        let batch = [0, 1, 2];
+        let config = candidate(OptimizerKind::Sgd);
+        let model = tiny_model(&config);
+        // Two shards of a three-row batch must sum to the full-batch gradient.
+        let mut first = BatchWorkspace::new(&model, 2, true);
+        let mut second = BatchWorkspace::new(&model, 2, true);
+        for (workspace, rows) in [(&mut first, &batch[..2]), (&mut second, &batch[2..])] {
+            load_inputs(workspace, &features, rows, None);
+            forward_batch(&model, workspace, rows, None);
+            backward_batch(&model, workspace, &labels, rows, batch.len(), false);
+        }
+        let mut gradients = model
+            .layers
+            .iter()
+            .map(|layer| LayerValues {
+                weights: vec![0.0; layer.weights.len()],
+                biases: vec![0.0; layer.biases.len()],
+            })
+            .collect::<Vec<_>>();
+        sum_shard_gradients(&[first, second], &mut gradients);
+
+        let mean_loss = |model: &MultilayerPerceptron| {
+            batch
+                .iter()
+                .map(|&row| {
+                    let mut output = model.predict(features.row(row).unwrap()).unwrap();
+                    softmax_in_place(&mut output);
+                    -output[labels[row]].ln()
+                })
+                .sum::<f64>()
+                / batch.len() as f64
+        };
+        let epsilon = 1e-6;
+        for (layer, gradient) in gradients.iter().enumerate() {
+            for weight in 0..gradient.weights.len() {
+                let mut plus = model.clone();
+                plus.layers[layer].weights[weight] += epsilon;
+                let mut minus = model.clone();
+                minus.layers[layer].weights[weight] -= epsilon;
+                let numerical = (mean_loss(&plus) - mean_loss(&minus)) / (2.0 * epsilon);
+                let analytical = gradient.weights[weight];
+                assert!(
+                    (numerical - analytical).abs() < 1e-6,
+                    "layer {layer} weight {weight}: {numerical} vs {analytical}"
+                );
+            }
         }
     }
 }

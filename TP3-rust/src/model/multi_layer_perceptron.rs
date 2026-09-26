@@ -18,11 +18,40 @@ pub struct MultilayerPerceptron {
     pub layers: Vec<DenseLayer>,
 }
 
+/// Uniform weight initialization schemes. Xavier/Glorot keeps the variance of
+/// tanh/sigmoid activations stable; He doubles it to compensate for ReLU
+/// zeroing half of its inputs.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Initialization {
+    #[default]
+    Xavier,
+    He,
+}
+
+impl Initialization {
+    fn limit(self, input_size: usize, output_size: usize) -> f64 {
+        match self {
+            Self::Xavier => (6.0 / (input_size + output_size) as f64).sqrt(),
+            Self::He => (6.0 / input_size as f64).sqrt(),
+        }
+    }
+}
+
 impl MultilayerPerceptron {
     pub fn new(
         topology: &[usize],
         activations: &[Activation],
         seed: u64,
+    ) -> Result<Self, ModelError> {
+        Self::with_initialization(topology, activations, seed, Initialization::Xavier)
+    }
+
+    pub fn with_initialization(
+        topology: &[usize],
+        activations: &[Activation],
+        seed: u64,
+        initialization: Initialization,
     ) -> Result<Self, ModelError> {
         if topology.len() < 2 || topology.contains(&0) {
             return Err(ModelError::InvalidTopology);
@@ -38,7 +67,7 @@ impl MultilayerPerceptron {
             .map(|(sizes, activation)| {
                 let input_size = sizes[0];
                 let output_size = sizes[1];
-                let limit = (6.0 / (input_size + output_size) as f64).sqrt();
+                let limit = initialization.limit(input_size, output_size);
                 DenseLayer {
                     input_size,
                     output_size,

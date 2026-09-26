@@ -173,3 +173,100 @@ pub(super) fn plot_confusion_matrix(metrics: &ClassificationMetrics, path: &Path
     root.present()?;
     Ok(())
 }
+
+/// Horizontal bars of validation accuracy, grouped by study axis.
+pub(super) fn plot_validation_accuracy(runs: &[CandidateRun], path: &Path) -> Result<()> {
+    let mut order = (0..runs.len()).collect::<Vec<_>>();
+    order.sort_by(|&left, &right| {
+        let (left, right) = (&runs[left].result, &runs[right].result);
+        left.candidate
+            .axis_label()
+            .cmp(right.candidate.axis_label())
+            .then(
+                left.validation_accuracy
+                    .total_cmp(&right.validation_accuracy),
+            )
+    });
+    let labels = order
+        .iter()
+        .map(|&index| {
+            let candidate = &runs[index].result.candidate;
+            format!("[{}] {}", candidate.axis_label(), candidate.name)
+        })
+        .collect::<Vec<_>>();
+    let minimum = runs
+        .iter()
+        .map(|run| run.result.validation_accuracy)
+        .fold(1.0_f64, f64::min);
+    let lower = ((minimum - 0.01) * 100.0).floor() / 100.0;
+    let height = (140 + 28 * runs.len()) as u32;
+    let root = BitMapBackend::new(path, (1400, height)).into_drawing_area();
+    root.fill(&WHITE)?;
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Validation accuracy by candidate", ("sans-serif", 30))
+        .margin(20)
+        .x_label_area_size(45)
+        .y_label_area_size(430)
+        .build_cartesian_2d(lower..1.0, 0.0..runs.len() as f64)?;
+    let label_text = labels.clone();
+    chart
+        .configure_mesh()
+        .disable_y_mesh()
+        .y_labels(runs.len() * 2)
+        .y_label_formatter(&move |value| {
+            let index = (*value - 0.5).round();
+            if (value - 0.5 - index).abs() < 1e-6 && index >= 0.0 {
+                label_text.get(index as usize).cloned().unwrap_or_default()
+            } else {
+                String::new()
+            }
+        })
+        .x_desc("Validation accuracy")
+        .draw()?;
+    let axes = order
+        .iter()
+        .map(|&index| runs[index].result.candidate.axis_label().to_owned())
+        .collect::<Vec<_>>();
+    let mut distinct = axes.clone();
+    distinct.dedup();
+    for (position, &index) in order.iter().enumerate() {
+        let accuracy = runs[index].result.validation_accuracy;
+        let color = Palette99::pick(
+            distinct
+                .iter()
+                .position(|axis| *axis == axes[position])
+                .unwrap_or(0),
+        );
+        let y = position as f64;
+        chart.draw_series([Rectangle::new(
+            [(lower, y + 0.15), (accuracy, y + 0.85)],
+            color.filled(),
+        )])?;
+        chart.draw_series([Text::new(
+            format!("{:.2}%", accuracy * 100.0),
+            (accuracy + 0.001, y + 0.3),
+            ("sans-serif", 14),
+        )])?;
+    }
+    root.present()?;
+    Ok(())
+}
+
+/// One validation-loss chart per study axis, so each comparison stays legible.
+pub(super) fn plot_axis_losses(runs: &[CandidateRun], output: &Path) -> Result<()> {
+    let mut axes = runs
+        .iter()
+        .map(|run| run.result.candidate.axis_label().to_owned())
+        .collect::<Vec<_>>();
+    axes.sort();
+    axes.dedup();
+    for axis in axes {
+        let subset = runs
+            .iter()
+            .filter(|run| run.result.candidate.axis_label() == axis)
+            .cloned()
+            .collect::<Vec<_>>();
+        plot_candidate_losses(&subset, &output.join(format!("loss_curves_{axis}.png")))?;
+    }
+    Ok(())
+}

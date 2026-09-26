@@ -1,4 +1,4 @@
-//! Single learning-rate trials for the fraud-distillation experiments.
+//! Single training trials for the fraud-distillation experiments.
 
 use anyhow::Result;
 
@@ -8,6 +8,7 @@ use crate::{
     matrix::DenseMatrix,
     metrics::{regression_metrics, RegressionMetrics},
     model::{Activation, SingleLayerPerceptron},
+    split::Fold,
     training::{
         predict_single_indices, train_single_layer, EarlyStopping, TrainingConfig, TrainingReport,
     },
@@ -21,16 +22,14 @@ pub(super) struct LearningRun {
     pub(super) metrics: RegressionMetrics,
 }
 
-pub(super) struct GeneralizationRun {
+/// One (learning rate, fold) cell of the cross-validation grid.
+pub(super) struct FoldTrial {
     pub(super) learning_rate: f64,
+    pub(super) fold: usize,
     pub(super) report: TrainingReport,
+    pub(super) train_mse: f64,
     pub(super) validation_predictions: Vec<f64>,
     pub(super) validation_metrics: RegressionMetrics,
-}
-
-pub(super) struct GeneralizationTrial {
-    pub(super) run: GeneralizationRun,
-    pub(super) train_mse: f64,
 }
 
 fn run_learning_trial(
@@ -58,6 +57,11 @@ fn run_learning_trial(
     )?;
     let predictions = predict_single_indices(&model, features, all_indices)?;
     let metrics = regression_metrics(&predictions, teacher_targets)?;
+    eprintln!(
+        "compare model={name} learning_rate={learning_rate} epochs={} mse={:.6}",
+        report.history.len(),
+        metrics.mse
+    );
     Ok(LearningRun {
         name,
         learning_rate,
@@ -95,65 +99,76 @@ pub(super) fn run_learning_trials(
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_generalization_trial(
+fn run_fold_trial(
     learning_rate: f64,
-    train_scaled: &DenseMatrix,
-    train_indices: &[usize],
-    validation_indices: &[usize],
+    fold_index: usize,
+    fold: &Fold,
+    features: &DenseMatrix,
     teacher_targets: &[f64],
     config: &AppConfig,
-) -> Result<GeneralizationTrial> {
+) -> Result<FoldTrial> {
     let mut model = SingleLayerPerceptron::new(
-        train_scaled.cols(),
+        features.cols(),
         Activation::Sigmoid,
         config.search.initialization_seed,
     )?;
     let report = train_single_layer(
         &mut model,
-        train_scaled,
+        features,
         teacher_targets,
-        train_indices,
-        Some(validation_indices),
+        &fold.train,
+        Some(&fold.validation),
         &MeanSquaredError,
         search_training_config(config, learning_rate),
     )?;
-    let train_predictions = predict_single_indices(&model, train_scaled, train_indices)?;
-    let validation_predictions = predict_single_indices(&model, train_scaled, validation_indices)?;
-    let train_targets = select_values(teacher_targets, train_indices);
-    let validation_targets = select_values(teacher_targets, validation_indices);
-    let train_mse = regression_metrics(&train_predictions, &train_targets)?.mse;
-    let validation_metrics = regression_metrics(&validation_predictions, &validation_targets)?;
-    Ok(GeneralizationTrial {
-        run: GeneralizationRun {
-            learning_rate,
-            report,
-            validation_predictions,
-            validation_metrics,
-        },
+    let train_predictions = predict_single_indices(&model, features, &fold.train)?;
+    let validation_predictions = predict_single_indices(&model, features, &fold.validation)?;
+    let train_mse = regression_metrics(
+        &train_predictions,
+        &select_values(teacher_targets, &fold.train),
+    )?
+    .mse;
+    let validation_metrics = regression_metrics(
+        &validation_predictions,
+        &select_values(teacher_targets, &fold.validation),
+    )?;
+    eprintln!(
+        "generalize learning_rate={learning_rate} fold={fold_index} best_epoch={} validation_mse={:.6}",
+        report.best_epoch, validation_metrics.mse
+    );
+    Ok(FoldTrial {
+        learning_rate,
+        fold: fold_index,
+        report,
         train_mse,
+        validation_predictions,
+        validation_metrics,
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn run_generalization_trials(
+/// Trains every (learning rate, fold) pair in parallel. `fold_features[k]` is
+/// the full matrix scaled with a scaler fitted only on fold `k`'s train rows.
+pub(super) fn run_cv_trials(
     learning_rates: &[f64],
-    train_scaled: &DenseMatrix,
-    train_indices: &[usize],
-    validation_indices: &[usize],
+    folds: &[Fold],
+    fold_features: &[DenseMatrix],
     teacher_targets: &[f64],
     config: &AppConfig,
-) -> Result<Vec<GeneralizationTrial>> {
+) -> Result<Vec<FoldTrial>> {
     use rayon::prelude::*;
 
-    learning_rates
-        .par_iter()
-        .map(|&learning_rate| {
-            run_generalization_trial(
+    let cells = learning_rates
+        .iter()
+        .flat_map(|&rate| (0..folds.len()).map(move |fold| (rate, fold)))
+        .collect::<Vec<_>>();
+    cells
+        .into_par_iter()
+        .map(|(learning_rate, fold)| {
+            run_fold_trial(
                 learning_rate,
-                train_scaled,
-                train_indices,
-                validation_indices,
+                fold,
+                &folds[fold],
+                &fold_features[fold],
                 teacher_targets,
                 config,
             )

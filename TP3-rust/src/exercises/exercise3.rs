@@ -3,7 +3,10 @@ use std::{net::SocketAddr, path::Path};
 use anyhow::{Context, Result};
 
 use crate::digits::{
-    analyze::{run_digit_evaluation, run_digit_training, TrainingOutcome},
+    analyze::{
+        run_digit_continue, run_digit_evaluation, run_digit_training, write_data_shift,
+        TrainingOutcome,
+    },
     artifact::DigitModelArtifact,
     config::DigitStudyConfig,
     data::load_digit_dataset,
@@ -13,6 +16,7 @@ const BASELINE_NAME: &str = "exercise2_winner_on_more_digits";
 
 pub fn train(
     data: &Path,
+    previous_data: &Path,
     baseline_model: &Path,
     config: &Path,
     output: &Path,
@@ -20,6 +24,17 @@ pub fn train(
 ) -> Result<()> {
     let dataset = load_digit_dataset(data)
         .with_context(|| format!("failed to load digit dataset {}", data.display()))?;
+    // Documents what changed in the data itself (Exercise 3 question c),
+    // independently of any modelling technique.
+    let previous = load_digit_dataset(previous_data).with_context(|| {
+        format!(
+            "failed to load previous dataset {}",
+            previous_data.display()
+        )
+    })?;
+    std::fs::create_dir_all(output)?;
+    write_data_shift(&previous, &dataset, output)?;
+    drop(previous);
     let baseline_artifact = DigitModelArtifact::load(baseline_model).with_context(|| {
         format!(
             "failed to load Exercise 2 baseline {}",
@@ -48,6 +63,16 @@ pub fn evaluate(data: &Path, model: &Path, output: &Path) -> Result<()> {
     let artifact = DigitModelArtifact::load(model)
         .with_context(|| format!("failed to load model {}", model.display()))?;
     run_digit_evaluation(&dataset, &artifact, output)?;
+    Ok(())
+}
+
+/// Resumes training of a saved model for `epochs` more epochs on `data`.
+pub fn resume(data: &Path, model: &Path, epochs: usize, output: &Path) -> Result<()> {
+    let dataset = load_digit_dataset(data)
+        .with_context(|| format!("failed to load digit dataset {}", data.display()))?;
+    let artifact = DigitModelArtifact::load(model)
+        .with_context(|| format!("failed to load model {}", model.display()))?;
+    run_digit_continue(&dataset, &artifact, epochs, output)?;
     Ok(())
 }
 

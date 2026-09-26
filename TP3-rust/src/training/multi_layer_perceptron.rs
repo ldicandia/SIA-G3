@@ -163,14 +163,17 @@ fn apply_mlp_update(
     learning_rate: f64,
 ) {
     for (layer_index, layer) in model.layers.iter_mut().enumerate() {
-        for output in 0..layer.output_size {
-            let delta = deltas[layer_index][output];
-            let start = output * layer.input_size;
-            for input in 0..layer.input_size {
-                layer.weights[start + input] -=
-                    learning_rate * delta * activations[layer_index][input];
+        let inputs = &activations[layer_index];
+        for ((weights, bias), &delta) in layer
+            .weights
+            .chunks_mut(layer.input_size)
+            .zip(layer.biases.iter_mut())
+            .zip(&deltas[layer_index])
+        {
+            for (weight, &input) in weights.iter_mut().zip(inputs) {
+                *weight -= learning_rate * delta * input;
             }
-            layer.biases[output] -= learning_rate * delta;
+            *bias -= learning_rate * delta;
         }
     }
 }

@@ -40,7 +40,11 @@ fn run_candidate(
     split: &DigitSplit,
     publisher: &LiveMetricsPublisher,
 ) -> Result<CandidateRun> {
-    eprintln!("training candidate '{}'", candidate.name);
+    eprintln!(
+        "training candidate '{}' ({})",
+        candidate.name,
+        candidate.axis_label()
+    );
     let mut model = create_model(&candidate)?;
     let report = train_digit_candidate(
         &mut model,
@@ -57,6 +61,14 @@ fn run_candidate(
         &dataset.labels,
         &split.validation,
     )?;
+    eprintln!(
+        "finished candidate '{}': epochs={} best_epoch={} validation_accuracy={:.4} ({:.1}s)",
+        candidate.name,
+        report.history.len(),
+        report.best_epoch,
+        validation.accuracy,
+        report.seconds
+    );
     Ok(CandidateRun {
         result: CandidateResult {
             candidate,
@@ -86,10 +98,11 @@ pub(super) fn train_candidates(
 pub(super) fn create_model(candidate: &CandidateConfig) -> Result<MultilayerPerceptron> {
     let mut activations = vec![candidate.hidden_activation; candidate.topology.len() - 2];
     activations.push(Activation::Linear);
-    Ok(MultilayerPerceptron::new(
+    Ok(MultilayerPerceptron::with_initialization(
         &candidate.topology,
         &activations,
         candidate.seed,
+        candidate.initialization,
     )?)
 }
 
@@ -135,10 +148,7 @@ mod tests {
             patience: 1,
             min_delta: 0.0,
             seed: 1,
-            momentum: 0.9,
-            beta1: 0.9,
-            beta2: 0.999,
-            epsilon: 1e-8,
+            ..CandidateConfig::default()
         }
     }
 
@@ -163,6 +173,7 @@ mod tests {
                 best_validation_loss: loss,
                 best_validation_accuracy: accuracy,
                 stopped_early: false,
+                seconds: 0.0,
             },
         }
     }

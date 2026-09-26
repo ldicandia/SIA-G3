@@ -35,6 +35,7 @@ struct FraudRecord {
 
 #[derive(Clone, Debug)]
 pub struct FraudDataset {
+    pub feature_names: Vec<String>,
     pub features: DenseMatrix,
     pub teacher_targets: Vec<f64>,
     pub fraud_labels: Vec<bool>,
@@ -126,6 +127,10 @@ pub fn load_fraud_dataset(path: &Path) -> Result<FraudDataset, DataError> {
         return Err(DataError::Empty);
     }
     Ok(FraudDataset {
+        feature_names: FEATURE_NAMES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
         features: DenseMatrix::new(teacher_targets.len(), FEATURE_NAMES.len(), features)?,
         teacher_targets,
         fraud_labels,

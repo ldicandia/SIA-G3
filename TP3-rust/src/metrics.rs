@@ -92,6 +92,14 @@ impl ConfusionMatrix {
             self.true_positives + self.true_negatives + self.false_positives + self.false_negatives,
         )
     }
+
+    /// Harmonic mean of precision and recall: `2TP / (2TP + FP + FN)`.
+    pub fn f1(self) -> f64 {
+        safe_ratio(
+            2 * self.true_positives,
+            2 * self.true_positives + self.false_positives + self.false_negatives,
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +119,10 @@ impl ThresholdMetrics {
 
     pub fn accuracy(&self) -> f64 {
         self.confusion.accuracy()
+    }
+
+    pub fn f1(&self) -> f64 {
+        self.confusion.f1()
     }
 }
 
@@ -157,6 +169,63 @@ pub fn threshold_sweep(
             })
         })
         .collect()
+}
+
+/// Threshold that maximizes F1 on the sweep; ties prefer higher recall (a
+/// missed fraud is costlier than a manual review) and then the lower threshold.
+pub fn best_f1_threshold(sweep: &[ThresholdMetrics]) -> Option<&ThresholdMetrics> {
+    sweep.iter().max_by(|left, right| {
+        left.f1()
+            .total_cmp(&right.f1())
+            .then_with(|| left.recall().total_cmp(&right.recall()))
+            .then_with(|| right.threshold.total_cmp(&left.threshold))
+    })
+}
+
+/// Area under the precision-recall curve as average precision:
+/// `sum_k (R_k - R_{k-1}) * P_k`, walking scores from high to low and
+/// treating tied scores as a single operating point. Unlike ROC-AUC it is
+/// sensitive to the rare positive class.
+pub fn average_precision(scores: &[f64], labels: &[bool]) -> Result<f64, MetricsError> {
+    validate_lengths(scores.len(), labels.len())?;
+    if scores.iter().any(|score| !score.is_finite()) {
+        return Err(MetricsError::NonFiniteScore);
+    }
+    let positives = labels.iter().filter(|&&label| label).count();
+    if positives == 0 {
+        return Ok(0.0);
+    }
+    let mut order = (0..scores.len()).collect::<Vec<_>>();
+    order.sort_by(|&left, &right| scores[right].total_cmp(&scores[left]));
+    let (mut true_positives, mut seen, mut previous_recall, mut area) = (0usize, 0usize, 0.0, 0.0);
+    let mut position = 0;
+    while position < order.len() {
+        let score = scores[order[position]];
+        while position < order.len() && scores[order[position]] == score {
+            true_positives += usize::from(labels[order[position]]);
+            seen += 1;
+            position += 1;
+        }
+        let recall = true_positives as f64 / positives as f64;
+        let precision = true_positives as f64 / seen as f64;
+        area += (recall - previous_recall) * precision;
+        previous_recall = recall;
+    }
+    Ok(area)
+}
+
+/// Mean and population standard deviation.
+pub fn mean_std(values: &[f64]) -> (f64, f64) {
+    if values.is_empty() {
+        return (f64::NAN, f64::NAN);
+    }
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    let variance = values
+        .iter()
+        .map(|value| (value - mean).powi(2))
+        .sum::<f64>()
+        / values.len() as f64;
+    (mean, variance.sqrt())
 }
 
 pub fn best_accuracy_threshold(sweep: &[ThresholdMetrics]) -> Option<&ThresholdMetrics> {
@@ -213,6 +282,20 @@ mod tests {
         assert_abs_diff_eq!(confusion.precision(), 0.5);
         assert_abs_diff_eq!(confusion.recall(), 0.5);
         assert_abs_diff_eq!(confusion.accuracy(), 0.5);
+    }
+
+    #[test]
+    fn f1_and_average_precision_match_hand_computed_values() {
+        let confusion =
+            confusion_matrix(&[0.9, 0.8, 0.7, 0.1], &[true, false, true, false], 0.75).unwrap();
+        assert_abs_diff_eq!(confusion.f1(), 0.5);
+        // Ranking: T(0.9) F(0.8) T(0.7) F(0.1) -> AP = 0.5 * 1 + 0.5 * 2/3.
+        let ap = average_precision(&[0.9, 0.8, 0.7, 0.1], &[true, false, true, false]).unwrap();
+        assert_abs_diff_eq!(ap, 0.5 + 1.0 / 3.0, epsilon = 1e-12);
+        let sweep = threshold_sweep(&[0.9, 0.8, 0.7, 0.1], &[true, false, true, false]).unwrap();
+        let best = best_f1_threshold(&sweep).unwrap();
+        assert_abs_diff_eq!(best.threshold, 0.7);
+        assert_abs_diff_eq!(best.f1(), 0.8);
     }
 
     #[test]

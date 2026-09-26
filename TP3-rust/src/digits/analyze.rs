@@ -33,6 +33,7 @@ pub struct TrainingOutcome {
     pub candidates: Vec<CandidateResult>,
 }
 
+#[derive(Clone)]
 struct CandidateRun {
     result: CandidateResult,
     report: DigitTrainingReport,
@@ -64,6 +65,8 @@ pub fn run_digit_training(
     write_candidate_summary(&runs, output)?;
     write_learning_history(&runs, output)?;
     plot_candidate_losses(&runs, &output.join("candidate_loss_curves.png"))?;
+    plot_axis_losses(&runs, output)?;
+    plot_validation_accuracy(&runs, &output.join("validation_accuracy.png"))?;
     plot_selected_loss(
         &runs[best_index],
         &output.join("selected_learning_curve.png"),
@@ -72,6 +75,12 @@ pub fn run_digit_training(
     let best = &runs[best_index];
     let all_indices = (0..dataset.features.rows()).collect::<Vec<_>>();
     let mut final_model = create_model(&best.result.candidate)?;
+    eprintln!(
+        "refitting '{}' on all {} rows for {} epochs",
+        best.result.candidate.name,
+        all_indices.len(),
+        best.result.best_epoch
+    );
     refit_digit_model(
         &mut final_model,
         &dataset.features,
@@ -79,6 +88,8 @@ pub fn run_digit_training(
         &all_indices,
         &best.result.candidate,
         best.result.best_epoch,
+        0,
+        "refit",
         Some(&publisher),
     )?;
     let artifact = DigitModelArtifact {
@@ -142,6 +153,109 @@ pub fn run_digit_evaluation(
         dataset.labels.len()
     );
     Ok(metrics)
+}
+
+/// Resumes training of a persisted model on `dataset` for `epochs` more
+/// epochs with the same hyperparameters. The learning-rate schedule and random
+/// streams continue from the saved epoch; optimizer moments restart from zero
+/// because they are not persisted.
+pub fn run_digit_continue(
+    dataset: &DigitDataset,
+    artifact: &DigitModelArtifact,
+    epochs: usize,
+    output: &Path,
+) -> Result<DigitModelArtifact> {
+    fs::create_dir_all(output)?;
+    if artifact.model.topology().first() != Some(&dataset.features.cols()) {
+        bail!("model input size does not match the dataset");
+    }
+    let mut model = artifact.model.clone();
+    let indices = (0..dataset.features.rows()).collect::<Vec<_>>();
+    let report = refit_digit_model(
+        &mut model,
+        &dataset.features,
+        &dataset.labels,
+        &indices,
+        &artifact.candidate,
+        epochs,
+        artifact.selected_epoch,
+        "continue",
+        None,
+    )?;
+    let continued = DigitModelArtifact {
+        selected_epoch: artifact.selected_epoch + epochs,
+        model,
+        ..artifact.clone()
+    };
+    continued.save(&output.join("selected_model.toml"))?;
+    write_selected_model(&continued, output)?;
+    let mut writer = csv::Writer::from_path(output.join("continue_history.csv"))?;
+    writer.write_record(["epoch", "train_loss", "train_accuracy"])?;
+    for row in &report.history {
+        writer.serialize((row.epoch, row.train_loss, row.train_accuracy))?;
+    }
+    writer.flush()?;
+    eprintln!(
+        "continued '{}' from epoch {} to {} (train_accuracy={:.4})",
+        continued.candidate.name,
+        artifact.selected_epoch,
+        continued.selected_epoch,
+        report
+            .history
+            .last()
+            .map_or(f64::NAN, |row| row.train_accuracy)
+    );
+    Ok(continued)
+}
+
+/// Class counts of two datasets and how many images of the new one already
+/// appear (pixel-for-pixel) in the previous one.
+pub fn write_data_shift(
+    previous: &DigitDataset,
+    current: &DigitDataset,
+    output: &Path,
+) -> Result<()> {
+    use std::collections::HashSet;
+
+    use super::data::{class_counts, DIGIT_CLASSES};
+
+    let signature = |dataset: &DigitDataset, row: usize| {
+        dataset
+            .features
+            .row(row)
+            .unwrap()
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>()
+    };
+    let known = (0..previous.features.rows())
+        .map(|row| signature(previous, row))
+        .collect::<HashSet<_>>();
+    let shared = (0..current.features.rows())
+        .filter(|&row| known.contains(&signature(current, row)))
+        .count();
+    let all = |dataset: &DigitDataset| (0..dataset.labels.len()).collect::<Vec<_>>();
+    let before = class_counts(&previous.labels, &all(previous));
+    let after = class_counts(&current.labels, &all(current));
+    let mut writer = csv::Writer::from_path(output.join("data_shift.csv"))?;
+    writer.write_record(["class", "previous_rows", "current_rows", "added_rows"])?;
+    for class in 0..DIGIT_CLASSES {
+        writer.serialize((
+            class.to_string(),
+            before[class],
+            after[class],
+            after[class] as i64 - before[class] as i64,
+        ))?;
+    }
+    writer.serialize((
+        "total",
+        previous.labels.len(),
+        current.labels.len(),
+        current.labels.len() as i64 - previous.labels.len() as i64,
+    ))?;
+    writer.serialize(("images_shared_with_previous", shared, shared, 0))?;
+    writer.flush()?;
+    Ok(())
 }
 
 pub fn expected_image_pixels() -> usize {

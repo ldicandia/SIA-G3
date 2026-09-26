@@ -63,32 +63,72 @@ pub(super) fn write_candidate_summary(runs: &[CandidateRun], output: &Path) -> R
     let mut writer = csv::Writer::from_path(output.join("candidate_summary.csv"))?;
     writer.write_record([
         "name",
+        "axis",
         "topology",
         "hidden_activation",
         "optimizer",
         "learning_rate",
         "batch_size",
+        "initialization",
+        "weight_decay",
+        "dropout",
+        "lr_decay",
+        "augmentation",
         "parameter_count",
+        "epochs_run",
         "best_epoch",
+        "train_accuracy_at_best",
         "validation_loss",
         "validation_accuracy",
         "stopped_early",
+        "seconds",
     ])?;
     for run in runs {
         let candidate = &run.result.candidate;
-        writer.serialize((
-            &candidate.name,
+        let train_accuracy = run
+            .report
+            .history
+            .iter()
+            .find(|row| row.epoch == run.result.best_epoch)
+            .map_or(f64::NAN, |row| row.train_accuracy);
+        let lr_decay = if candidate.lr_decay_every == 0 {
+            "none".to_owned()
+        } else {
+            format!(
+                "x{}/{}ep",
+                candidate.lr_decay_factor, candidate.lr_decay_every
+            )
+        };
+        let augmentation = if candidate.augments() {
+            format!(
+                "shift{}px_rot{}deg",
+                candidate.augment_shift, candidate.augment_rotation
+            )
+        } else {
+            "none".to_owned()
+        };
+        writer.write_record([
+            candidate.name.clone(),
+            candidate.axis_label().to_owned(),
             topology_text(&candidate.topology),
             format!("{:?}", candidate.hidden_activation).to_lowercase(),
             format!("{:?}", candidate.optimizer).to_lowercase(),
-            candidate.learning_rate,
-            candidate.batch_size,
-            candidate.parameter_count(),
-            run.result.best_epoch,
-            run.result.validation_loss,
-            run.result.validation_accuracy,
-            run.result.stopped_early,
-        ))?;
+            candidate.learning_rate.to_string(),
+            candidate.batch_size.to_string(),
+            format!("{:?}", candidate.initialization).to_lowercase(),
+            candidate.weight_decay.to_string(),
+            candidate.dropout.to_string(),
+            lr_decay,
+            augmentation,
+            candidate.parameter_count().to_string(),
+            run.report.history.len().to_string(),
+            run.result.best_epoch.to_string(),
+            train_accuracy.to_string(),
+            run.result.validation_loss.to_string(),
+            run.result.validation_accuracy.to_string(),
+            run.result.stopped_early.to_string(),
+            format!("{:.1}", run.report.seconds),
+        ])?;
     }
     writer.flush()?;
     Ok(())

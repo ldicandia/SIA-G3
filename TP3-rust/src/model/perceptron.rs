@@ -1,5 +1,6 @@
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use serde::{Deserialize, Serialize};
 
 use super::{check_input, dot, Activation, ModelError};
 
@@ -38,7 +39,7 @@ impl StepPerceptron {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SingleLayerPerceptron {
     pub(crate) weights: Vec<f64>,
     pub(crate) bias: f64,

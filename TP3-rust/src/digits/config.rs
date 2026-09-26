@@ -3,19 +3,26 @@ use std::{fs, path::Path};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::model::Activation;
+use crate::model::{Activation, Initialization};
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OptimizerKind {
+    #[default]
     Sgd,
     Momentum,
     Adam,
 }
 
+/// One fully specified training run. Every field is stored inside the
+/// persisted model so a run can be audited or resumed with the same settings.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CandidateConfig {
     pub name: String,
+    /// Study axis this candidate belongs to (e.g. `learning_rate`,
+    /// `architecture`, `optimizer`), used to group the comparison tables.
+    #[serde(default)]
+    pub axis: String,
     pub topology: Vec<usize>,
     pub hidden_activation: Activation,
     pub optimizer: OptimizerKind,
@@ -33,6 +40,55 @@ pub struct CandidateConfig {
     pub beta2: f64,
     #[serde(default = "default_epsilon")]
     pub epsilon: f64,
+    #[serde(default)]
+    pub initialization: Initialization,
+    /// Decoupled L2 weight decay applied to weights (not biases) each step.
+    #[serde(default)]
+    pub weight_decay: f64,
+    /// Inverted-dropout probability for hidden units during training.
+    #[serde(default)]
+    pub dropout: f64,
+    /// Step decay: the learning rate is multiplied by `lr_decay_factor` every
+    /// `lr_decay_every` epochs (0 keeps it constant).
+    #[serde(default = "default_decay_factor")]
+    pub lr_decay_factor: f64,
+    #[serde(default)]
+    pub lr_decay_every: usize,
+    /// Data augmentation: random translation of up to this many pixels.
+    #[serde(default)]
+    pub augment_shift: f64,
+    /// Data augmentation: random rotation of up to this many degrees.
+    #[serde(default)]
+    pub augment_rotation: f64,
+}
+
+impl Default for CandidateConfig {
+    fn default() -> Self {
+        Self {
+            name: "candidate".into(),
+            axis: String::new(),
+            topology: vec![784, 64, 10],
+            hidden_activation: Activation::Relu,
+            optimizer: OptimizerKind::Adam,
+            learning_rate: 0.001,
+            batch_size: 64,
+            max_epochs: 20,
+            patience: 4,
+            min_delta: 1e-5,
+            seed: 42,
+            momentum: default_momentum(),
+            beta1: default_beta1(),
+            beta2: default_beta2(),
+            epsilon: default_epsilon(),
+            initialization: Initialization::Xavier,
+            weight_decay: 0.0,
+            dropout: 0.0,
+            lr_decay_factor: default_decay_factor(),
+            lr_decay_every: 0,
+            augment_shift: 0.0,
+            augment_rotation: 0.0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -113,7 +169,18 @@ impl CandidateConfig {
                     && self.epsilon > 0.0
             }
         };
-        if positive && valid_topology && valid_optimizer {
+        let valid_regularization = self.weight_decay.is_finite()
+            && self.weight_decay >= 0.0
+            && self.dropout.is_finite()
+            && (0.0..1.0).contains(&self.dropout)
+            && self.lr_decay_factor.is_finite()
+            && self.lr_decay_factor > 0.0
+            && self.lr_decay_factor <= 1.0
+            && self.augment_shift.is_finite()
+            && self.augment_shift >= 0.0
+            && self.augment_rotation.is_finite()
+            && self.augment_rotation >= 0.0;
+        if positive && valid_topology && valid_optimizer && valid_regularization {
             Ok(())
         } else {
             Err(DigitConfigError::InvalidCandidate(self.name.clone()))
@@ -125,6 +192,28 @@ impl CandidateConfig {
             .windows(2)
             .map(|sizes| sizes[0] * sizes[1] + sizes[1])
             .sum()
+    }
+
+    /// Learning rate used during a 1-based global epoch.
+    pub fn learning_rate_at(&self, epoch: usize) -> f64 {
+        if self.lr_decay_every == 0 {
+            return self.learning_rate;
+        }
+        let decays = (epoch.saturating_sub(1) / self.lr_decay_every) as i32;
+        self.learning_rate * self.lr_decay_factor.powi(decays)
+    }
+
+    pub fn augments(&self) -> bool {
+        self.augment_shift > 0.0 || self.augment_rotation > 0.0
+    }
+
+    /// Axis label used in reports; candidates without one are grouped as "other".
+    pub fn axis_label(&self) -> &str {
+        if self.axis.trim().is_empty() {
+            "other"
+        } else {
+            &self.axis
+        }
     }
 }
 
@@ -144,6 +233,10 @@ fn default_epsilon() -> f64 {
     1e-8
 }
 
+fn default_decay_factor() -> f64 {
+    1.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,18 +245,11 @@ mod tests {
         CandidateConfig {
             name: name.into(),
             topology: vec![2, 3, 10],
-            hidden_activation: Activation::Relu,
-            optimizer: OptimizerKind::Adam,
-            learning_rate: 0.001,
             batch_size: 4,
             max_epochs: 10,
             patience: 3,
             min_delta: 1e-6,
-            seed: 42,
-            momentum: 0.9,
-            beta1: 0.9,
-            beta2: 0.999,
-            epsilon: 1e-8,
+            ..CandidateConfig::default()
         }
     }
 
@@ -183,5 +269,39 @@ mod tests {
             config.validate(),
             Err(DigitConfigError::InvalidCandidateNames)
         ));
+    }
+
+    #[test]
+    fn step_decay_halves_the_rate_every_period() {
+        let config = CandidateConfig {
+            learning_rate: 0.1,
+            lr_decay_factor: 0.5,
+            lr_decay_every: 10,
+            ..candidate("decay")
+        };
+        assert_eq!(config.learning_rate_at(1), 0.1);
+        assert_eq!(config.learning_rate_at(10), 0.1);
+        assert_eq!(config.learning_rate_at(11), 0.05);
+        assert_eq!(config.learning_rate_at(21), 0.025);
+    }
+
+    #[test]
+    fn legacy_candidates_without_new_fields_still_parse() {
+        let text = r#"
+            name = "legacy"
+            topology = [784, 64, 10]
+            hidden_activation = "relu"
+            optimizer = "adam"
+            learning_rate = 0.001
+            batch_size = 64
+            max_epochs = 5
+            patience = 2
+            min_delta = 0.0
+            seed = 1
+        "#;
+        let candidate: CandidateConfig = toml::from_str(text).unwrap();
+        assert_eq!(candidate.initialization, Initialization::Xavier);
+        assert_eq!(candidate.dropout, 0.0);
+        assert_eq!(candidate.learning_rate_at(100), 0.001);
     }
 }

@@ -1,18 +1,24 @@
 use std::{fs, path::Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::data::FEATURE_NAMES;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct AppConfig {
     pub split: SplitConfig,
     pub search: SearchConfig,
+    #[serde(default)]
+    pub features: FeatureConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SplitConfig {
-    pub train_ratio: f64,
-    pub validation_ratio: f64,
+    /// Fraction of the dataset held out and consulted only once, at the end.
+    pub test_ratio: f64,
+    /// Number of cross-validation folds built over the remaining development rows.
+    pub folds: usize,
     pub seed: u64,
     pub stratification_bins: usize,
 }
@@ -26,18 +32,32 @@ pub struct SearchConfig {
     pub initialization_seed: u64,
 }
 
+/// Column-level preprocessing applied before scaling. Stored with the fraud
+/// model so the same transformation is reproduced when scoring new data.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct FeatureConfig {
+    /// Raw columns removed from the model inputs.
+    #[serde(default)]
+    pub drop: Vec<String>,
+    /// Raw columns replaced by `ln(1 + x)` to compress heavy right tails.
+    #[serde(default)]
+    pub log1p: Vec<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("could not read configuration: {0}")]
     Io(#[from] std::io::Error),
     #[error("invalid TOML configuration: {0}")]
     Toml(#[from] toml::de::Error),
-    #[error("train and validation ratios must be positive and sum to less than one")]
-    InvalidRatios,
+    #[error("test_ratio must be in (0, 1) and folds must be at least 2")]
+    InvalidSplit,
     #[error("at least two stratification bins are required")]
     InvalidBins,
     #[error("search values must be finite and positive")]
     InvalidSearch,
+    #[error("unknown or repeated feature '{0}' in [features]")]
+    InvalidFeature(String),
 }
 
 impl AppConfig {
@@ -48,11 +68,8 @@ impl AppConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if !(self.split.train_ratio > 0.0
-            && self.split.validation_ratio > 0.0
-            && self.split.train_ratio + self.split.validation_ratio < 1.0)
-        {
-            return Err(ConfigError::InvalidRatios);
+        if !(self.split.test_ratio > 0.0 && self.split.test_ratio < 1.0) || self.split.folds < 2 {
+            return Err(ConfigError::InvalidSplit);
         }
         if self.split.stratification_bins < 2 {
             return Err(ConfigError::InvalidBins);
@@ -70,6 +87,40 @@ impl AppConfig {
         {
             return Err(ConfigError::InvalidSearch);
         }
+        self.features.validate()
+    }
+}
+
+impl FeatureConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let mut seen = std::collections::HashSet::new();
+        for name in self.drop.iter().chain(&self.log1p) {
+            if !FEATURE_NAMES.contains(&name.as_str()) || !seen.insert(name) {
+                return Err(ConfigError::InvalidFeature(name.clone()));
+            }
+        }
+        if self.drop.len() == FEATURE_NAMES.len() {
+            return Err(ConfigError::InvalidFeature("all features dropped".into()));
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn feature_config_rejects_unknown_and_repeated_columns() {
+        let unknown = FeatureConfig {
+            drop: vec!["nope".into()],
+            log1p: vec![],
+        };
+        assert!(unknown.validate().is_err());
+        let repeated = FeatureConfig {
+            drop: vec!["timestamp".into()],
+            log1p: vec!["timestamp".into()],
+        };
+        assert!(repeated.validate().is_err());
     }
 }

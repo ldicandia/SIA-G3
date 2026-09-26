@@ -35,33 +35,18 @@ impl OptimizerState {
     }
 }
 
-pub(super) fn zero_gradients(gradients: &mut [LayerValues]) {
-    for layer in gradients {
-        layer.weights.fill(0.0);
-        layer.biases.fill(0.0);
-    }
-}
-
-pub(super) fn add_layer_values(left: &mut [LayerValues], right: &[LayerValues]) {
-    for (left_layer, right_layer) in left.iter_mut().zip(right) {
-        for (l, r) in left_layer.weights.iter_mut().zip(&right_layer.weights) {
-            *l += r;
-        }
-        for (l, r) in left_layer.biases.iter_mut().zip(&right_layer.biases) {
-            *l += r;
-        }
-    }
-}
-
+/// One optimizer step with batch-mean `gradients` and this epoch's learning
+/// rate. Weight decay is decoupled (AdamW style): weights shrink by
+/// `learning_rate * weight_decay` independently of the adaptive update, and
+/// biases are not decayed.
 pub(super) fn apply_gradients(
     model: &mut MultilayerPerceptron,
     gradients: &[LayerValues],
     state: &mut OptimizerState,
     candidate: &CandidateConfig,
-    batch_size: usize,
+    learning_rate: f64,
 ) {
     state.step += 1;
-    let scale = 1.0 / batch_size as f64;
     for (((layer, gradient), first), second) in model
         .layers
         .iter_mut()
@@ -76,7 +61,8 @@ pub(super) fn apply_gradients(
             &mut second.weights,
             candidate,
             state.step,
-            scale,
+            learning_rate,
+            candidate.weight_decay,
         );
         update_values(
             &mut layer.biases,
@@ -85,7 +71,8 @@ pub(super) fn apply_gradients(
             &mut second.biases,
             candidate,
             state.step,
-            scale,
+            learning_rate,
+            0.0,
         );
     }
 }
@@ -98,24 +85,31 @@ fn update_values(
     second: &mut [f64],
     candidate: &CandidateConfig,
     step: usize,
-    scale: f64,
+    learning_rate: f64,
+    weight_decay: f64,
 ) {
+    let decay = 1.0 - learning_rate * weight_decay;
+    let (bias1, bias2) = (
+        1.0 - candidate.beta1.powi(step as i32),
+        1.0 - candidate.beta2.powi(step as i32),
+    );
     for index in 0..parameters.len() {
-        let gradient = gradients[index] * scale;
+        let gradient = gradients[index];
+        if weight_decay > 0.0 {
+            parameters[index] *= decay;
+        }
         match candidate.optimizer {
-            OptimizerKind::Sgd => parameters[index] -= candidate.learning_rate * gradient,
+            OptimizerKind::Sgd => parameters[index] -= learning_rate * gradient,
             OptimizerKind::Momentum => {
                 first[index] = candidate.momentum * first[index] + gradient;
-                parameters[index] -= candidate.learning_rate * first[index];
+                parameters[index] -= learning_rate * first[index];
             }
             OptimizerKind::Adam => {
                 first[index] = candidate.beta1 * first[index] + (1.0 - candidate.beta1) * gradient;
                 second[index] =
                     candidate.beta2 * second[index] + (1.0 - candidate.beta2) * gradient * gradient;
-                let first_corrected = first[index] / (1.0 - candidate.beta1.powi(step as i32));
-                let second_corrected = second[index] / (1.0 - candidate.beta2.powi(step as i32));
-                parameters[index] -= candidate.learning_rate * first_corrected
-                    / (second_corrected.sqrt() + candidate.epsilon);
+                parameters[index] -= learning_rate * (first[index] / bias1)
+                    / ((second[index] / bias2).sqrt() + candidate.epsilon);
             }
         }
     }

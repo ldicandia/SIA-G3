@@ -1,8 +1,9 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::matrix::{DenseMatrix, MatrixError};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct StandardScaler {
     means: Vec<f64>,
     scales: Vec<f64>,
@@ -75,6 +76,21 @@ impl StandardScaler {
             })
             .collect();
         Ok(DenseMatrix::new(matrix.rows(), matrix.cols(), data)?)
+    }
+
+    pub fn transform_row(&self, row: &[f64]) -> Result<Vec<f64>, ScalerError> {
+        if row.len() != self.means.len() {
+            return Err(ScalerError::Dimension {
+                expected: self.means.len(),
+                actual: row.len(),
+            });
+        }
+        Ok(row
+            .iter()
+            .zip(&self.means)
+            .zip(&self.scales)
+            .map(|((&value, &mean), &scale)| (value - mean) / scale)
+            .collect())
     }
 
     pub fn means(&self) -> &[f64] {

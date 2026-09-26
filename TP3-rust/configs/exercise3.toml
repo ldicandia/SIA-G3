@@ -1,39 +1,104 @@
+# Exercise 3: more_digits.csv, target accuracy >= 98%.
+#
+# The Exercise 2 winner is always retrained unchanged first (baseline added by
+# the program, not listed here) to isolate the effect of the new data.
+# The candidates below form a cumulative ladder: each step keeps everything
+# from the previous one and adds ONE technique, so the gain of every technique
+# can be read as the difference with the step before it.
+#
+#   t1_capacity        [784,512,256,10], He init (ReLU-friendly)
+#   t2_lr_decay        + step decay: learning rate x0.5 every 5 epochs
+#   t3_weight_decay    + decoupled L2 weight decay 1e-4
+#   t4_dropout         + dropout 0.2 on hidden units
+#   t5_augmentation    + random shifts (+-2 px) and rotations (+-10 deg)
+#
+# Augmented runs see a different variant of each image every epoch, so they
+# converge more slowly and get a larger epoch budget and patience.
+
 validation_ratio = 0.20
 split_seed = 42
 
 [[candidates]]
-name = "adam_relu_128_64"
-topology = [784, 128, 64, 10]
+name = "t1_capacity"
+axis = "technique"
+topology = [784, 512, 256, 10]
 hidden_activation = "relu"
 optimizer = "adam"
 learning_rate = 0.001
 batch_size = 64
-max_epochs = 30
-patience = 5
-min_delta = 1e-5
+max_epochs = 60
+patience = 8
+min_delta = 1e-05
 seed = 42
+initialization = "he"
 
 [[candidates]]
-name = "adam_relu_128_64_small_lr"
-topology = [784, 128, 64, 10]
+name = "t2_lr_decay"
+axis = "technique"
+topology = [784, 512, 256, 10]
 hidden_activation = "relu"
 optimizer = "adam"
-learning_rate = 0.0005
-batch_size = 32
-max_epochs = 30
-patience = 5
-min_delta = 1e-5
+learning_rate = 0.001
+batch_size = 64
+max_epochs = 60
+patience = 8
+min_delta = 1e-05
 seed = 42
+initialization = "he"
+lr_decay_factor = 0.5
+lr_decay_every = 5
 
 [[candidates]]
-name = "momentum_relu_128_64"
-topology = [784, 128, 64, 10]
+name = "t3_weight_decay"
+axis = "technique"
+topology = [784, 512, 256, 10]
 hidden_activation = "relu"
-optimizer = "momentum"
-learning_rate = 0.01
+optimizer = "adam"
+learning_rate = 0.001
 batch_size = 64
-max_epochs = 30
-patience = 5
-min_delta = 1e-5
+max_epochs = 60
+patience = 8
+min_delta = 1e-05
 seed = 42
-momentum = 0.9
+initialization = "he"
+lr_decay_factor = 0.5
+lr_decay_every = 5
+weight_decay = 0.0001
+
+[[candidates]]
+name = "t4_dropout"
+axis = "technique"
+topology = [784, 512, 256, 10]
+hidden_activation = "relu"
+optimizer = "adam"
+learning_rate = 0.001
+batch_size = 64
+max_epochs = 60
+patience = 8
+min_delta = 1e-05
+seed = 42
+initialization = "he"
+lr_decay_factor = 0.5
+lr_decay_every = 5
+weight_decay = 0.0001
+dropout = 0.2
+
+[[candidates]]
+name = "t5_augmentation"
+axis = "technique"
+topology = [784, 512, 256, 10]
+hidden_activation = "relu"
+optimizer = "adam"
+learning_rate = 0.001
+batch_size = 64
+max_epochs = 100
+patience = 12
+min_delta = 1e-05
+seed = 42
+initialization = "he"
+lr_decay_factor = 0.5
+lr_decay_every = 5
+weight_decay = 0.0001
+dropout = 0.2
+augment_shift = 2.0
+augment_rotation = 10.0
