@@ -1,0 +1,19 @@
+# Exercise 1: fraud TinyModel (knowledge distillation from BigModel).
+
+[features]
+# Variant without log1p, kept to reproduce the feature trade-off in the README.
+drop = ["timestamp"]
+
+[split]
+# 15% stratified test set, consulted once; 5-fold CV over the remaining 85%.
+test_ratio = 0.15
+folds = 5
+seed = 42
+stratification_bins = 10
+
+[search]
+learning_rates = [0.001, 0.005, 0.01, 0.05]
+max_epochs = 2000
+patience = 100
+min_delta = 1e-8
+initialization_seed = 42
