@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, path::Path};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 
@@ -8,8 +11,10 @@ use crate::digits::{
         TrainingOutcome,
     },
     artifact::DigitModelArtifact,
+    attribution::run_attribution_study,
     config::DigitStudyConfig,
     data::load_digit_dataset,
+    noise::{model_label, run_noise_study},
 };
 
 const BASELINE_NAME: &str = "exercise2_winner_on_more_digits";
@@ -73,6 +78,56 @@ pub fn resume(data: &Path, model: &Path, epochs: usize, output: &Path) -> Result
     let artifact = DigitModelArtifact::load(model)
         .with_context(|| format!("failed to load model {}", model.display()))?;
     run_digit_continue(&dataset, &artifact, epochs, output)?;
+    Ok(())
+}
+
+/// Evaluates saved models on `data` under Gaussian and salt-and-pepper
+/// noise. The first model is the primary one shown in the example grid.
+pub fn noise(
+    data: &Path,
+    models: &[PathBuf],
+    gaussian_sigmas: &[f64],
+    salt_pepper_fractions: &[f64],
+    seed: u64,
+    output: &Path,
+) -> Result<()> {
+    let dataset = load_digit_dataset(data)
+        .with_context(|| format!("failed to load digit dataset {}", data.display()))?;
+    let artifacts = models
+        .iter()
+        .map(|path| {
+            let artifact = DigitModelArtifact::load(path)
+                .with_context(|| format!("failed to load model {}", path.display()))?;
+            Ok((model_label(path), artifact))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    std::fs::create_dir_all(output)?;
+    run_noise_study(
+        &dataset,
+        &artifacts,
+        gaussian_sigmas,
+        salt_pepper_fractions,
+        seed,
+        output,
+    )?;
+    Ok(())
+}
+
+/// Saliency, gradient x input and Integrated Gradients for a saved model.
+pub fn attribution(
+    data: &Path,
+    model: &Path,
+    steps: usize,
+    per_class: usize,
+    examples: usize,
+    output: &Path,
+) -> Result<()> {
+    let dataset = load_digit_dataset(data)
+        .with_context(|| format!("failed to load digit dataset {}", data.display()))?;
+    let artifact = DigitModelArtifact::load(model)
+        .with_context(|| format!("failed to load model {}", model.display()))?;
+    std::fs::create_dir_all(output)?;
+    run_attribution_study(&dataset, &artifact, steps, per_class, examples, output)?;
     Ok(())
 }
 

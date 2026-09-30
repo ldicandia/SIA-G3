@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::{
     config::FeatureConfig,
-    data::{transform_raw_row, ScalerError, StandardScaler},
+    data::{transform_raw_row, FeatureError, ScalerError, StandardScaler},
     model::{ModelError, SingleLayerPerceptron},
 };
 
@@ -35,6 +35,8 @@ pub enum FraudArtifactError {
     #[error("unsupported model artifact version {0}")]
     UnsupportedVersion(u32),
     #[error(transparent)]
+    Feature(#[from] FeatureError),
+    #[error(transparent)]
     Scaler(#[from] ScalerError),
     #[error(transparent)]
     Model(#[from] ModelError),
@@ -58,7 +60,7 @@ impl FraudModelArtifact {
 
     /// Fraud probability for one raw transaction (columns in `raw_feature_names` order).
     pub fn score_raw(&self, raw: &[f64]) -> Result<f64, FraudArtifactError> {
-        let transformed = transform_raw_row(&self.raw_feature_names, raw, &self.features);
+        let transformed = transform_raw_row(&self.raw_feature_names, raw, &self.features)?;
         let scaled = self.scaler.transform_row(&transformed)?;
         Ok(self.model.predict(&scaled)?)
     }
@@ -75,11 +77,12 @@ mod tests {
         let features = FeatureConfig {
             drop: vec![],
             log1p: vec!["b".into()],
+            ..Default::default()
         };
         let names = vec!["a".to_owned(), "b".to_owned()];
         let transformed = DenseMatrix::from_rows(
             (0..2)
-                .map(|row| transform_raw_row(&names, raw.row(row).unwrap(), &features))
+                .map(|row| transform_raw_row(&names, raw.row(row).unwrap(), &features).unwrap())
                 .collect(),
         )
         .unwrap();

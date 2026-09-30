@@ -8,8 +8,8 @@ use tp3_rust::{
     digits::live_dashboard::{run_monitor, spawn_monitor_process},
     exercises::{exercise2, exercise3},
     experiment::{
-        run_generalization, run_inspection, run_learning_comparison, run_scoring,
-        FraudModelArtifact,
+        run_calibration, run_feature_study, run_generalization, run_inspection,
+        run_learning_comparison, run_scoring, FraudModelArtifact,
     },
 };
 
@@ -29,6 +29,10 @@ enum Command {
     Compare(ExperimentArgs),
     /// Run the train/validation/test generalization study.
     Generalize(ExperimentArgs),
+    /// Calibrate the TinyModel against flagged_fraud (Platt, isotonic, ECE, Brier).
+    Calibrate(CalibrateArgs),
+    /// Measure derived features and drop-one ablations with the same CV protocol.
+    FeatureStudy(ExperimentArgs),
     /// Run inspection, learning comparison, and generalization.
     RunAll(ExperimentArgs),
     /// Score a fraud CSV with a saved TinyModel (fraud_model.toml).
@@ -55,6 +59,10 @@ enum Exercise2Command {
     Evaluate(DigitEvaluateArgs),
     /// Resume training of a saved model for more epochs.
     Continue(DigitContinueArgs),
+    /// Accuracy of saved models under seeded Gaussian and salt-and-pepper pixel noise.
+    Noise(DigitNoiseArgs),
+    /// Saliency, gradient x input and Integrated Gradients maps for a saved model.
+    Attribution(DigitAttributionArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -65,6 +73,10 @@ enum Exercise3Command {
     Evaluate(DigitEvaluateArgs),
     /// Resume training of a saved model for more epochs.
     Continue(DigitContinueArgs),
+    /// Accuracy of saved models under seeded Gaussian and salt-and-pepper pixel noise.
+    Noise(DigitNoiseArgs),
+    /// Saliency, gradient x input and Integrated Gradients maps for a saved model.
+    Attribution(DigitAttributionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -91,6 +103,26 @@ struct ExperimentArgs {
     /// Directory where CSV metrics and PNG plots are written.
     #[arg(long, default_value = "output")]
     output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct CalibrateArgs {
+    #[command(flatten)]
+    experiment: ExperimentArgs,
+    /// Cost of a missed fraud in units of one manual review (decision threshold 1 / (1 + ratio)).
+    #[arg(long, default_value_t = 20.0, value_parser = parse_cost_ratio)]
+    cost_ratio: f64,
+}
+
+fn parse_cost_ratio(value: &str) -> Result<f64, String> {
+    let ratio = value
+        .parse::<f64>()
+        .map_err(|error| format!("invalid cost ratio: {error}"))?;
+    if ratio.is_finite() && ratio > 0.0 {
+        Ok(ratio)
+    } else {
+        Err("cost ratio must be finite and greater than 0".into())
+    }
 }
 
 #[derive(Debug, Args)]
@@ -188,6 +220,65 @@ struct DigitEvaluateArgs {
     output: PathBuf,
 }
 
+#[derive(Debug, Args)]
+struct DigitNoiseArgs {
+    /// Path to the production-like digit dataset.
+    #[arg(
+        long,
+        default_value = "../TP3/data/data and documentation/digits_test.csv"
+    )]
+    data: PathBuf,
+    /// Persisted selected_model.toml files (repeatable); the first one is the
+    /// primary model shown in noisy_examples.png.
+    #[arg(long, required = true)]
+    model: Vec<PathBuf>,
+    /// Directory for the robustness CSV and plots.
+    #[arg(long)]
+    output: PathBuf,
+    /// Standard deviations of the additive Gaussian noise (pixels in [0, 1], clamped).
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0"
+    )]
+    gaussian_sigmas: Vec<f64>,
+    /// Fractions of pixels replaced by salt (1) or pepper (0).
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "0,0.05,0.1,0.2,0.3,0.4,0.5"
+    )]
+    salt_pepper: Vec<f64>,
+    /// Seed of the noise; every model sees the same corrupted images.
+    #[arg(long, default_value_t = 42)]
+    seed: u64,
+}
+
+#[derive(Debug, Args)]
+struct DigitAttributionArgs {
+    /// Path to the production-like digit dataset.
+    #[arg(
+        long,
+        default_value = "../TP3/data/data and documentation/digits_test.csv"
+    )]
+    data: PathBuf,
+    /// Persisted selected_model.toml file.
+    #[arg(long)]
+    model: PathBuf,
+    /// Directory for attribution CSVs and plots.
+    #[arg(long)]
+    output: PathBuf,
+    /// Midpoint Riemann steps of Integrated Gradients (black baseline).
+    #[arg(long, default_value_t = 50)]
+    steps: usize,
+    /// Correctly classified test digits averaged per class.
+    #[arg(long, default_value_t = 100)]
+    per_class: usize,
+    /// Correct and misclassified examples shown (each).
+    #[arg(long, default_value_t = 5)]
+    examples: usize,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -210,6 +301,14 @@ fn main() -> Result<()> {
             let (dataset, config) = load_inputs(&args)?;
             run_generalization(&dataset, &config, &args.output)?;
         }
+        Command::Calibrate(args) => {
+            let (dataset, config) = load_inputs(&args.experiment)?;
+            run_calibration(&dataset, &config, args.cost_ratio, &args.experiment.output)?;
+        }
+        Command::FeatureStudy(args) => {
+            let (dataset, config) = load_inputs(&args)?;
+            run_feature_study(&dataset, &config, &args.output)?;
+        }
         Command::RunAll(args) => {
             let (dataset, config) = load_inputs(&args)?;
             run_inspection(&dataset, &config.features, &args.output)?;
@@ -227,6 +326,26 @@ fn main() -> Result<()> {
             }
             Exercise2Command::Continue(args) => {
                 exercise2::resume(&args.data, &args.model, args.epochs, &args.output)?;
+            }
+            Exercise2Command::Noise(args) => {
+                exercise2::noise(
+                    &args.data,
+                    &args.model,
+                    &args.gaussian_sigmas,
+                    &args.salt_pepper,
+                    args.seed,
+                    &args.output,
+                )?;
+            }
+            Exercise2Command::Attribution(args) => {
+                exercise2::attribution(
+                    &args.data,
+                    &args.model,
+                    args.steps,
+                    args.per_class,
+                    args.examples,
+                    &args.output,
+                )?;
             }
         },
         Command::Exercise3 { command } => match command {
@@ -247,6 +366,26 @@ fn main() -> Result<()> {
             }
             Exercise3Command::Continue(args) => {
                 exercise3::resume(&args.data, &args.model, args.epochs, &args.output)?;
+            }
+            Exercise3Command::Noise(args) => {
+                exercise3::noise(
+                    &args.data,
+                    &args.model,
+                    &args.gaussian_sigmas,
+                    &args.salt_pepper,
+                    args.seed,
+                    &args.output,
+                )?;
+            }
+            Exercise3Command::Attribution(args) => {
+                exercise3::attribution(
+                    &args.data,
+                    &args.model,
+                    args.steps,
+                    args.per_class,
+                    args.examples,
+                    &args.output,
+                )?;
             }
         },
         Command::Monitor(args) => run_monitor(args.udp_address, args.http_address)?,

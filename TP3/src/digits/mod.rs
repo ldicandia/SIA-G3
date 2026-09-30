@@ -1,7 +1,10 @@
 pub mod analyze;
 pub mod artifact;
+pub mod attribution;
 pub mod config;
 pub mod data;
+pub(crate) mod image_grid;
 pub mod live_dashboard;
 pub mod metrics;
+pub mod noise;
 pub mod training;

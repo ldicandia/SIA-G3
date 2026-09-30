@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
-    matrix::DenseMatrix,
+    matrix::{DenseMatrix, MatrixError},
     model::{Activation, ModelError, MultilayerPerceptron},
 };
 
@@ -62,8 +62,12 @@ pub enum DigitTrainingError {
     InvalidTopology,
     #[error("training produced a non-finite value")]
     NonFinite,
+    #[error("class {0} is not a digit class")]
+    InvalidClass(usize),
     #[error(transparent)]
     Model(#[from] ModelError),
+    #[error(transparent)]
+    Matrix(#[from] MatrixError),
 }
 
 pub fn train_digit_candidate(
@@ -325,6 +329,57 @@ pub fn predict_digit_probabilities(
         )
         .collect::<Vec<_>>();
     Ok(shards.concat())
+}
+
+/// Gradient of the logit of class `target_classes[r]` with respect to row
+/// `r` of `inputs` (`∂z_c / ∂x`), computed with the same batched backprop
+/// kernels used for training (no dropout, no augmentation). The result has
+/// the shape of `inputs`.
+pub fn digit_input_gradients(
+    model: &MultilayerPerceptron,
+    inputs: &DenseMatrix,
+    target_classes: &[usize],
+) -> Result<DenseMatrix, DigitTrainingError> {
+    if inputs.rows() == 0 {
+        return Err(DigitTrainingError::EmptyTrainingSet);
+    }
+    if target_classes.len() != inputs.rows() {
+        return Err(DigitTrainingError::LabelLength);
+    }
+    let topology = model.topology();
+    if topology.first() != Some(&inputs.cols())
+        || topology.last() != Some(&DIGIT_CLASSES)
+        || model.layers.last().map(|layer| layer.activation) != Some(Activation::Linear)
+    {
+        return Err(DigitTrainingError::InvalidTopology);
+    }
+    if let Some(&class) = target_classes.iter().find(|&&class| class >= DIGIT_CLASSES) {
+        return Err(DigitTrainingError::InvalidClass(class));
+    }
+    let cols = inputs.cols();
+    let indices = (0..inputs.rows()).collect::<Vec<_>>();
+    let shards = indices
+        .par_chunks(EVALUATION_SHARD)
+        .map_init(
+            || BatchWorkspace::new(model, EVALUATION_SHARD, false),
+            |workspace, rows| {
+                load_inputs(workspace, inputs, rows, None);
+                forward_batch(model, workspace, rows, None);
+                let targets = rows
+                    .iter()
+                    .map(|&row| target_classes[row])
+                    .collect::<Vec<_>>();
+                let mut gradients = vec![0.0; rows.len() * cols];
+                backward_input_batch(model, workspace, &targets, rows.len(), &mut gradients);
+                gradients
+            },
+        )
+        .collect::<Vec<_>>();
+    let gradients = shards.concat();
+    if gradients.iter().any(|value| !value.is_finite()) {
+        return Err(DigitTrainingError::NonFinite);
+    }
+    Ok(DenseMatrix::new(inputs.rows(), cols, gradients)?)
 }
 
 /// `target = sum of the shard gradients`, reduced in parallel chunks.

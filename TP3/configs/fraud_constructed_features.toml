@@ -1,0 +1,31 @@
+# Exercise 1: fraud TinyModel with constructed features (optional study).
+#
+# Produced by `feature-study` (output/feature_study/feature_study.csv).
+# Selection rule: keep every derived feature whose individual addition to the
+# default feature set improved BOTH the 5-fold CV mean F1 and the 5-fold CV
+# mean average precision over the baseline. Only development rows were used
+# (the test split was never consulted). The main Exercise 1 model is still
+# configs/default.toml; see README "Opcionales" for the discussion.
+
+[features]
+drop = ["timestamp"]
+log1p = [
+    "amount_usd",
+    "days_since_last_purchase",
+    "time_since_last_login_s",
+]
+derived = ["amount_per_account_day", "weekend"]
+
+[split]
+# 15% stratified test set, consulted once; 5-fold CV over the remaining 85%.
+test_ratio = 0.15
+folds = 5
+seed = 42
+stratification_bins = 10
+
+[search]
+learning_rates = [0.001, 0.005, 0.01, 0.05]
+max_epochs = 2000
+patience = 100
+min_delta = 1e-8
+initialization_seed = 42

@@ -1,6 +1,8 @@
 //! Reproducible experiment orchestration and artifact generation.
 
 mod artifact;
+mod calibration;
+mod feature_study;
 mod plots;
 mod report;
 mod trials;
@@ -16,14 +18,16 @@ use crate::{
     matrix::DenseMatrix,
     metrics::{
         average_precision, best_f1_threshold, confusion_matrix, mean_std, regression_metrics,
-        threshold_sweep,
+        threshold_sweep, ThresholdMetrics,
     },
     model::{Activation, SingleLayerPerceptron},
-    split::{stratified_folds, stratified_holdout},
+    split::{stratified_folds, stratified_holdout, Fold, HoldoutSplit},
     training::{predict_single_indices, train_single_layer, TrainingConfig},
 };
 
 pub use artifact::*;
+pub use calibration::run_calibration;
+pub use feature_study::run_feature_study;
 use plots::*;
 use report::*;
 use trials::*;
@@ -132,114 +136,23 @@ pub fn run_learning_comparison(
 pub fn run_generalization(raw: &FraudDataset, config: &AppConfig, output: &Path) -> Result<()> {
     fs::create_dir_all(output)?;
     let dataset = apply_feature_config(raw, &config.features)?;
-    let split = &config.split;
-    let holdout = stratified_holdout(
-        &dataset.teacher_targets,
-        split.test_ratio,
-        split.stratification_bins,
-        split.seed,
-    )?;
-    let folds = stratified_folds(
-        &dataset.teacher_targets,
-        &holdout.development,
-        split.folds,
-        split.stratification_bins,
-        split.seed.wrapping_add(1),
-    )?;
+    let cv = cross_validate(&dataset, config)?;
     write_split_summary(
         &dataset,
-        &holdout,
-        &folds,
+        &cv.holdout,
+        &cv.folds,
         &output.join("split_summary.csv"),
     )?;
+    write_cv_trials(&cv.trials, &output.join("generalization_trials.csv"))?;
+    write_cv_summary(&cv.summaries, &output.join("cv_summary.csv"))?;
+    write_threshold_sweep(&cv.sweep, &output.join("threshold_sweep.csv"))?;
+    write_fold_metrics(&cv.fold_rows, &output.join("fold_metrics.csv"))?;
 
-    let fold_features = folds
-        .iter()
-        .map(|fold| {
-            let scaler = StandardScaler::fit(&dataset.features, &fold.train)?;
-            Ok(scaler.transform(&dataset.features)?)
-        })
-        .collect::<Result<Vec<DenseMatrix>>>()?;
-    let mut trials = run_cv_trials(
-        &config.search.learning_rates,
-        &folds,
-        &fold_features,
-        &dataset.teacher_targets,
-        config,
-    )?;
-    trials.sort_by(|left, right| {
-        left.learning_rate
-            .total_cmp(&right.learning_rate)
-            .then(left.fold.cmp(&right.fold))
-    });
-    write_cv_trials(&trials, &output.join("generalization_trials.csv"))?;
-
-    let summaries = summarize_learning_rates(&config.search.learning_rates, &trials);
-    write_cv_summary(&summaries, &output.join("cv_summary.csv"))?;
-    let chosen = summaries
-        .iter()
-        .min_by(|left, right| left.validation_mse.0.total_cmp(&right.validation_mse.0))
-        .context("no learning-rate candidates were configured")?
-        .clone();
-    let chosen_trials = trials
-        .iter()
-        .filter(|trial| trial.learning_rate == chosen.learning_rate)
-        .collect::<Vec<_>>();
-
-    // Out-of-fold scores cover every development row exactly once.
-    let mut pooled_scores = Vec::with_capacity(holdout.development.len());
-    let mut pooled_labels = Vec::with_capacity(holdout.development.len());
-    for trial in &chosen_trials {
-        pooled_scores.extend_from_slice(&trial.validation_predictions);
-        pooled_labels.extend(select_values(
-            &dataset.fraud_labels,
-            &folds[trial.fold].validation,
-        ));
-    }
-    let sweep = threshold_sweep(&pooled_scores, &pooled_labels)?;
-    let threshold = best_f1_threshold(&sweep)
-        .context("threshold sweep was empty")?
-        .threshold;
-    write_threshold_sweep(&sweep, &output.join("threshold_sweep.csv"))?;
-
-    let mut fold_rows = Vec::new();
-    for trial in &chosen_trials {
-        let labels = select_values(&dataset.fraud_labels, &folds[trial.fold].validation);
-        let confusion = confusion_matrix(&trial.validation_predictions, &labels, threshold)?;
-        fold_rows.push(FoldClassification {
-            fold: trial.fold,
-            mse: trial.validation_metrics.mse,
-            r2: trial.validation_metrics.r2,
-            precision: confusion.precision(),
-            recall: confusion.recall(),
-            f1: confusion.f1(),
-            accuracy: confusion.accuracy(),
-            average_precision: average_precision(&trial.validation_predictions, &labels)?,
-        });
-    }
-    write_fold_metrics(&fold_rows, &output.join("fold_metrics.csv"))?;
-
-    let development = &holdout.development;
-    let final_scaler = StandardScaler::fit(&dataset.features, development)?;
+    let (final_scaler, final_model) = refit_tinymodel(&dataset, config, &cv)?;
     let final_features = final_scaler.transform(&dataset.features)?;
-    let mut final_model = SingleLayerPerceptron::new(
-        final_features.cols(),
-        Activation::Sigmoid,
-        config.search.initialization_seed,
-    )?;
-    train_single_layer(
-        &mut final_model,
-        &final_features,
-        &dataset.teacher_targets,
-        development,
-        None,
-        &MeanSquaredError,
-        TrainingConfig::fixed(
-            chosen.learning_rate,
-            chosen.median_epoch,
-            config.search.initialization_seed,
-        ),
-    )?;
+    let holdout = &cv.holdout;
+    let chosen = &cv.chosen;
+    let threshold = cv.threshold;
 
     let test_predictions = predict_single_indices(&final_model, &final_features, &holdout.test)?;
     let test_targets = select_values(&dataset.teacher_targets, &holdout.test);
@@ -282,15 +195,15 @@ pub fn run_generalization(raw: &FraudDataset, config: &AppConfig, output: &Path)
     }
     .save(&output.join("fraud_model.toml"))?;
 
-    let histories = chosen_trials
-        .iter()
+    let histories = cv
+        .chosen_trials()
         .map(|trial| (trial.fold, trial.report.history.as_slice()))
         .collect::<Vec<_>>();
     plot_cv_histories(
         &histories,
         &output.join("generalization_learning_curve.png"),
     )?;
-    plot_threshold_metrics(&sweep, threshold, &output.join("threshold_metrics.png"))?;
+    plot_threshold_metrics(&cv.sweep, threshold, &output.join("threshold_metrics.png"))?;
     eprintln!(
         "generalize selected learning_rate={} epochs={} threshold={threshold:.5} test_f1={:.4}",
         chosen.learning_rate,
@@ -298,6 +211,162 @@ pub fn run_generalization(raw: &FraudDataset, config: &AppConfig, output: &Path)
         confusion.f1()
     );
     Ok(())
+}
+
+/// Result of the Exercise 1 cross-validation protocol on an already
+/// feature-transformed dataset. Shared by `generalize`, `calibrate` and
+/// `feature-study` so every study uses exactly the same splits, search and
+/// threshold rule.
+struct CrossValidation {
+    holdout: HoldoutSplit,
+    folds: Vec<Fold>,
+    /// Every (learning rate, fold) trial, sorted by (learning rate, fold).
+    trials: Vec<FoldTrial>,
+    summaries: Vec<LearningRateSummary>,
+    chosen: LearningRateSummary,
+    /// Development row index of each pooled out-of-fold score.
+    oof_rows: Vec<usize>,
+    oof_scores: Vec<f64>,
+    oof_labels: Vec<bool>,
+    sweep: Vec<ThresholdMetrics>,
+    threshold: f64,
+    fold_rows: Vec<FoldClassification>,
+}
+
+impl CrossValidation {
+    /// Trials of the chosen learning rate, in fold order.
+    fn chosen_trials(&self) -> impl Iterator<Item = &FoldTrial> {
+        self.trials
+            .iter()
+            .filter(|trial| trial.learning_rate == self.chosen.learning_rate)
+    }
+}
+
+/// Holdout, stratified k-fold CV over the development rows (one scaler per
+/// fold), learning-rate selection by mean validation MSE, pooled out-of-fold
+/// scores and the F1-maximizing threshold. The test rows are never touched.
+fn cross_validate(dataset: &FraudDataset, config: &AppConfig) -> Result<CrossValidation> {
+    let split = &config.split;
+    let holdout = stratified_holdout(
+        &dataset.teacher_targets,
+        split.test_ratio,
+        split.stratification_bins,
+        split.seed,
+    )?;
+    let folds = stratified_folds(
+        &dataset.teacher_targets,
+        &holdout.development,
+        split.folds,
+        split.stratification_bins,
+        split.seed.wrapping_add(1),
+    )?;
+
+    let fold_features = folds
+        .iter()
+        .map(|fold| {
+            let scaler = StandardScaler::fit(&dataset.features, &fold.train)?;
+            Ok(scaler.transform(&dataset.features)?)
+        })
+        .collect::<Result<Vec<DenseMatrix>>>()?;
+    let mut trials = run_cv_trials(
+        &config.search.learning_rates,
+        &folds,
+        &fold_features,
+        &dataset.teacher_targets,
+        config,
+    )?;
+    trials.sort_by(|left, right| {
+        left.learning_rate
+            .total_cmp(&right.learning_rate)
+            .then(left.fold.cmp(&right.fold))
+    });
+
+    let summaries = summarize_learning_rates(&config.search.learning_rates, &trials);
+    let chosen = summaries
+        .iter()
+        .min_by(|left, right| left.validation_mse.0.total_cmp(&right.validation_mse.0))
+        .context("no learning-rate candidates were configured")?
+        .clone();
+
+    // Out-of-fold scores cover every development row exactly once.
+    let mut oof_rows = Vec::with_capacity(holdout.development.len());
+    let mut oof_scores = Vec::with_capacity(holdout.development.len());
+    let mut oof_labels = Vec::with_capacity(holdout.development.len());
+    let mut fold_rows = Vec::new();
+    let chosen_trials = trials
+        .iter()
+        .filter(|trial| trial.learning_rate == chosen.learning_rate)
+        .collect::<Vec<_>>();
+    for trial in &chosen_trials {
+        let validation = &folds[trial.fold].validation;
+        oof_rows.extend_from_slice(validation);
+        oof_scores.extend_from_slice(&trial.validation_predictions);
+        oof_labels.extend(select_values(&dataset.fraud_labels, validation));
+    }
+    let sweep = threshold_sweep(&oof_scores, &oof_labels)?;
+    let threshold = best_f1_threshold(&sweep)
+        .context("threshold sweep was empty")?
+        .threshold;
+
+    for trial in &chosen_trials {
+        let labels = select_values(&dataset.fraud_labels, &folds[trial.fold].validation);
+        let confusion = confusion_matrix(&trial.validation_predictions, &labels, threshold)?;
+        fold_rows.push(FoldClassification {
+            fold: trial.fold,
+            mse: trial.validation_metrics.mse,
+            r2: trial.validation_metrics.r2,
+            precision: confusion.precision(),
+            recall: confusion.recall(),
+            f1: confusion.f1(),
+            accuracy: confusion.accuracy(),
+            average_precision: average_precision(&trial.validation_predictions, &labels)?,
+        });
+    }
+
+    Ok(CrossValidation {
+        holdout,
+        folds,
+        trials,
+        summaries,
+        chosen,
+        oof_rows,
+        oof_scores,
+        oof_labels,
+        sweep,
+        threshold,
+        fold_rows,
+    })
+}
+
+/// Final TinyModel: a scaler fitted on all development rows and a sigmoid
+/// neuron trained for the chosen learning rate and median epoch count.
+fn refit_tinymodel(
+    dataset: &FraudDataset,
+    config: &AppConfig,
+    cv: &CrossValidation,
+) -> Result<(StandardScaler, SingleLayerPerceptron)> {
+    let development = &cv.holdout.development;
+    let final_scaler = StandardScaler::fit(&dataset.features, development)?;
+    let final_features = final_scaler.transform(&dataset.features)?;
+    let mut final_model = SingleLayerPerceptron::new(
+        final_features.cols(),
+        Activation::Sigmoid,
+        config.search.initialization_seed,
+    )?;
+    train_single_layer(
+        &mut final_model,
+        &final_features,
+        &dataset.teacher_targets,
+        development,
+        None,
+        &MeanSquaredError,
+        TrainingConfig::fixed(
+            cv.chosen.learning_rate,
+            cv.chosen.median_epoch,
+            config.search.initialization_seed,
+        ),
+    )?;
+    Ok((final_scaler, final_model))
 }
 
 /// Scores a fraud CSV with a persisted TinyModel and reports its metrics.

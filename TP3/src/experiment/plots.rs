@@ -5,7 +5,10 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use plotters::prelude::*;
 
-use crate::{data::FraudDataset, metrics::ThresholdMetrics, training::EpochMetrics};
+use crate::{
+    calibration::ReliabilityBin, data::FraudDataset, metrics::ThresholdMetrics,
+    training::EpochMetrics,
+};
 
 use super::trials::LearningRun;
 
@@ -336,4 +339,148 @@ fn padded_range(values: &[f64]) -> (f64, f64) {
         let padding = (maximum - minimum) * 0.05;
         (minimum - padding, maximum + padding)
     }
+}
+
+/// Reliability diagram: observed fraud rate against mean predicted
+/// probability per non-empty bin, one series per model, plus the y = x
+/// diagonal of perfect calibration.
+pub(super) fn plot_reliability_diagram(
+    series: &[(&str, &[ReliabilityBin])],
+    path: &Path,
+) -> Result<()> {
+    if series.is_empty() {
+        bail!("cannot plot an empty reliability diagram");
+    }
+    let root = BitMapBackend::new(path, (1000, 800)).into_drawing_area();
+    root.fill(&WHITE)?;
+    let mut chart = ChartBuilder::on(&root)
+        .caption(
+            "Reliability diagram on test (10 equal-width bins)",
+            ("sans-serif", 28),
+        )
+        .margin(20)
+        .x_label_area_size(50)
+        .y_label_area_size(60)
+        .build_cartesian_2d(0.0..1.0, 0.0..1.0)?;
+    chart
+        .configure_mesh()
+        .x_desc("mean predicted probability")
+        .y_desc("observed fraud rate (flagged_fraud)")
+        .draw()?;
+    chart
+        .draw_series(DashedLineSeries::new(
+            vec![(0.0, 0.0), (1.0, 1.0)],
+            8,
+            6,
+            BLACK.stroke_width(1),
+        ))?
+        .label("perfect calibration")
+        .legend(|(x, y)| PathElement::new([(x, y), (x + 20, y)], BLACK));
+    for (index, (name, bins)) in series.iter().enumerate() {
+        let color = PALETTE[index % PALETTE.len()];
+        let points = bins
+            .iter()
+            .filter_map(|bin| Some((bin.mean_predicted?, bin.observed_rate?)))
+            .collect::<Vec<_>>();
+        chart
+            .draw_series(LineSeries::new(points.clone(), color.stroke_width(2)))?
+            .label(*name)
+            .legend(move |(x, y)| PathElement::new([(x, y), (x + 20, y)], color.stroke_width(3)));
+        chart.draw_series(
+            points
+                .into_iter()
+                .map(|point| Circle::new(point, 5, color.filled())),
+        )?;
+    }
+    chart
+        .configure_series_labels()
+        .position(SeriesLabelPosition::UpperLeft)
+        .background_style(WHITE.mix(0.85))
+        .border_style(BLACK)
+        .draw()?;
+    root.present()?;
+    Ok(())
+}
+
+/// A labelled metric drawn as one panel of the feature-study plot.
+type BarMetric = (&'static str, fn(&FeatureStudyBar) -> f64);
+
+/// One variant of the feature study, as a change against the baseline.
+pub(super) struct FeatureStudyBar {
+    pub(super) label: String,
+    pub(super) kind: &'static str,
+    pub(super) delta_f1_pp: f64,
+    pub(super) delta_ap_pp: f64,
+}
+
+/// Horizontal bars of the CV-mean F1 and AP change (percentage points)
+/// of every variant against the baseline, colored by kind.
+pub(super) fn plot_feature_study(bars: &[FeatureStudyBar], path: &Path) -> Result<()> {
+    if bars.is_empty() {
+        bail!("cannot plot an empty feature study");
+    }
+    let count = bars.len();
+    let height = (80 + 34 * count as u32).max(400);
+    let root = BitMapBackend::new(path, (1500, height)).into_drawing_area();
+    root.fill(&WHITE)?;
+    let (title, body) = root.split_vertically(50);
+    title.titled(
+        "Feature study: change vs baseline (5-fold CV mean, percentage points)",
+        ("sans-serif", 26),
+    )?;
+    let panels = body.split_evenly((1, 2));
+    // The first variant is drawn at the top.
+    let flip = |index: usize| count - index - 1;
+    let metrics: [BarMetric; 2] = [
+        ("delta F1 (pp)", |bar| bar.delta_f1_pp),
+        ("delta average precision (pp)", |bar| bar.delta_ap_pp),
+    ];
+    for (panel, (description, metric)) in panels.iter().zip(metrics) {
+        let values = bars.iter().map(metric).collect::<Vec<_>>();
+        let limit = values
+            .iter()
+            .fold(0.0_f64, |acc, value| acc.max(value.abs()))
+            .max(0.05)
+            * 1.1;
+        let mut chart = ChartBuilder::on(panel)
+            .margin(15)
+            .x_label_area_size(45)
+            .y_label_area_size(260)
+            .build_cartesian_2d(-limit..limit, (0usize..count - 1).into_segmented())?;
+        chart
+            .configure_mesh()
+            .disable_y_mesh()
+            .x_desc(description)
+            .y_labels(count)
+            .label_style(("sans-serif", 15))
+            .y_label_formatter(&|value| match value {
+                SegmentValue::CenterOf(row) if *row < count => bars[flip(*row)].label.clone(),
+                _ => String::new(),
+            })
+            .draw()?;
+        for (index, (bar, value)) in bars.iter().zip(&values).enumerate() {
+            let color = match bar.kind {
+                "drop" => ORANGE,
+                "add" => BLUE,
+                _ => GREEN,
+            };
+            let row = flip(index);
+            chart.draw_series(std::iter::once(Rectangle::new(
+                [
+                    (0.0, SegmentValue::Exact(row)),
+                    (*value, SegmentValue::Exact(row + 1)),
+                ],
+                color.mix(0.8).filled(),
+            )))?;
+        }
+        chart.draw_series(std::iter::once(PathElement::new(
+            vec![
+                (0.0, SegmentValue::Exact(0)),
+                (0.0, SegmentValue::Exact(count)),
+            ],
+            BLACK.stroke_width(2),
+        )))?;
+    }
+    root.present()?;
+    Ok(())
 }

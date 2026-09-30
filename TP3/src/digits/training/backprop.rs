@@ -233,6 +233,59 @@ pub(super) fn backward_batch(
     }
 }
 
+/// Gradient of one logit per row with respect to the network input, run
+/// after `forward_batch(model, workspace, rows, None)` on the same shard.
+///
+/// The output delta is a one-hot vector at each row's target class: the
+/// gradient of the target LOGIT `z_c`, not of softmax cross-entropy, so the
+/// softmax stored in the last activation is ignored. It is then propagated
+/// with the same `D · W` products and `f'(A)` factors as `backward_batch`,
+/// one step further than training does: at layer 0 the product `D · W₀` is
+/// `∂z_c / ∂x`. No dropout and no parameter gradients. Writes
+/// `count x input_size` values into `input_gradients`.
+pub(super) fn backward_input_batch(
+    model: &MultilayerPerceptron,
+    workspace: &mut BatchWorkspace,
+    target_classes: &[usize],
+    count: usize,
+    input_gradients: &mut [f64],
+) {
+    let last = model.layers.len() - 1;
+    let classes = model.layers[last].output_size;
+    let output_delta = &mut workspace.deltas[last][..count * classes];
+    output_delta.fill(0.0);
+    for (delta, &target) in output_delta.chunks_exact_mut(classes).zip(target_classes) {
+        delta[target] = 1.0;
+    }
+
+    for index in (0..=last).rev() {
+        let layer = &model.layers[index];
+        let (inputs, outputs) = (layer.input_size, layer.output_size);
+        if index == 0 {
+            matmul_nn(
+                &workspace.deltas[0][..count * outputs],
+                outputs,
+                &layer.weights,
+                &mut input_gradients[..count * inputs],
+            );
+            break;
+        }
+        let (lower, upper) = workspace.deltas.split_at_mut(index);
+        let previous = &mut lower[index - 1][..count * inputs];
+        matmul_nn(
+            &upper[0][..count * outputs],
+            outputs,
+            &layer.weights,
+            previous,
+        );
+        let activation = model.layers[index - 1].activation;
+        let values = &workspace.activations[index][..count * inputs];
+        for (delta, &value) in previous.iter_mut().zip(values) {
+            *delta *= activation.derivative_from_output(value);
+        }
+    }
+}
+
 pub(super) fn argmax(values: &[f64]) -> usize {
     values
         .iter()

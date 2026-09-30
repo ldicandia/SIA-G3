@@ -5,9 +5,36 @@ Resumen de las correcciones hechas a `TP3-rust` para que cumpla con todos los pu
 Estado final:
 
 - Validaciones de la consigna: `validate_all` pasa (AND, `y=x`, `y=tanh(x)`, XOR `[2,2,1]` y `[2,3,2,1]`, escalón vs XOR).
-- Tests: 43 OK. `clippy -D warnings` y `fmt --check` limpios.
+- Tests: 65 OK (43 originales + 22 de los opcionales). `clippy -D warnings` y `fmt --check` limpios.
 - Ejercicio 3: **98,64% de accuracy en `digits_test.csv`**, así que se cumple el objetivo de ≥98% (antes daba 95,79%).
 - Todos los outputs regenerados en `output/`.
+
+## Opcionales implementados
+
+Los cuatro opcionales de la consigna quedan resueltos, con CSV + PNG y la respuesta en la sección "Opcionales" del README. Los resultados del Ejercicio 1 no cambian: el protocolo de CV se extrajo a `cross_validate` + `refit_tinymodel` para compartirlo, y los CSV de `generalize` son idénticos byte a byte antes y después (verificado con `cmp`; umbral 0,858 y F1 de test 0,880 sin cambios).
+
+- **Ej1, calibración** (`calibrate`, salida en `output/calibration/`):
+  - Platt scaling e isotónica ajustadas solo sobre las predicciones out-of-fold de desarrollo.
+  - En test, Brier baja de 0,1461 a 0,0216 y ECE de 0,2966 a 0,0107 con Platt (`a = 2,683`, `b = −5,082`); la average precision no cambia (0,9496). El BigModel tiene ECE 0,304: ordena perfecto pero no es una probabilidad.
+  - Con costo de fraude = 20 revisiones, el umbral teórico `1/21` sobre la probabilidad calibrada cuesta 204 contra 524 del umbral F1 y 962 del mismo umbral sobre el score crudo.
+  - Salidas: `calibration_metrics.csv`, `reliability_bins.csv`, `platt_parameters.csv`, `calibrated_test_predictions.csv`, `calibration_decisions.csv`, `reliability_diagram.png`.
+- **Ej1, construcción de features** (`feature-study`, salida en `output/feature_study/`):
+  - 7 features derivadas (cocientes con `log1p`, interacción monto × cantidad, hora cíclica, fin de semana) y ablación drop-one, todo con el mismo CV y sin consultar el test.
+  - Solo `amount_per_account_day` ayuda sola (+0,79 pp de F1). Todas juntas suman +1,00 pp. La interacción y las de hora no ayudan, lo que confirma el descarte de `timestamp`.
+  - Se pueden descartar `device_screen_resolution` y `time_since_last_login_s` sin pérdida.
+  - Nuevo `configs/fraud_constructed_features.toml` con la selección por regla (`amount_per_account_day` + `weekend`). El modelo principal (`configs/default.toml`) no cambia.
+  - Nuevo campo opcional `derived` en `[features]`; si está vacío no se serializa, así que los `fraud_model.toml` existentes se siguen leyendo.
+- **Ej2/3, robustez al ruido** (`exercise3 noise` / `exercise2 noise`, salida en `output/exercise3/noise/`):
+  - Ruido gaussiano (σ 0 a 1, con clamp) y sal y pimienta (0 a 50%), con semilla fija y las mismas imágenes para todos los modelos.
+  - El modelo del Ej3 baja de 98,64% a 97,24% con σ = 0,1 y a 77,97% con σ = 0,2: no es robusto.
+  - Nuevo `configs/exercise3_no_augmentation.toml` (paso t4 sin augmentation, 96,80% en test): es **más** robusto (93,31% con σ = 0,2). La augmentation geométrica no da robustez a ruido de píxel.
+  - Salidas: `noise_robustness.csv` (accuracy, loss y recall por clase), `noise_accuracy.png`, `noisy_examples.png`.
+- **Ej2/3, interpretabilidad** (`exercise3 attribution` / `exercise2 attribution`, salida en `output/exercise3/attribution/`):
+  - Saliency, gradiente × input e Integrated Gradients (baseline negro, 50 pasos). El gradiente respecto de la entrada reusa los kernels de backprop con una delta one-hot en el logit (`backward_input_batch`), sin tocar el backward del entrenamiento.
+  - Completitud de IG en el modelo real: gap relativo medio 0,37%, máximo 4,03% (1.020 cálculos).
+  - Salidas: `attribution_class_means.csv/.png`, `attribution_examples.csv/.png`, `attribution_completeness.csv`.
+- **Tests nuevos (22):** métricas de calibración, Platt e isotónica, features derivadas y compatibilidad de configuración, ruido, gradiente de entrada contra diferencias finitas, completitud de IG y colores de las grillas.
+- **Dependencias:** sin cambios en `Cargo.toml` (Box–Muller escrito a mano sobre `rand_chacha`).
 
 ## Qué se corrigió
 

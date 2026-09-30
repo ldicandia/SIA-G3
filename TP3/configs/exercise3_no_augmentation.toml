@@ -1,0 +1,33 @@
+# Exercise 3 without augmentation: noise-robustness comparison (optional).
+#
+# One candidate only, a verbatim copy of ladder step t4_dropout from
+# configs/exercise3.toml: everything the selected Exercise 3 model uses
+# (capacity, He init, learning-rate decay, weight decay, dropout) EXCEPT the
+# geometric augmentation of t5. Comparing both models under the same pixel
+# noise isolates what augmentation contributes to robustness.
+#
+# The Exercise 2 winner is still retrained first as the inherited baseline
+# (added by the program). Train with:
+#   exercise3 train --config configs/exercise3_no_augmentation.toml \
+#       --output output/exercise3_no_augmentation ...
+
+validation_ratio = 0.20
+split_seed = 42
+
+[[candidates]]
+name = "t4_dropout"
+axis = "technique"
+topology = [784, 512, 256, 10]
+hidden_activation = "relu"
+optimizer = "adam"
+learning_rate = 0.001
+batch_size = 64
+max_epochs = 60
+patience = 8
+min_delta = 1e-05
+seed = 42
+initialization = "he"
+lr_decay_factor = 0.5
+lr_decay_every = 5
+weight_decay = 0.0001
+dropout = 0.2

@@ -409,7 +409,7 @@ pub(super) fn write_time_profile(dataset: &FraudDataset, path: &Path) -> Result<
     Ok(())
 }
 
-fn pearson(left: &[f64], right: &[f64]) -> f64 {
+pub(super) fn pearson(left: &[f64], right: &[f64]) -> f64 {
     let (left_mean, left_std) = mean_std(left);
     let (right_mean, right_std) = mean_std(right);
     if left_std <= f64::EPSILON || right_std <= f64::EPSILON {
@@ -422,7 +422,7 @@ fn pearson(left: &[f64], right: &[f64]) -> f64 {
         / (left.len() as f64 * left_std * right_std)
 }
 
-fn skewness(values: &[f64]) -> f64 {
+pub(super) fn skewness(values: &[f64]) -> f64 {
     let (mean, std) = mean_std(values);
     if std <= f64::EPSILON {
         return 0.0;
