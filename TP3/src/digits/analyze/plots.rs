@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use plotters::prelude::*;
+use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use super::super::data::DIGIT_CLASSES;
 use super::super::metrics::ClassificationMetrics;
@@ -115,59 +116,82 @@ pub(super) fn plot_selected_loss(run: &CandidateRun, path: &Path) -> Result<()> 
     Ok(())
 }
 
+/// Heatmap of the confusion matrix: rows are the true digit, columns the
+/// prediction. Each cell shows its count and is shaded by its share of the
+/// row, so the diagonal reads as per-class recall regardless of class size.
 pub(super) fn plot_confusion_matrix(metrics: &ClassificationMetrics, path: &Path) -> Result<()> {
-    let root = BitMapBackend::new(path, (850, 850)).into_drawing_area();
+    let root = BitMapBackend::new(path, (900, 900)).into_drawing_area();
     root.fill(&WHITE)?;
+    let caption = format!(
+        "Confusion matrix (accuracy {:.2}%)",
+        metrics.accuracy * 100.0
+    );
+    // Actual digit 0 is drawn at the top, so the y coordinate is flipped.
+    let flip = |actual: usize| DIGIT_CLASSES - actual - 1;
     let mut chart = ChartBuilder::on(&root)
-        .caption("Confusion matrix", ("sans-serif", 30))
+        .caption(caption, ("sans-serif", 30))
         .margin(30)
-        .x_label_area_size(50)
-        .y_label_area_size(50)
-        .build_cartesian_2d(0usize..DIGIT_CLASSES, 0usize..DIGIT_CLASSES)?;
+        .x_label_area_size(60)
+        .y_label_area_size(130)
+        // A segmented `a..b` range holds one segment per value in `a..=b`.
+        .build_cartesian_2d(
+            (0usize..DIGIT_CLASSES - 1).into_segmented(),
+            (0usize..DIGIT_CLASSES - 1).into_segmented(),
+        )?;
     chart
         .configure_mesh()
-        .x_desc("Predicted")
-        .y_desc("Actual")
-        .x_label_formatter(&|value| {
-            if *value < DIGIT_CLASSES {
-                value.to_string()
-            } else {
-                String::new()
-            }
-        })
-        .y_label_formatter(&|value| {
-            if *value < DIGIT_CLASSES {
-                (DIGIT_CLASSES - value - 1).to_string()
-            } else {
-                String::new()
-            }
-        })
         .disable_mesh()
+        .x_desc("Predicted digit")
+        .y_desc("Actual digit (recall)")
+        .x_labels(DIGIT_CLASSES)
+        .y_labels(DIGIT_CLASSES)
+        .label_style(("sans-serif", 18))
+        .axis_desc_style(("sans-serif", 20))
+        .x_label_formatter(&|value| match value {
+            SegmentValue::CenterOf(digit) if *digit < DIGIT_CLASSES => digit.to_string(),
+            _ => String::new(),
+        })
+        .y_label_formatter(&|value| match value {
+            SegmentValue::CenterOf(row) if *row < DIGIT_CLASSES => {
+                let actual = flip(*row);
+                match metrics.per_class_recall[actual] {
+                    Some(recall) => format!("{actual} ({:.1}%)", recall * 100.0),
+                    None => format!("{actual} (n/a)"),
+                }
+            }
+            _ => String::new(),
+        })
         .draw()?;
-    let maximum = metrics
-        .confusion
-        .iter()
-        .flatten()
-        .copied()
-        .max()
-        .unwrap_or(1)
-        .max(1) as f64;
     for actual in 0..DIGIT_CLASSES {
+        let support = metrics.confusion[actual].iter().sum::<usize>().max(1) as f64;
         for predicted in 0..DIGIT_CLASSES {
             let count = metrics.confusion[actual][predicted];
-            let intensity = count as f64 / maximum;
+            let share = count as f64 / support;
             let color = RGBColor(
-                (245.0 * (1.0 - intensity)) as u8,
-                (248.0 * (1.0 - intensity)) as u8,
+                (245.0 * (1.0 - share)) as u8,
+                (248.0 * (1.0 - share)) as u8,
                 255,
             );
+            let (x, y) = (predicted, flip(actual));
             chart.draw_series(std::iter::once(Rectangle::new(
                 [
-                    (predicted, DIGIT_CLASSES - actual - 1),
-                    (predicted + 1, DIGIT_CLASSES - actual),
+                    (SegmentValue::Exact(x), SegmentValue::Exact(y)),
+                    (SegmentValue::Exact(x + 1), SegmentValue::Exact(y + 1)),
                 ],
                 color.filled(),
             )))?;
+            if count > 0 {
+                let text_color = if share > 0.5 { WHITE } else { BLACK };
+                let style = ("sans-serif", 18)
+                    .into_font()
+                    .color(&text_color)
+                    .pos(Pos::new(HPos::Center, VPos::Center));
+                chart.draw_series(std::iter::once(Text::new(
+                    count.to_string(),
+                    (SegmentValue::CenterOf(x), SegmentValue::CenterOf(y)),
+                    style,
+                )))?;
+            }
         }
     }
     root.present()?;
