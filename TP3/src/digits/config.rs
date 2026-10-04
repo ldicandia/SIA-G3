@@ -122,7 +122,7 @@ impl DigitStudyConfig {
     }
 
     pub fn validate(&self) -> Result<(), DigitConfigError> {
-        if !self.validation_ratio.is_finite() || !(0.0..1.0).contains(&self.validation_ratio) {
+        if !(self.validation_ratio > 0.0 && self.validation_ratio < 1.0) {
             return Err(DigitConfigError::InvalidValidationRatio);
         }
         if self.candidates.is_empty() {
@@ -268,6 +268,19 @@ mod tests {
         assert!(matches!(
             config.validate(),
             Err(DigitConfigError::InvalidCandidateNames)
+        ));
+    }
+
+    #[test]
+    fn zero_validation_ratio_is_rejected() {
+        let config = DigitStudyConfig {
+            validation_ratio: 0.0,
+            split_seed: 42,
+            candidates: vec![candidate("valid")],
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(DigitConfigError::InvalidValidationRatio)
         ));
     }
 
