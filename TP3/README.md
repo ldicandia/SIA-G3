@@ -71,6 +71,25 @@ Tiempos de referencia con 16 hilos: Ejercicio 1 completo en unos 5 s; los 26 can
 
 Con `--live`, `exercise2 train` y `exercise3 train` lanzan un proceso monitor separado (`http://127.0.0.1:7878`) que grafica la loss y la accuracy de train y validación de todos los candidatos. El entrenamiento publica los eventos con un `try_send` no bloqueante: si la cola se llena, el evento se descarta en lugar de frenar el entrenamiento. Sin `--live`, el publisher no hace nada. Las direcciones se configuran con `--live-address` y `--live-http-address`.
 
+### Interfaz web local (`ui`)
+
+`tp3-rust ui` levanta una interfaz web para los ejercicios de dígitos (2 y 3): un formulario con todos los hiperparámetros de `CandidateConfig`, curvas de loss y accuracy en vivo, una tabla de corridas ordenable y la descarga de la configuración de cualquier corrida. No usa dependencias nuevas (`std::net` más HTML y JS embebidos en el binario).
+
+```bash
+cargo run --release -- ui
+# abrir http://127.0.0.1:7880 (desde Windows o desde WSL)
+```
+
+Opciones: `--address` (por defecto `127.0.0.1:7880`; solo acepta direcciones loopback, porque la UI lanza procesos), `--output` (`output/ui`), `--digits` (`data/digits.csv`), `--more-digits` (`data/more_digits.csv`), `--baseline-model` (`output/exercise2/selected_model.toml`, línea de base del Ejercicio 3) y `--max-parallel` (entrenamientos simultáneos; por defecto `min(4, núcleos)`).
+
+- **Cómo corre.** Cada corrida escribe un `config.toml` (un `DigitStudyConfig` con un solo candidato) en `output/ui/<id>/` y lanza `tp3-rust exercise2|exercise3 train` como subproceso, con argumentos separados y sin shell. En ese directorio quedan `config.toml`, `stderr.log`, `live_metrics.csv` y las salidas habituales de `train`. Si el entrenamiento falla, la tabla muestra las últimas líneas de `stderr.log`.
+- **Curvas en vivo.** El hijo se lanza con `--live-publish-only`: publica las métricas por época (a `live_metrics.csv` y a un puerto UDP descartado) sin levantar el proceso monitor. La UI lee ese CSV; no hace falta un puerto por corrida.
+- **Barrido.** Se puede variar **un** campo (lista de valores separados por `;` o saltos de línea) y se lanza una corrida por valor, con un id de grupo común. Rige un tope de corridas simultáneas por barrido (campo "Parallel runs", acotado por `--max-parallel`). Los hijos de un barrido reciben `RAYON_NUM_THREADS = núcleos / paralelismo` para repartirse los núcleos; como la cantidad de hilos puede cambiar el orden de suma en punto flotante, los resultados de un barrido pueden diferir en los últimos dígitos de la misma configuración corrida sola.
+- **Exportar.** El enlace `toml` de cada fila y los botones "Export best" (mejor corrida terminada: mayor accuracy de validación, desempate por menor loss, menos parámetros y nombre) y "Export best of last sweep" descargan un TOML que acepta `exercise2 train --config archivo.toml` (se puede usar con `--output` propio).
+- **Ejercicio 3.** Sus corridas también reentrenan el ganador del Ejercicio 2 (la línea de base), así que tardan más que las del Ejercicio 2.
+- **Persistencia.** Las corridas viven solo en memoria: al reiniciar el servidor la tabla queda vacía, aunque los directorios de `output/ui/` permanecen.
+- **Seguridad.** Se rechazan `Host` y `Origin` ajenos (403), POST sin `application/json` (415), hiperparámetros fuera de rango (400) y pedidos demasiado grandes (413/431); nada de lo que escribe el usuario llega a un comando ni a una ruta.
+
 ## Ejercicio 1: TinyModel de fraude
 
 ### Exploración del dataset

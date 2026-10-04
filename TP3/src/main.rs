@@ -49,6 +49,8 @@ enum Command {
     },
     /// Run the separate live-training dashboard process.
     Monitor(MonitorArgs),
+    /// Local web UI to launch digit trainings (exercises 2 and 3), watch live curves and compare runs.
+    Ui(UiArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -145,6 +147,10 @@ struct Exercise2TrainArgs {
     /// HTTP address on which the automatically started dashboard is served.
     #[arg(long, default_value = "127.0.0.1:7878")]
     live_http_address: SocketAddr,
+    /// Publish live metrics (UDP to --live-address and live_metrics.csv in the output
+    /// directory) without spawning the dashboard process; used by `tp3-rust ui`.
+    #[arg(long, default_value_t = false)]
+    live_publish_only: bool,
 }
 
 #[derive(Debug, Args)]
@@ -176,6 +182,33 @@ struct Exercise3TrainArgs {
     /// HTTP address on which the automatically started dashboard is served.
     #[arg(long, default_value = "127.0.0.1:7878")]
     live_http_address: SocketAddr,
+    /// Publish live metrics (UDP to --live-address and live_metrics.csv in the output
+    /// directory) without spawning the dashboard process; used by `tp3-rust ui`.
+    #[arg(long, default_value_t = false)]
+    live_publish_only: bool,
+}
+
+#[derive(Debug, Args)]
+struct UiArgs {
+    /// Loopback address on which the UI is served (7878/7879 belong to the monitor).
+    #[arg(long, default_value = "127.0.0.1:7880")]
+    address: SocketAddr,
+    /// Directory holding one subdirectory per launched run.
+    #[arg(long, default_value = "output/ui")]
+    output: PathBuf,
+    /// Learning dataset used by Exercise 2 runs (and as previous data by Exercise 3).
+    #[arg(long, default_value = "data/digits.csv")]
+    digits: PathBuf,
+    /// Expanded learning dataset used by Exercise 3 runs.
+    #[arg(long, default_value = "data/more_digits.csv")]
+    more_digits: PathBuf,
+    /// Selected Exercise 2 model, used as the baseline of Exercise 3 runs.
+    #[arg(long, default_value = "output/exercise2/selected_model.toml")]
+    baseline_model: PathBuf,
+    /// Maximum number of trainings running at the same time
+    /// (default: min(4, available cores)).
+    #[arg(long)]
+    max_parallel: Option<usize>,
 }
 
 #[derive(Debug, Args)]
@@ -317,8 +350,12 @@ fn main() -> Result<()> {
         }
         Command::Exercise2 { command } => match command {
             Exercise2Command::Train(args) => {
-                let live_target =
-                    start_live_monitor(args.live, args.live_address, args.live_http_address)?;
+                let live_target = start_live_monitor(
+                    args.live,
+                    args.live_publish_only,
+                    args.live_address,
+                    args.live_http_address,
+                )?;
                 exercise2::train(&args.data, &args.config, &args.output, live_target)?;
             }
             Exercise2Command::Evaluate(args) => {
@@ -350,8 +387,12 @@ fn main() -> Result<()> {
         },
         Command::Exercise3 { command } => match command {
             Exercise3Command::Train(args) => {
-                let live_target =
-                    start_live_monitor(args.live, args.live_address, args.live_http_address)?;
+                let live_target = start_live_monitor(
+                    args.live,
+                    args.live_publish_only,
+                    args.live_address,
+                    args.live_http_address,
+                )?;
                 exercise3::train(
                     &args.data,
                     &args.previous_data,
@@ -389,15 +430,36 @@ fn main() -> Result<()> {
             }
         },
         Command::Monitor(args) => run_monitor(args.udp_address, args.http_address)?,
+        Command::Ui(args) => {
+            let max_parallel = args.max_parallel.unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|cores| cores.get())
+                    .unwrap_or(1)
+                    .min(4)
+            });
+            tp3_rust::ui::run_ui(tp3_rust::ui::UiConfig {
+                addr: args.address,
+                exe: std::env::current_exe().context("could not locate the tp3-rust executable")?,
+                output_root: args.output,
+                digits: args.digits,
+                more_digits: args.more_digits,
+                baseline_model: args.baseline_model,
+                max_parallel,
+            })?;
+        }
     }
     Ok(())
 }
 
 fn start_live_monitor(
     enabled: bool,
+    publish_only: bool,
     udp_address: SocketAddr,
     http_address: SocketAddr,
 ) -> Result<Option<SocketAddr>> {
+    if publish_only {
+        return Ok(Some(udp_address));
+    }
     if !enabled {
         return Ok(None);
     }

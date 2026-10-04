@@ -10,6 +10,7 @@ pub mod metrics;
 pub mod model;
 pub mod split;
 pub mod training;
+pub mod ui;
 
 pub use loss::{categorical_cross_entropy, Loss, MeanSquaredError};
 pub use matrix::DenseMatrix;

@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TP3 Digit Lab</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f8f9;--surface:#ffffff;--line:#d5dde2;--text:#14202a;--muted:#5b6b76;--accent:#006d5b;--accent-text:#ffffff;--danger:#b3261e;--row:#eef3f5;--selected:#d9efe9;--focus:#0072b2}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0f12;--surface:#11171b;--line:#263139;--text:#f1f5f7;--muted:#84929b;--accent:#42e8c6;--accent-text:#04201a;--danger:#ff6b6b;--row:#162026;--selected:#173a33;--focus:#56b4e9}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.4}
+header{padding:22px 32px 16px;border-bottom:1px solid var(--line)}
+.eyebrow{color:var(--accent);font:600 11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;margin-bottom:6px}
+h1{margin:0;font-size:clamp(22px,2.6vw,34px);letter-spacing:-.03em;font-weight:650}
+h2{font-size:15px;margin:0 0 10px;font-weight:600}
+main{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:24px;padding:22px 32px 40px;align-items:start}
+@media (max-width:980px){main{grid-template-columns:1fr;padding:16px}header{padding:18px 16px 12px}}
+form{display:flex;flex-direction:column;gap:12px}
+fieldset{border:1px solid var(--line);border-radius:8px;background:var(--surface);margin:0;padding:10px 12px 12px;display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+legend{padding:0 6px;color:var(--muted);font-size:11px;letter-spacing:.09em;text-transform:uppercase}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field.wide{grid-column:1/-1}
+label{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+input,select,textarea,button{font:inherit;color:var(--text)}
+input,select,textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:0}
+textarea{min-height:64px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.hint{color:var(--muted);font-size:12px;grid-column:1/-1;margin:0}
+button{cursor:pointer;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px 12px}
+button.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent);font-weight:600;padding:10px 14px}
+button:disabled{opacity:.6;cursor:progress}
+#alert{border:1px solid var(--danger);color:var(--danger);border-radius:6px;padding:8px 10px;background:var(--surface);white-space:pre-wrap;overflow-wrap:anywhere}
+#alert[hidden]{display:none}
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media (max-width:1250px){.charts{grid-template-columns:1fr}}
+.panel{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:12px 14px}
+canvas{width:100%;height:260px;display:block}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0 0;padding:0;list-style:none;color:var(--muted);font-size:12px}
+.legend li{display:inline-flex;align-items:center;gap:6px}
+.swatch{display:inline-block;width:18px;height:0;border-top:3px solid var(--muted)}
+.runs{margin-top:18px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:6px 10px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line)}
+th button{border:0;background:none;padding:0;color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+th[aria-sort="ascending"] button::after{content:" \25B2"}
+th[aria-sort="descending"] button::after{content:" \25BC"}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--row)}
+tbody tr.selected{background:var(--selected)}
+td.num{font-variant-numeric:tabular-nums}
+.status-failed{color:var(--danger);font-weight:600}
+.status-done{color:var(--accent);font-weight:600}
+#detail{margin-top:12px;font-size:13px}
+#detail pre{margin:6px 0 0;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
+footer{color:var(--muted);font-size:12px;margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">TP3 / digit classifier</div>
+  <h1>Digit Lab</h1>
+</header>
+<main>
+  <form id="run-form" aria-label="Launch a training">
+    <fieldset>
+      <legend>Study</legend>
+      <div class="field wide">
+        <label for="f-exercise">Exercise</label>
+        <select id="f-exercise" data-field="exercise" data-scope="study">
+          <option value="exercise2">Exercise 2 (digits.csv)</option>
+          <option value="exercise3">Exercise 3 (more_digits.csv)</option>
+        </select>
+      </div>
+      <p class="hint">Exercise 3 also retrains the inherited Exercise 2 baseline, so it takes longer.</p>
+      <div class="field">
+        <label for="f-validation-ratio">Validation ratio</label>
+        <input id="f-validation-ratio" type="number" step="any" data-field="validation_ratio" data-scope="study">
+      </div>
+      <div class="field">
+        <label for="f-split-seed">Split seed</label>
+        <input id="f-split-seed" type="number" step="1" data-field="split_seed" data-scope="study">
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Architecture</legend>
+      <div class="field">
+        <label for="f-name">Name</label>
+        <input id="f-name" type="text" maxlength="32" data-field="name">
+      </div>
+      <div class="field">
+        <label for="f-axis">Axis</label>
+        <input id="f-axis" type="text" maxlength="32" data-field="axis">
+      </div>
+      <div class="field wide">
+        <label for="f-topology">Topology (comma separated)</label>
+        <input id="f-topology" type="text" data-field="topology" data-kind="list">
+      </div>
+      <div class="field">
+        <label for="f-hidden-activation">Hidden activation</label>
+        <select id="f-hidden-activation" data-field="hidden_activation">
+          <option value="relu">relu</option>
+          <option value="tanh">tanh</option>
+          <option value="sigmoid">sigmoid</option>
+          <option value="linear">linear</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-initialization">Initialization</label>
+        <select id="f-initialization" data-field="initialization">
+          <option value="xavier">xavier</option>
+          <option value="he">he</option>
+        </select>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Optimizer</legend>
+      <div class="field">
+        <label for="f-optimizer">Optimizer</label>
+        <select id="f-optimizer" data-field="optimizer">
+          <option value="adam">adam</option>
+          <option value="sgd">sgd</option>
+          <option value="momentum">momentum</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-learning-rate">Learning rate</label>
+        <input id="f-learning-rate" type="number" step="any" data-field="learning_rate">
+      </div>
+      <div class="field">
+        <label for="f-batch-size">Batch size</label>
+        <input id="f-batch-size" type="number" step="1" data-field="batch_size">
+      </div>
+      <div class="field">
+        <label for="f-momentum">Momentum</label>
+        <input id="f-momentum" type="number" step="any" data-field="momentum">
+      </div>
+      <div class="field">
+        <label for="f-beta1">Beta 1</label>
+        <input id="f-beta1" type="number" step="any" data-field="beta1">
+      </div>
+      <div class="field">
+        <label for="f-beta2">Beta 2</label>
+        <input id="f-beta2" type="number" step="any" data-field="beta2">
+      </div>
+      <div class="field">
+        <label for="f-epsilon">Epsilon</label>
+        <input id="f-epsilon" type="number" step="any" data-field="epsilon">
+      </div>
+      <div class="field">
+        <label for="f-lr-decay-factor">LR decay factor</label>
+        <input id="f-lr-decay-factor" type="number" step="any" data-field="lr_decay_factor">
+      </div>
+      <div class="field">
+        <label for="f-lr-decay-every">LR decay every (epochs)</label>
+        <input id="f-lr-decay-every" type="number" step="1" data-field="lr_decay_every">
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Training</legend>
+      <div class="field">
+        <label for="f-max-epochs">Max epochs</label>
+        <input id="f-max-epochs" type="number" step="1" data-field="max_epochs">
+      </div>
+      <div class="field">
+        <label for="f-patience">Patience</label>
+        <input id="f-patience" type="number" step="1" data-field="patience">
+      </div>
+      <div class="field">
+        <label for="f-min-delta">Min delta</label>
+        <input id="f-min-delta" type="number" step="any" data-field="min_delta">
+      </div>
+      <div class="field">
+        <label for="f-seed">Seed</label>
+        <input id="f-seed" type="number" step="1" data-field="seed">
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Regularization</legend>
+      <div class="field">
+        <label for="f-weight-decay">Weight decay</label>
+        <input id="f-weight-decay" type="number" step="any" data-field="weight_decay">
+      </div>
+      <div class="field">
+        <label for="f-dropout">Dropout</label>
+        <input id="f-dropout" type="number" step="any" data-field="dropout">
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Augmentation</legend>
+      <div class="field">
+        <label for="f-augment-shift">Shift (pixels)</label>
+        <input id="f-augment-shift" type="number" step="any" data-field="augment_shift">
+      </div>
+      <div class="field">
+        <label for="f-augment-rotation">Rotation (degrees)</label>
+        <input id="f-augment-rotation" type="number" step="any" data-field="augment_rotation">
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Sweep (optional)</legend>
+      <div class="field wide">
+        <label for="sweep-field">Field to sweep</label>
+        <select id="sweep-field"></select>
+      </div>
+      <div class="field wide">
+        <label for="sweep-values">Values (separated by semicolons or new lines)</label>
+        <textarea id="sweep-values" placeholder="0.1; 0.01; 0.001" spellcheck="false"></textarea>
+      </div>
+      <div class="field">
+        <label for="sweep-parallel">Parallel runs</label>
+        <input id="sweep-parallel" type="number" min="1" step="1" value="2">
+      </div>
+      <p class="hint" id="sweep-hint">Leave the values empty to launch a single run. The swept field overrides the same field in the form. For topology use "784,64,10; 784,128,10".</p>
+    </fieldset>
+    <button type="submit" class="primary" id="run-button">Run</button>
+    <div id="alert" role="alert" hidden></div>
+  </form>
+
+  <section aria-label="Results">
+    <div class="charts">
+      <div class="panel">
+        <h2>Loss per epoch</h2>
+        <canvas id="chart-loss" role="img" aria-label="Loss chart: no run selected"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Accuracy per epoch</h2>
+        <canvas id="chart-accuracy" role="img" aria-label="Accuracy chart: no run selected"></canvas>
+      </div>
+    </div>
+    <ul class="legend" id="legend" aria-label="Chart legend"></ul>
+    <div class="runs">
+      <h2>Runs</h2>
+      <div class="toolbar">
+        <button type="button" id="export-best">Export best</button>
+        <button type="button" id="export-best-sweep">Export best of last sweep</button>
+      </div>
+      <div class="table-wrap">
+        <table id="runs-table">
+          <caption class="hint" style="text-align:left;padding:6px 10px">Click a row to chart it, click a header to sort.</caption>
+          <thead><tr id="head-row"></tr></thead>
+          <tbody id="runs-body"></tbody>
+        </table>
+      </div>
+      <div id="detail" aria-live="polite"></div>
+      <footer id="status-line">Loading...</footer>
+    </div>
+  </section>
+</main>
+<script src="/app.js" defer></script>
+</body>
+</html>
