@@ -97,8 +97,8 @@ pub fn train_digit_candidate(
 }
 
 /// Trains from the model's current weights for a fixed number of epochs,
-/// without validation. `epoch_offset` continues the learning-rate schedule and
-/// random streams of a previous run, so a saved model can resume training.
+/// without validation. `epoch_offset` continues the learning-rate schedule,
+/// dropout and augmentation epochs; shuffle and optimizer moments restart.
 #[allow(clippy::too_many_arguments)]
 pub fn refit_digit_model(
     model: &mut MultilayerPerceptron,

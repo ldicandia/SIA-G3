@@ -3,8 +3,9 @@
 # The Exercise 2 winner is always retrained unchanged first (baseline added by
 # the program, not listed here) to isolate the effect of the new data.
 # The candidates below form a cumulative ladder: each step keeps everything
-# from the previous one and adds ONE technique, so the gain of every technique
-# can be read as the difference with the step before it.
+# from the previous one. Deltas compare complete configurations: t1 changes
+# capacity and initialization together; t5 adds augmentation and increases
+# the epoch budget/patience. Those factors are not isolated within each step.
 #
 #   t1_capacity        [784,512,256,10], He init (ReLU-friendly)
 #   t2_lr_decay        + step decay: learning rate x0.5 every 5 epochs

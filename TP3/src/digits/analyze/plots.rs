@@ -232,19 +232,10 @@ pub(super) fn plot_validation_accuracy(runs: &[CandidateRun], path: &Path) -> Re
         .x_label_area_size(45)
         .y_label_area_size(430)
         .build_cartesian_2d(lower..1.0, 0.0..runs.len() as f64)?;
-    let label_text = labels.clone();
     chart
         .configure_mesh()
         .disable_y_mesh()
-        .y_labels(runs.len() * 2)
-        .y_label_formatter(&move |value| {
-            let index = (*value - 0.5).round();
-            if (value - 0.5 - index).abs() < 1e-6 && index >= 0.0 {
-                label_text.get(index as usize).cloned().unwrap_or_default()
-            } else {
-                String::new()
-            }
-        })
+        .y_labels(0)
         .x_desc("Validation accuracy")
         .draw()?;
     let axes = order
@@ -262,14 +253,28 @@ pub(super) fn plot_validation_accuracy(runs: &[CandidateRun], path: &Path) -> Re
                 .unwrap_or(0),
         );
         let y = position as f64;
+        // Floating-point mesh ticks need not land on bar centers. Draw one
+        // label per bar explicitly, outside the plotting area's clipping box.
+        let (label_x, label_y) = chart.plotting_area().map_coordinate(&(lower, y + 0.5));
+        root.draw(&Text::new(
+            labels[position].as_str(),
+            (label_x - 8, label_y),
+            ("sans-serif", 16)
+                .into_font()
+                .color(&BLACK)
+                .pos(Pos::new(HPos::Right, VPos::Center)),
+        ))?;
         chart.draw_series([Rectangle::new(
             [(lower, y + 0.15), (accuracy, y + 0.85)],
             color.filled(),
         )])?;
         chart.draw_series([Text::new(
             format!("{:.2}%", accuracy * 100.0),
-            (accuracy + 0.001, y + 0.3),
-            ("sans-serif", 14),
+            (accuracy + 0.001, y + 0.5),
+            ("sans-serif", 14)
+                .into_font()
+                .color(&BLACK)
+                .pos(Pos::new(HPos::Left, VPos::Center)),
         )])?;
     }
     root.present()?;

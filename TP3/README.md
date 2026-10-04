@@ -134,7 +134,7 @@ Se usan todas las muestras, como pide la consigna. Se entrenan con MSE contra la
 
 - Los tres modelos llegan a un plateau con error residual. Una sola neurona no alcanza para capturar interacciones entre features: el límite es la capacidad, no la cantidad de épocas.
 - El sigmoide satura en los extremos: el 3,7% de sus salidas queda por debajo de 0,01 o por encima de 0,99, donde `σ'(h) ≈ 0` y esas muestras casi no aportan gradiente.
-- El lineal y el ReLU no saturan, pero producen valores que no son probabilidades.
+- El lineal no satura; ReLU tiene gradiente cero para preactivaciones negativas y no tiene cota superior. Ambos pueden producir valores que no son probabilidades.
 
 **c) ¿Cuál se elige para generalizar?** El sigmoide: tiene menor error y su salida está en `[0,1]` por construcción, así que se puede leer como probabilidad sin recortarla.
 
@@ -169,7 +169,7 @@ Se usan todas las muestras, como pide la consigna. Se entrenan con MSE contra la
 | F1 | 0,898 ± 0,007 |
 | Average precision | 0,957 ± 0,005 |
 
-Las cuatro tasas de aprendizaje probadas dan un MSE de validación prácticamente igual (0,01640 a 0,01648). El problema es convexo en la práctica y la tasa solo cambia la velocidad de convergencia. Se eligió 0,05 con 76 épocas.
+Las cuatro tasas de aprendizaje probadas dan un MSE de validación prácticamente igual (0,01640 a 0,01648): en esta grilla alcanzan errores similares con distinta velocidad de convergencia. Esto no demuestra convexidad ni garantiza un mínimo global para MSE con sigmoide. Se eligió 0,05 con 76 épocas.
 
 **c) Mejor modelo y umbral recomendado.** El modelo es un perceptrón simple sigmoide con 8 entradas: 9 parámetros contra un BigModel desconocido. Se guarda en `output/fraud_model.toml` junto con su preprocesamiento.
 
@@ -214,14 +214,14 @@ La grilla (`configs/exercise2.toml`, 26 candidatos) varía **un factor a la vez*
 
 - Una tasa demasiado baja no llega a converger en 40 épocas.
 - Una tasa alta converge en pocas épocas, pero se estanca en un mínimo peor.
-- Momentum con β = 0,9 multiplica la tasa efectiva por ~10: su óptimo está un orden de magnitud por debajo del de SGD.
+- Con gradiente constante, Momentum con β = 0,9 acumula una velocidad hasta ~10 veces el gradiente. Eso no determina su tasa óptima: en esta grilla, SGD y Momentum obtuvieron su mejor accuracy con tasa 0,1.
 
 **Mecanismo de optimización**, cada uno con su mejor tasa: SGD 96,02%, Momentum 95,82% y Adam 96,14%.
 
 - Con una buena tasa, los tres llegan a resultados parecidos (0,3 pp de diferencia).
 - La diferencia real está en la **robustez**: Adam queda por encima de 95,7% en todo el rango 0,0003 a 0,01, mientras que SGD cae 1,6 pp si la tasa se aleja de su óptimo.
 - En tiempo: Momentum llega a su mejor época antes (5 a 6 épocas) que SGD (15).
-- Comparar optimizadores con una misma tasa fija habría medido la tasa, no el optimizador.
+- Comparar con una misma tasa fija estudia el mecanismo de actualización a ese paso nominal. Ajustar la tasa por optimizador permite comparar el mejor resultado observado de cada uno.
 
 **Arquitectura** (Adam 0,001):
 
@@ -253,7 +253,7 @@ La caída es estructural. `digits_test.csv` sí tiene 8 (243 muestras, 9,7% del 
 
 ### b) Técnicas aplicadas
 
-Primero se reentrena **sin cambios** el ganador del Ejercicio 2 sobre `more_digits.csv` (línea de base controlada). Después, `configs/exercise3.toml` define una **escalera acumulativa**: cada paso mantiene todo lo anterior y agrega una sola técnica, así que su aporte es la diferencia con el paso previo.
+Primero se reentrena **sin cambios** el ganador del Ejercicio 2 sobre `more_digits.csv` (línea de base controlada). Después, `configs/exercise3.toml` define una **escalera acumulativa**. Los deltas comparan las configuraciones completas: t1 cambia capacidad e inicialización a la vez, y t5 agrega augmentation junto con más épocas y paciencia. Esos deltas no aíslan el aporte de cada factor.
 
 | Paso | Técnica agregada | Validación | Δ |
 |---|---|---:|---:|
@@ -264,10 +264,10 @@ Primero se reentrena **sin cambios** el ganador del Ejercicio 2 sobre `more_digi
 | t4 | Dropout 0,2 en las capas ocultas | 96,63% | −0,10 |
 | t5 | Data augmentation (traslación ±2 px, rotación ±10°) | **98,06%** | **+1,43** |
 
-- **Más capacidad sola no ayuda:** la red ya llega a 99,6% en train, así que el problema es la varianza, no el sesgo.
+- **Capacidad + inicialización He aportan poco en esta comparación:** la red ya llega a 99,6% en train, compatible con un problema de generalización. Este ensayo no aísla el efecto de la capacidad sola.
 - **El decaimiento de la tasa** permite afinar los pesos cerca del mínimo en lugar de oscilar.
 - **Data augmentation es la técnica decisiva:** cada época ve una variante distinta de cada imagen, lo que actúa como un dataset mucho más grande y enseña invariancia a pequeños desplazamientos y rotaciones, la principal fuente de variación en dígitos manuscritos. Con augmentation el modelo sigue mejorando hasta la época 51, mientras que sin ella el early stopping corta en la 6.
-- **Weight decay y dropout** no mejoran solos a esta cantidad de épocas: con early stopping temprano casi no hay tiempo para sobreajustar. Se mantienen en la escalera porque es acumulativa; su efecto aislado se lee en su fila.
+- **Weight decay y dropout** no mejoran el resultado al agregarlos en sus pasos de esta escalera. Sus efectos son condicionales a las técnicas previas y a una única semilla; el estudio no demuestra que sean necesarios para el ganador.
 
 ### c) Otros factores además de las técnicas
 
@@ -302,7 +302,7 @@ Sí: **los datos mismos**, y se separan de las técnicas usando la línea de bas
 
 **Reproducibilidad:** todo el azar (splits, inicialización, orden de las muestras, máscaras de dropout y augmentation) sale de semillas fijas. Los números aleatorios de cada muestra dependen solo de la semilla, la época y el índice de la fila, no del hilo que la procesa. Sumar gradientes en paralelo puede cambiar el redondeo en el último dígito, sin efecto en las métricas.
 
-**Retomar entrenamientos:** `continue` sigue entrenando desde los pesos guardados, continuando el calendario de la tasa de aprendizaje y los streams aleatorios. Los momentos de Momentum y Adam no se persisten y reinician en cero.
+**Retomar entrenamientos:** `continue` sigue desde los pesos guardados y continúa el calendario de la tasa, las máscaras de dropout y las transformaciones por época. El shuffle usa un nuevo stream y los momentos de Momentum y Adam reinician en cero; por eso no reproduce exactamente una corrida ininterrumpida.
 
 ## Tests y calidad
 
@@ -452,7 +452,7 @@ La semilla es fija (42) y cada fila tiene su propio stream. Así, **todos los mo
 Se comparan tres modelos:
 
 - `exercise3`: el seleccionado, con augmentation;
-- `exercise3_no_augmentation`: el paso t4 de la escalera, igual al anterior pero sin augmentation. `configs/exercise3_no_augmentation.toml` lo entrena; gana t4 con 96,63% de validación contra 95,90% de la línea de base, y en test da 96,80%;
+- `exercise3_no_augmentation`: el paso t4, con la misma arquitectura y regularización que t5, sin augmentation y con el presupuesto de épocas/paciencia de t4. `configs/exercise3_no_augmentation.toml` lo entrena; gana t4 con 96,63% de validación contra 95,90% de la línea de base, y en test da 96,80%;
 - `exercise2`: el ganador del Ejercicio 2.
 
 Accuracy en test (`noise_robustness.csv`, `noise_accuracy.png`):
