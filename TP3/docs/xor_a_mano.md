@@ -4,7 +4,7 @@ Este documento presenta el cálculo analítico paso a paso de una iteración (un
 1. **Arquitectura `[2, 2, 1]`** (2 entradas, 1 capa oculta de 2 neuronas, 1 salida).
 2. **Arquitectura `[2, 3, 2, 1]`** (2 entradas, 2 capas ocultas de 3 y 2 neuronas, 1 salida).
 
-Ambos cálculos corresponden exactamente al algoritmo implementado en `core/mlp.cpp` y están verificados automáticamente por el test unitario C++ `core/tests/test_mlp.cpp` (requisito **DOC-03**).
+Ambos cálculos ilustran el backpropagation implementado en `src/training/multi_layer_perceptron.rs`. Este documento usa matrices con filas por entrada; Rust guarda filas por neurona de salida, por lo que los pesos se transponen al cargarlos.
 
 ---
 
@@ -14,6 +14,7 @@ Ambos cálculos corresponden exactamente al algoritmo implementado en `core/mlp.
 - Entrada: $x = \begin{pmatrix} -1.0 & 1.0 \end{pmatrix}$ ($1 \times 2$)
 - Salida esperada (XOR bipolar): $y = 1.0$ ($1 \times 1$)
 - Tasa de aprendizaje: $\eta = 0.1$
+- El cálculo usa medio error cuadrático. `MeanSquaredError` en Rust usa $(\hat{y}-y)^2$, cuya derivada tiene un factor 2; una tasa Rust de 0.05 reproduce la actualización manual con tasa 0.1.
 - Función de activación: Tangente hiperbólica para todas las capas:
   $$f(h) = \tanh(h) = \frac{e^h - e^{-h}}{e^h + e^{-h}}$$
   $$f'(h) = 1 - \tanh^2(h) = 1 - f(h)^2$$
@@ -165,10 +166,12 @@ Función de costo para el patrón individual: $E = \frac{1}{2} (y - A_L)^2$.
 
 ---
 
-## 4. Verificación Automatizada
+## 4. Validación funcional en Rust
 
-Los valores analíticos calculados arriba son exactamente los esperados por el test C++ `core/tests/test_mlp.cpp`:
-- `TEST_CASE("MLP single backprop step reproduces docs/xor_a_mano.md for [2,2,1]")`
-- `TEST_CASE("MLP single backprop step reproduces docs/xor_a_mano.md for [2,3,2,1]")`
+El ejemplo `validate_all` entrena y comprueba las salidas XOR bipolares de ambas arquitecturas, además de AND y los ajustes lineal y no lineal:
 
-Ambos tests configuran los pesos iniciales exactos mediante `MLP::set_weights_and_biases`, ejecutan exactamente una época sobre el patrón $x = [-1, 1], y = 1.0$, y comprueban que todos los pesos y sesgos resultantes coinciden con los de este documento dentro de una tolerancia de $10^{-6}$ (`doctest::Approx(expected).epsilon(1e-6)`).
+```bash
+cargo run --release --example validate_all
+```
+
+Esta comprobación valida el aprendizaje de las funciones. Los valores de una actualización se presentan como cálculo manual en este documento.

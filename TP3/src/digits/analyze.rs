@@ -156,9 +156,9 @@ pub fn run_digit_evaluation(
 }
 
 /// Resumes training of a persisted model on `dataset` for `epochs` more
-/// epochs with the same hyperparameters. The learning-rate schedule and random
-/// streams continue from the saved epoch; optimizer moments restart from zero
-/// because they are not persisted.
+/// epochs with the same hyperparameters. The learning-rate schedule, dropout
+/// and augmentation use the saved epoch offset. Shuffle and optimizer moments
+/// restart, so this is not identical to uninterrupted training.
 pub fn run_digit_continue(
     dataset: &DigitDataset,
     artifact: &DigitModelArtifact,

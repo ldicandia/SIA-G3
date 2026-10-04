@@ -5,7 +5,7 @@ Resumen de las correcciones hechas a `TP3-rust` para que cumpla con todos los pu
 Estado final:
 
 - Validaciones de la consigna: `validate_all` pasa (AND, `y=x`, `y=tanh(x)`, XOR `[2,2,1]` y `[2,3,2,1]`, escalón vs XOR).
-- Tests: 65 OK (43 originales + 22 de los opcionales). `clippy -D warnings` y `fmt --check` limpios.
+- Tests: 66 OK (43 originales + 22 de los opcionales + 1 de validación de holdout). `clippy -D warnings` y `fmt --check` limpios.
 - Ejercicio 3: **98,64% de accuracy en `digits_test.csv`**, así que se cumple el objetivo de ≥98% (antes daba 95,79%).
 - Todos los outputs regenerados en `output/`.
 
@@ -68,7 +68,7 @@ Los cuatro opcionales de la consigna quedan resueltos, con CSV + PNG y la respue
 
 ### Ejercicio 3 (more_digits, objetivo ≥98%)
 
-- **Escalera acumulativa de técnicas:** cada paso suma una sola técnica al anterior, así se lee el aporte de cada una.
+- **Escalera acumulativa:** los deltas comparan configuraciones completas. t1 cambia capacidad e inicialización; t5 cambia augmentation y presupuesto de épocas/paciencia. Esos factores no quedan aislados.
 
   | Paso | Técnica agregada | Validación | Δ |
   |---|---|---:|---:|
@@ -86,12 +86,12 @@ Los cuatro opcionales de la consigna quedan resueltos, con CSV + PNG y la respue
 ### Recomendaciones de la cátedra
 
 - **Operaciones matriciales:** el MLP entrena por mini-batch con productos de matrices, procesando sub-batches en paralelo. Da resultados idénticos al motor anterior y es unas 2 veces más rápido. Un test compara el gradiente analítico contra diferencias finitas.
-- **Retomar entrenamientos:** nuevo comando `continue`. Los momentos de Momentum y Adam no se guardan, así que arrancan de cero al retomar.
+- **Retomar entrenamientos:** nuevo comando `continue`. Reinicia el shuffle y los momentos de Momentum y Adam; continúa el calendario de la tasa y las transformaciones por época, pero no reproduce exactamente una corrida ininterrumpida.
 - **Reporte de progreso:** siempre se imprime el inicio y el fin de cada candidato, fold y refit.
 
 ### Otros cambios a tener en cuenta
 
-- **Versión mínima de Rust:** sube a 1.88, porque el clippy 1.98 instalado exige `as_chunks`. Ese clippy ya fallaba antes en un archivo que no se había tocado.
+- **Versión mínima de Rust:** 1.88 por el uso de `as_chunks` de la biblioteca estándar.
 - **Configuraciones reemplazadas:** `configs/exercise2.toml` y `configs/exercise3.toml` se reescribieron completas.
 - **Carpeta vieja:** `output/exercise3_noheldout/` es de una corrida anterior y no se tocó.
 
@@ -104,7 +104,7 @@ Los cuatro opcionales de la consigna quedan resueltos, con CSV + PNG y la respue
 | **Función de activación** | Ej1: lineal y sigmoide. Ej2: candidatos mezclados (sigmoide en unos, ReLU en otros). | Ej1: se agrega **ReLU**, que era opcional. Ej2: eje de activación **ReLU, sigmoide y tanh** con todo lo demás fijo. Salida softmax sin cambios. | Antes la activación variaba junto con otros factores y no se podía aislar su efecto. En el Ej1, ReLU se comporta casi como el lineal (R² 0,766 contra 0,762). En el Ej2, sigmoide y ReLU empatan (96,18% y 96,14%), pero la sigmoide necesita 35 épocas contra 12. |
 | **Learning rate** | Ej1: grilla 0,001 a 0,05 elegida con un solo split, ganó 0,01. Ej2: solo 2 tasas comparables, y cada optimizador con una tasa distinta. | Ej1: misma grilla, elegida por **MSE medio en 5-fold**, gana 0,05. Ej2: **barrido por optimizador** (SGD 4 valores, Momentum 5, Adam 5). Ej3: **decaimiento ×0,5 cada 5 épocas**. | En el Ej1 las cuatro tasas empatan en MSE y solo cambian la velocidad de convergencia. En el Ej2, la tasa baja no converge en 40 épocas y la alta se estanca antes. En el Ej3, el decaimiento aporta **+0,76 pp** porque permite afinar los pesos cerca del mínimo. |
 | **Función de pérdida** | Ej1: MSE contra BigModel. Dígitos: softmax + cross-entropy. | **Sin cambios.** Cambió el **criterio del umbral** del Ej1: de accuracy a **F1** sobre predicciones out-of-fold. Se agregó **weight decay L2** como regularización. | MSE contra la probabilidad de BigModel es justamente la destilación. El umbral por accuracy no sirve con 11,6% de fraudes: un modelo que nunca marca fraude ya tiene 88% de accuracy. |
-| **Neuronas / arquitectura** | Ej1: 1 neurona, 9 entradas. Ej2: 3 topologías, ganó `[784,64,32,10]`. Ej3: ganó `[784,128,64,10]`. | Ej1: 1 neurona con **8 entradas** (se descarta `timestamp`, `log1p` en 3 columnas). Ej2: **8 arquitecturas**, gana `[784,256,128,10]`. Ej3: **`[784,512,256,10]`**. | El ancho importa más que la profundidad: de 32 a 128 neuronas suma +1,6 pp y una tercera capa oculta no mejora. En el Ej3, más capacidad sola aporta solo +0,06 pp: sirve cuando se combina con regularización y augmentation. |
+| **Neuronas / arquitectura** | Ej1: 1 neurona, 9 entradas. Ej2: 3 topologías, ganó `[784,64,32,10]`. Ej3: ganó `[784,128,64,10]`. | Ej1: 1 neurona con **8 entradas** (se descarta `timestamp`, `log1p` en 3 columnas). Ej2: **8 arquitecturas**, gana `[784,256,128,10]`. Ej3: **`[784,512,256,10]`**. | En esta grilla, pasar de 32 a 128 neuronas suma +1,6 pp y la tercera capa oculta no mejora. En el Ej3, capacidad + inicialización He aportan +0,06 pp; sus efectos no están aislados. |
 | **Inicialización** | Xavier uniforme en todas las capas. | Nueva opción **He**, estudiada como eje en el Ej2 y usada en el Ej3. | He compensa que ReLU anula la mitad de las entradas. Con redes poco profundas el efecto es marginal (96,18% contra 96,14%); en la red más grande del Ej3 es la opción teóricamente correcta. |
 | **Optimizadores** | Ej1: descenso por gradiente simple. Ej2: SGD, Momentum y Adam, cada uno con una tasa distinta. | Ej1: **sin cambios**. Ej2: cada optimizador comparado **con su mejor tasa**. Ej3: **Adam con weight decay desacoplado** (estilo AdamW). | Con la tasa bien elegida, los tres quedan a 0,3 pp de diferencia (SGD 96,02%, Momentum 95,82%, Adam 96,14%). La ventaja de Adam es la robustez: rinde bien en todo el rango de tasas, mientras que SGD cae 1,6 pp si la tasa se aleja de su óptimo. El weight decay desacoplado evita que Adam lo diluya con su normalización adaptativa. |
 | **Épocas** | Ej1: early stopping (máximo 2000, paciencia 100); el refit usaba la mejor época de un solo split (6). Ej2: máximo 20, paciencia 4. Ej3: máximo 30, paciencia 5; el ganador corrió 18. | Ej1: el refit usa la **mediana de las épocas de early stopping entre folds** (76). Ej2: **máximo 40, paciencia 5**. Ej3: **máximo 60, paciencia 8**, y **100 y 12 con augmentation**; el ganador corre **51**. | La época de un solo split es ruidosa y la mediana entre folds es más estable. Con 20 épocas algunas tasas bajas no llegaban a converger. Con augmentation el modelo sigue mejorando por mucho más tiempo: el mejor llega en la época 51, contra la 6 sin augmentation. |
