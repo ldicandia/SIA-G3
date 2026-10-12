@@ -26,7 +26,7 @@ enum Command {
     /// Validate and summarize the fraud dataset, and justify feature preprocessing.
     Inspect(ExperimentArgs),
     /// Compare linear and sigmoid single-layer perceptrons on all samples.
-    Compare(ExperimentArgs),
+    Compare(CompareArgs),
     /// Run the train/validation/test generalization study.
     Generalize(ExperimentArgs),
     /// Calibrate the TinyModel against flagged_fraud (Platt, isotonic, ECE, Brier).
@@ -105,6 +105,15 @@ struct ExperimentArgs {
     /// Directory where CSV metrics and PNG plots are written.
     #[arg(long, default_value = "output")]
     output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct CompareArgs {
+    #[command(flatten)]
+    experiment: ExperimentArgs,
+    /// Plot only linear and sigmoid; ReLU is still trained and kept in the CSVs.
+    #[arg(long)]
+    no_relu_plot: bool,
 }
 
 #[derive(Debug, Args)]
@@ -327,8 +336,13 @@ fn main() -> Result<()> {
             run_scoring(&dataset, &artifact, &args.output)?;
         }
         Command::Compare(args) => {
-            let (dataset, config) = load_inputs(&args)?;
-            run_learning_comparison(&dataset, &config, &args.output)?;
+            let (dataset, config) = load_inputs(&args.experiment)?;
+            run_learning_comparison(
+                &dataset,
+                &config,
+                &args.experiment.output,
+                !args.no_relu_plot,
+            )?;
         }
         Command::Generalize(args) => {
             let (dataset, config) = load_inputs(&args)?;
@@ -345,7 +359,7 @@ fn main() -> Result<()> {
         Command::RunAll(args) => {
             let (dataset, config) = load_inputs(&args)?;
             run_inspection(&dataset, &config.features, &args.output)?;
-            run_learning_comparison(&dataset, &config, &args.output)?;
+            run_learning_comparison(&dataset, &config, &args.output, true)?;
             run_generalization(&dataset, &config, &args.output)?;
         }
         Command::Exercise2 { command } => match command {

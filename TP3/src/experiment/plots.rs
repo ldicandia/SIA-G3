@@ -126,21 +126,36 @@ fn draw_histogram(
     Ok(())
 }
 
-pub(super) fn plot_learning_history(runs: &[LearningRun], path: &Path) -> Result<()> {
+/// Epochs drawn in `learning_curves.png`. Every model reaches its plateau
+/// well before this; `learning_history.csv` keeps the full history.
+const LEARNING_PLOT_EPOCHS: usize = 50;
+
+pub(super) fn plot_learning_history(runs: &[&LearningRun], path: &Path) -> Result<()> {
     let root = BitMapBackend::new(path, (1000, 650)).into_drawing_area();
     root.fill(&WHITE)?;
+    let shown = |run: &LearningRun| {
+        run.report
+            .history
+            .iter()
+            .take_while(|row| row.epoch <= LEARNING_PLOT_EPOCHS)
+            .map(|row| (row.epoch, row.train_loss.log10()))
+            .collect::<Vec<_>>()
+    };
     let max_epoch = runs
         .iter()
-        .flat_map(|run| run.report.history.iter().map(|row| row.epoch))
+        .flat_map(|run| shown(run).into_iter().map(|(epoch, _)| epoch))
         .max()
         .unwrap_or(1);
     let values = runs
         .iter()
-        .flat_map(|run| run.report.history.iter().map(|row| row.train_loss.log10()))
+        .flat_map(|run| shown(run).into_iter().map(|(_, loss)| loss))
         .collect::<Vec<_>>();
     let (min_y, max_y) = padded_range(&values);
     let mut chart = ChartBuilder::on(&root)
-        .caption("Learning comparison (log10 MSE)", ("sans-serif", 28))
+        .caption(
+            format!("Learning comparison (log10 MSE, first {LEARNING_PLOT_EPOCHS} epochs)"),
+            ("sans-serif", 28),
+        )
         .margin(20)
         .x_label_area_size(45)
         .y_label_area_size(60)
@@ -153,15 +168,9 @@ pub(super) fn plot_learning_history(runs: &[LearningRun], path: &Path) -> Result
     for (index, run) in runs.iter().enumerate() {
         let color = PALETTE[index % PALETTE.len()];
         chart
-            .draw_series(LineSeries::new(
-                run.report
-                    .history
-                    .iter()
-                    .map(|row| (row.epoch, row.train_loss.log10())),
-                color.stroke_width(2),
-            ))?
+            .draw_series(LineSeries::new(shown(run), color.stroke_width(2)))?
             .label(run.name)
-            .legend(move |(x, y)| PathElement::new([(x, y), (x + 20, y)], color));
+            .legend(move |(x, y)| PathElement::new([(x, y), (x + 20, y)], color.stroke_width(3)));
     }
     chart
         .configure_series_labels()
@@ -173,7 +182,7 @@ pub(super) fn plot_learning_history(runs: &[LearningRun], path: &Path) -> Result
 }
 
 pub(super) fn plot_prediction_comparison(
-    runs: &[LearningRun],
+    runs: &[&LearningRun],
     targets: &[f64],
     path: &Path,
 ) -> Result<()> {

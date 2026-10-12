@@ -12,7 +12,7 @@ use crate::{
 };
 
 use super::{
-    trials::{FoldTrial, LearningRun},
+    trials::{FoldTrial, LearningRateResult, LearningRun},
     FoldClassification, LearningRateSummary,
 };
 
@@ -131,60 +131,106 @@ fn quantile(sorted: &[f64], probability: f64) -> f64 {
     }
 }
 
-pub(super) fn write_learning_summary(runs: &[LearningRun], path: &Path) -> Result<()> {
+/// Mean ± std over the repeats of every (activation, learning rate) pair.
+pub(super) fn write_learning_rates(results: &[LearningRateResult], path: &Path) -> Result<()> {
     let mut writer = csv::Writer::from_path(path)?;
     writer.write_record([
         "model",
         "learning_rate",
-        "best_epoch",
-        "mse",
-        "rmse",
-        "r2",
-        "prediction_min",
-        "prediction_max",
-        "boundary_rate",
+        "repeats",
+        "mse_mean",
+        "mse_std",
+        "r2_mean",
+        "r2_std",
+        "median_best_epoch",
     ])?;
-    for run in runs {
-        let minimum = run
-            .predictions
-            .iter()
-            .copied()
-            .fold(f64::INFINITY, f64::min);
-        let maximum = run
-            .predictions
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        // Sigmoid: share of saturated outputs (flat gradient). Linear/ReLU:
-        // share of outputs that are not valid probabilities.
-        let boundary_count = if run.name == "sigmoid" {
-            run.predictions
-                .iter()
-                .filter(|&&prediction| prediction <= 0.01 || prediction >= 0.99)
-                .count()
-        } else {
-            run.predictions
-                .iter()
-                .filter(|&&prediction| !(0.0..=1.0).contains(&prediction))
-                .count()
-        };
+    for result in results {
         writer.serialize((
-            run.name,
-            run.learning_rate,
-            run.report.best_epoch,
-            run.metrics.mse,
-            run.metrics.rmse,
-            run.metrics.r2,
-            minimum,
-            maximum,
-            boundary_count as f64 / run.predictions.len() as f64,
+            result.name(),
+            result.learning_rate,
+            result.runs.len(),
+            result.mse.0,
+            result.mse.1,
+            result.r2.0,
+            result.r2.1,
+            result.median_best_epoch,
         ))?;
     }
     writer.flush()?;
     Ok(())
 }
 
-pub(super) fn write_learning_history(runs: &[LearningRun], path: &Path) -> Result<()> {
+/// The chosen learning rate of each activation. Error columns aggregate all
+/// repeats; the output range comes from the representative (median-MSE) run.
+pub(super) fn write_learning_summary(chosen: &[&LearningRateResult], path: &Path) -> Result<()> {
+    let mut writer = csv::Writer::from_path(path)?;
+    writer.write_record([
+        "model",
+        "learning_rate",
+        "repeats",
+        "mse_mean",
+        "mse_std",
+        "r2_mean",
+        "r2_std",
+        "median_best_epoch",
+        "boundary_rate_mean",
+        "boundary_rate_std",
+        "representative_seed",
+        "prediction_min",
+        "prediction_max",
+    ])?;
+    for result in chosen {
+        let boundary_rates = result.runs.iter().map(boundary_rate).collect::<Vec<_>>();
+        let (boundary_mean, boundary_std) = mean_std(&boundary_rates);
+        let representative = result.representative();
+        let minimum = representative
+            .predictions
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        let maximum = representative
+            .predictions
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        writer.serialize((
+            result.name(),
+            result.learning_rate,
+            result.runs.len(),
+            result.mse.0,
+            result.mse.1,
+            result.r2.0,
+            result.r2.1,
+            result.median_best_epoch,
+            boundary_mean,
+            boundary_std,
+            representative.seed,
+            minimum,
+            maximum,
+        ))?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+/// Sigmoid: share of saturated outputs (flat gradient). Linear/ReLU: share of
+/// outputs that are not valid probabilities.
+fn boundary_rate(run: &LearningRun) -> f64 {
+    let count = if run.name == "sigmoid" {
+        run.predictions
+            .iter()
+            .filter(|&&prediction| prediction <= 0.01 || prediction >= 0.99)
+            .count()
+    } else {
+        run.predictions
+            .iter()
+            .filter(|&&prediction| !(0.0..=1.0).contains(&prediction))
+            .count()
+    };
+    count as f64 / run.predictions.len() as f64
+}
+
+pub(super) fn write_learning_history(runs: &[&LearningRun], path: &Path) -> Result<()> {
     let mut writer = csv::Writer::from_path(path)?;
     writer.write_record(["model", "learning_rate", "epoch", "train_mse"])?;
     for run in runs {

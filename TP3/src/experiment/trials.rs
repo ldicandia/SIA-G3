@@ -6,7 +6,7 @@ use crate::{
     config::AppConfig,
     loss::MeanSquaredError,
     matrix::DenseMatrix,
-    metrics::{regression_metrics, RegressionMetrics},
+    metrics::{mean_std, regression_metrics, RegressionMetrics},
     model::{Activation, SingleLayerPerceptron},
     split::Fold,
     training::{
@@ -17,9 +17,50 @@ use crate::{
 pub(super) struct LearningRun {
     pub(super) name: &'static str,
     pub(super) learning_rate: f64,
+    pub(super) seed: u64,
     pub(super) report: TrainingReport,
     pub(super) predictions: Vec<f64>,
     pub(super) metrics: RegressionMetrics,
+}
+
+/// Every repeat of one (activation, learning rate) pair. The spread across
+/// repeats is the noise from the initial weights and the shuffle order.
+pub(super) struct LearningRateResult {
+    pub(super) learning_rate: f64,
+    pub(super) mse: (f64, f64),
+    pub(super) r2: (f64, f64),
+    pub(super) median_best_epoch: usize,
+    pub(super) runs: Vec<LearningRun>,
+}
+
+impl LearningRateResult {
+    fn new(learning_rate: f64, runs: Vec<LearningRun>) -> Self {
+        let mse = runs.iter().map(|run| run.metrics.mse).collect::<Vec<_>>();
+        let r2 = runs.iter().map(|run| run.metrics.r2).collect::<Vec<_>>();
+        let mut epochs = runs
+            .iter()
+            .map(|run| run.report.best_epoch)
+            .collect::<Vec<_>>();
+        epochs.sort_unstable();
+        Self {
+            learning_rate,
+            mse: mean_std(&mse),
+            r2: mean_std(&r2),
+            median_best_epoch: epochs[epochs.len() / 2],
+            runs,
+        }
+    }
+
+    pub(super) fn name(&self) -> &'static str {
+        self.runs[0].name
+    }
+
+    /// The repeat with the median MSE: a typical run, not the luckiest seed.
+    pub(super) fn representative(&self) -> &LearningRun {
+        let mut order = self.runs.iter().collect::<Vec<_>>();
+        order.sort_by(|left, right| left.metrics.mse.total_cmp(&right.metrics.mse));
+        order[order.len() / 2]
+    }
 }
 
 /// One (learning rate, fold) cell of the cross-validation grid.
@@ -32,20 +73,18 @@ pub(super) struct FoldTrial {
     pub(super) validation_metrics: RegressionMetrics,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_learning_trial(
     name: &'static str,
     activation: Activation,
     learning_rate: f64,
+    seed: u64,
     features: &DenseMatrix,
     all_indices: &[usize],
     teacher_targets: &[f64],
     config: &AppConfig,
 ) -> Result<LearningRun> {
-    let mut model = SingleLayerPerceptron::new(
-        features.cols(),
-        activation,
-        config.search.initialization_seed,
-    )?;
+    let mut model = SingleLayerPerceptron::new(features.cols(), activation, seed)?;
     let report = train_single_layer(
         &mut model,
         features,
@@ -53,24 +92,27 @@ fn run_learning_trial(
         all_indices,
         None,
         &MeanSquaredError,
-        search_training_config(config, learning_rate),
+        search_training_config(config, learning_rate, seed),
     )?;
     let predictions = predict_single_indices(&model, features, all_indices)?;
     let metrics = regression_metrics(&predictions, teacher_targets)?;
     eprintln!(
-        "compare model={name} learning_rate={learning_rate} epochs={} mse={:.6}",
+        "compare model={name} learning_rate={learning_rate} seed={seed} epochs={} mse={:.6}",
         report.history.len(),
         metrics.mse
     );
     Ok(LearningRun {
         name,
         learning_rate,
+        seed,
         report,
         predictions,
         metrics,
     })
 }
 
+/// Trains `config.search.repeats` seeds per learning rate, all in parallel,
+/// and groups the runs by learning rate in the configured order.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_learning_trials(
     name: &'static str,
@@ -80,23 +122,40 @@ pub(super) fn run_learning_trials(
     all_indices: &[usize],
     teacher_targets: &[f64],
     config: &AppConfig,
-) -> Result<Vec<LearningRun>> {
+) -> Result<Vec<LearningRateResult>> {
     use rayon::prelude::*;
 
-    learning_rates
-        .par_iter()
-        .map(|&learning_rate| {
+    let first_seed = config.search.initialization_seed;
+    let cells = learning_rates
+        .iter()
+        .flat_map(|&rate| {
+            (0..config.search.repeats)
+                .map(move |repeat| (rate, first_seed.wrapping_add(repeat as u64)))
+        })
+        .collect::<Vec<_>>();
+    let mut runs = cells
+        .into_par_iter()
+        .map(|(learning_rate, seed)| {
             run_learning_trial(
                 name,
                 activation,
                 learning_rate,
+                seed,
                 features,
                 all_indices,
                 teacher_targets,
                 config,
             )
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?
+        .into_iter();
+    // `cells` is rate-major, so each learning rate owns the next `repeats` runs.
+    Ok(learning_rates
+        .iter()
+        .map(|&rate| {
+            LearningRateResult::new(rate, runs.by_ref().take(config.search.repeats).collect())
+        })
+        .collect())
 }
 
 fn run_fold_trial(
@@ -119,7 +178,7 @@ fn run_fold_trial(
         &fold.train,
         Some(&fold.validation),
         &MeanSquaredError,
-        search_training_config(config, learning_rate),
+        search_training_config(config, learning_rate, config.search.initialization_seed),
     )?;
     let train_predictions = predict_single_indices(&model, features, &fold.train)?;
     let validation_predictions = predict_single_indices(&model, features, &fold.validation)?;
@@ -176,12 +235,12 @@ pub(super) fn run_cv_trials(
         .collect()
 }
 
-fn search_training_config(config: &AppConfig, learning_rate: f64) -> TrainingConfig {
+fn search_training_config(config: &AppConfig, learning_rate: f64, seed: u64) -> TrainingConfig {
     TrainingConfig {
         learning_rate,
         max_epochs: config.search.max_epochs,
         shuffle: true,
-        seed: config.search.initialization_seed,
+        seed,
         early_stopping: Some(EarlyStopping {
             patience: config.search.patience,
             min_delta: config.search.min_delta,

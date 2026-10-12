@@ -52,27 +52,32 @@ pub fn run_inspection(
     Ok(())
 }
 
+/// `plot_relu: false` leaves ReLU out of the PNGs only; it is still trained
+/// and written to every CSV.
 pub fn run_learning_comparison(
     raw: &FraudDataset,
     config: &AppConfig,
     output: &Path,
+    plot_relu: bool,
 ) -> Result<()> {
     fs::create_dir_all(output)?;
     let dataset = apply_feature_config(raw, &config.features)?;
     let all_indices = (0..dataset.len()).collect::<Vec<_>>();
     let scaler = StandardScaler::fit(&dataset.features, &all_indices)?;
     let features = scaler.transform(&dataset.features)?;
-    let mut runs = Vec::new();
     let mut trial_writer = csv::Writer::from_path(output.join("learning_trials.csv"))?;
     trial_writer.write_record([
         "model",
         "learning_rate",
+        "seed",
         "best_epoch",
         "mse",
         "rmse",
         "r2",
         "stopped_early",
     ])?;
+    let mut results = Vec::new();
+    let mut chosen = Vec::new();
 
     // ReLU is the optional activation suggested by the assignment; it is
     // trained exactly like the other two so its conclusions are comparable.
@@ -81,7 +86,7 @@ pub fn run_learning_comparison(
         ("sigmoid", Activation::Sigmoid),
         ("relu", Activation::Relu),
     ] {
-        let trials = run_learning_trials(
+        let rates = run_learning_trials(
             name,
             activation,
             &config.search.learning_rates,
@@ -90,33 +95,50 @@ pub fn run_learning_comparison(
             &dataset.teacher_targets,
             config,
         )?;
-        let mut best: Option<LearningRun> = None;
-        for run in trials {
+        for run in rates.iter().flat_map(|rate| &rate.runs) {
             trial_writer.serialize((
                 run.name,
                 run.learning_rate,
+                run.seed,
                 run.report.best_epoch,
                 run.metrics.mse,
                 run.metrics.rmse,
                 run.metrics.r2,
                 run.report.stopped_early,
             ))?;
-            if best
-                .as_ref()
-                .is_none_or(|current| run.metrics.mse < current.metrics.mse)
-            {
-                best = Some(run);
-            }
         }
-        runs.push(best.context("no learning-rate candidates were configured")?);
+        // Each activation keeps the learning rate with the lowest mean MSE
+        // over the repeats, so one lucky seed cannot pick the rate.
+        let best = rates
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| left.mse.0.total_cmp(&right.mse.0))
+            .context("no learning-rate candidates were configured")?
+            .0;
+        chosen.push(results.len() + best);
+        results.extend(rates);
     }
     trial_writer.flush()?;
 
-    write_learning_summary(&runs, &output.join("learning_summary.csv"))?;
+    let chosen = chosen
+        .iter()
+        .map(|&index| &results[index])
+        .collect::<Vec<_>>();
+    let runs = chosen
+        .iter()
+        .map(|result| result.representative())
+        .collect::<Vec<_>>();
+    write_learning_rates(&results, &output.join("learning_rates.csv"))?;
+    write_learning_summary(&chosen, &output.join("learning_summary.csv"))?;
     write_learning_history(&runs, &output.join("learning_history.csv"))?;
-    plot_learning_history(&runs, &output.join("learning_curves.png"))?;
+    let plotted = runs
+        .iter()
+        .copied()
+        .filter(|run| plot_relu || run.name != "relu")
+        .collect::<Vec<_>>();
+    plot_learning_history(&plotted, &output.join("learning_curves.png"))?;
     plot_prediction_comparison(
-        &runs,
+        &plotted,
         &dataset.teacher_targets,
         &output.join("prediction_comparison.png"),
     )?;

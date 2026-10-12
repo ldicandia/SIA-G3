@@ -30,6 +30,15 @@ pub struct SearchConfig {
     pub patience: usize,
     pub min_delta: f64,
     pub initialization_seed: u64,
+    /// Trainings per learning rate in the activation comparison. Repeat `r`
+    /// seeds both the initial weights and the shuffle order with
+    /// `initialization_seed + r`.
+    #[serde(default = "default_repeats")]
+    pub repeats: usize,
+}
+
+fn default_repeats() -> usize {
+    1
 }
 
 /// Column-level preprocessing applied before scaling. Stored with the fraud
@@ -86,6 +95,7 @@ impl AppConfig {
                 .any(|rate| !rate.is_finite() || *rate <= 0.0)
             || self.search.max_epochs == 0
             || self.search.patience == 0
+            || self.search.repeats == 0
             || !self.search.min_delta.is_finite()
             || self.search.min_delta < 0.0
         {

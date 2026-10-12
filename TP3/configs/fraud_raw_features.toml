@@ -17,3 +17,6 @@ max_epochs = 2000
 patience = 100
 min_delta = 1e-8
 initialization_seed = 42
+# Activation comparison: trainings per learning rate. Each repeat changes the
+# seed of the initial weights and of the shuffle order (initialization_seed + r).
+repeats = 10

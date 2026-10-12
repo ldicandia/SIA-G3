@@ -122,11 +122,15 @@ Las transformaciones tienen un trade-off medido: `log1p` baja la fidelidad al Bi
 
 Se usan todas las muestras, como pide la consigna. Se entrenan con MSE contra la salida del BigModel el perceptrón lineal, el sigmoide y, como opcional, el ReLU. Cada uno prueba la misma grilla de tasas de aprendizaje y se queda con su mejor resultado, para no confundir capacidad con una mala tasa.
 
-| Modelo | MSE | R² | Rango de salida | Fuera de rango o saturado |
+Cada tasa se entrena `repeats = 10` veces. La repetición `r` usa la semilla `initialization_seed + r` para los pesos iniciales y para el orden del shuffle, así que las dos fuentes de azar cambian. La tasa se elige por el **MSE medio** de las 10 corridas. Los gráficos y `learning_history.csv` muestran la corrida de MSE mediano, que es una corrida típica y no la de la semilla más afortunada. `learning_trials.csv` guarda las 120 corridas, `learning_rates.csv` la media ± desvío de cada tasa y `learning_summary.csv` la tasa elegida de cada activación.
+
+| Modelo (η = 0,001) | MSE (media ± desvío, 10 semillas) | R² | Rango de salida | Fuera de rango o saturado |
 |---|---:|---:|---|---:|
-| Lineal | 0,02174 | 0,762 | `[-0,31; 1,41]` | 7,6% fuera de `[0,1]` |
-| Sigmoide | **0,01629** | **0,822** | `[0,006; 0,999]` | 3,7% saturado (<0,01 o >0,99) |
-| ReLU (opcional) | 0,02136 | 0,766 | `[0; 1,43]` | 5,5% por encima de 1 |
+| Lineal | 0,02174 ± 0,00001 | 0,762 | `[-0,31; 1,41]` | 7,6% fuera de `[0,1]` |
+| Sigmoide | **0,01629 ± 0,00000** | **0,822** | `[0,006; 0,999]` | 3,7% saturado (<0,01 o >0,99) |
+| ReLU (opcional) | 0,02135 ± 0,00001 | 0,767 | `[0; 1,42]` | 5,5% por encima de 1 |
+
+El desvío entre semillas es despreciable frente a la diferencia entre activaciones (0,0055). El peor sigmoide de las 40 corridas (MSE 0,01635) le gana al mejor lineal (0,02173). El azar solo pesa con η = 0,05 en el lineal y el ReLU: el desvío sube a 0,0011 y el MSE varía entre 0,0245 y 0,0291 según la semilla.
 
 **a) ¿Underfitting?** Sí, sobre todo en el lineal. Su error es un 33% mayor que el del sigmoide aun sobre los mismos datos con que entrena, y la curva de loss (`learning_curves.png`) se aplana en un nivel alto. Un hiperplano no puede reproducir la forma en S de la probabilidad del BigModel. ReLU se comporta casi como el lineal: es lineal por tramos y solo recorta la parte negativa.
 
