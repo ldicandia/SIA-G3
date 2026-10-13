@@ -199,7 +199,7 @@ La tabla es del modelo guardado (semilla 47, la representativa). El F1 de test d
 
 ### a) ¿Cómo se evalúa el desempeño?
 
-- **Protocolo:** `digits.csv` se divide 80/20 estratificado por clase. Todo el ajuste de parámetros e hiperparámetros usa solo esa partición: el candidato se elige por mayor accuracy de validación y la cantidad de épocas por early stopping sobre la loss de validación. El ganador se reentrena desde cero con el 100% de `digits.csv` y recién entonces `evaluate` lee `digits_test.csv`, una sola vez, como "producción".
+- **Protocolo:** `digits.csv` se divide 80/20 estratificado por clase. Todo el ajuste de parámetros e hiperparámetros usa solo esa partición. Cada candidato se entrena **10 veces** (`repeats = 10`): la repetición `r` usa la semilla `seed + r` para los pesos iniciales, el orden del shuffle, el dropout y la augmentation. El candidato se elige por mayor accuracy **media** de validación, y la cantidad de épocas por early stopping sobre la loss de validación (mediana de las 10 repeticiones). `candidate_summary.csv` tiene media ± desvío y `candidate_repeats.csv` cada repetición. El ganador se reentrena desde cero con el 100% de `digits.csv`, con la semilla de su repetición mediana (un caso típico, no la semilla con más suerte) y recién entonces `evaluate` lee `digits_test.csv`, una sola vez, como "producción".
 - **Métricas:**
   - cross-entropy (lo que se optimiza, sensible a la confianza);
   - accuracy (lo que pide el cliente);

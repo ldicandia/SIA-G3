@@ -9,7 +9,9 @@ use super::super::{
     data::{class_counts, DigitDataset, DIGIT_CLASSES},
     metrics::ClassificationMetrics,
 };
-use super::CandidateRun;
+use crate::metrics::mean_std;
+
+use super::{CandidateRun, SeedRun};
 
 pub(super) fn write_dataset_summary(
     dataset: &DigitDataset,
@@ -80,17 +82,23 @@ pub(super) fn write_candidate_summary(runs: &[CandidateRun], output: &Path) -> R
         "train_accuracy_at_best",
         "validation_loss",
         "validation_accuracy",
+        "validation_accuracy_std",
+        "repeats",
+        "representative_seed",
         "stopped_early",
         "seconds",
     ])?;
     for run in runs {
         let candidate = &run.result.candidate;
-        let train_accuracy = run
-            .report
-            .history
-            .iter()
-            .find(|row| row.epoch == run.result.best_epoch)
-            .map_or(f64::NAN, |row| row.train_accuracy);
+        // Mean over the repeats, each at its own best epoch.
+        let train_accuracy = mean_std(
+            &run.repeats
+                .iter()
+                .map(SeedRun::train_accuracy_at_best)
+                .collect::<Vec<_>>(),
+        )
+        .0;
+        let seconds = run.repeats.iter().map(|repeat| repeat.report.seconds).sum::<f64>();
         let lr_decay = if candidate.lr_decay_every == 0 {
             "none".to_owned()
         } else {
@@ -126,9 +134,50 @@ pub(super) fn write_candidate_summary(runs: &[CandidateRun], output: &Path) -> R
             train_accuracy.to_string(),
             run.result.validation_loss.to_string(),
             run.result.validation_accuracy.to_string(),
+            run.result.validation_accuracy_std.to_string(),
+            run.repeats.len().to_string(),
+            candidate.seed.to_string(),
             run.result.stopped_early.to_string(),
-            format!("{:.1}", run.report.seconds),
+            format!("{seconds:.1}"),
         ])?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+/// One row per (candidate, repeat): the spread behind `candidate_summary.csv`.
+pub(super) fn write_candidate_repeats(runs: &[CandidateRun], output: &Path) -> Result<()> {
+    let mut writer = csv::Writer::from_path(output.join("candidate_repeats.csv"))?;
+    writer.write_record([
+        "name",
+        "axis",
+        "seed",
+        "epochs_run",
+        "best_epoch",
+        "train_accuracy_at_best",
+        "validation_loss",
+        "validation_accuracy",
+        "stopped_early",
+        "seconds",
+        "representative",
+    ])?;
+    for run in runs {
+        let candidate = &run.result.candidate;
+        for repeat in &run.repeats {
+            writer.serialize((
+                &candidate.name,
+                candidate.axis_label(),
+                repeat.seed,
+                repeat.report.history.len(),
+                repeat.best_epoch,
+                repeat.train_accuracy_at_best(),
+                repeat.validation_loss,
+                repeat.validation_accuracy,
+                repeat.report.stopped_early,
+                format!("{:.1}", repeat.report.seconds),
+                repeat.seed == candidate.seed,
+            ))?;
+        }
     }
     writer.flush()?;
     Ok(())
@@ -138,6 +187,7 @@ pub(super) fn write_learning_history(runs: &[CandidateRun], output: &Path) -> Re
     let mut writer = csv::Writer::from_path(output.join("learning_history.csv"))?;
     writer.write_record([
         "candidate",
+        "seed",
         "epoch",
         "train_loss",
         "validation_loss",
@@ -145,9 +195,14 @@ pub(super) fn write_learning_history(runs: &[CandidateRun], output: &Path) -> Re
         "validation_accuracy",
     ])?;
     for run in runs {
-        for row in &run.report.history {
+        for (repeat, row) in run
+            .repeats
+            .iter()
+            .flat_map(|repeat| repeat.report.history.iter().map(move |row| (repeat, row)))
+        {
             writer.serialize((
                 &run.result.candidate.name,
+                repeat.seed,
                 row.epoch,
                 row.train_loss,
                 row.validation_loss,
@@ -179,6 +234,7 @@ pub(super) fn write_selected_model(artifact: &DigitModelArtifact, output: &Path)
             artifact.candidate.learning_rate.to_string(),
         ),
         ("batch_size", artifact.candidate.batch_size.to_string()),
+        ("seed", artifact.candidate.seed.to_string()),
         ("selected_epoch", artifact.selected_epoch.to_string()),
         (
             "validation_loss",

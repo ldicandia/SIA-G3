@@ -227,7 +227,13 @@ pub(super) fn plot_validation_accuracy(runs: &[CandidateRun], path: &Path) -> Re
     let root = BitMapBackend::new(path, (1400, height)).into_drawing_area();
     root.fill(&WHITE)?;
     let mut chart = ChartBuilder::on(&root)
-        .caption("Validation accuracy by candidate", ("sans-serif", 30))
+        .caption(
+            match runs[0].repeats.len() {
+                0 | 1 => "Validation accuracy by candidate".to_owned(),
+                repeats => format!("Validation accuracy by candidate (mean ± std of {repeats} seeds)"),
+            },
+            ("sans-serif", 30),
+        )
         .margin(20)
         .x_label_area_size(45)
         .y_label_area_size(430)
@@ -268,9 +274,22 @@ pub(super) fn plot_validation_accuracy(runs: &[CandidateRun], path: &Path) -> Re
             [(lower, y + 0.15), (accuracy, y + 0.85)],
             color.filled(),
         )])?;
+        let spread = runs[index].result.validation_accuracy_std;
+        if spread > 0.0 {
+            let whisker = |x: f64| PathElement::new([(x, y + 0.3), (x, y + 0.7)], BLACK);
+            chart.draw_series([
+                PathElement::new([(accuracy - spread, y + 0.5), (accuracy + spread, y + 0.5)], BLACK),
+                whisker(accuracy - spread),
+                whisker(accuracy + spread),
+            ])?;
+        }
         chart.draw_series([Text::new(
-            format!("{:.2}%", accuracy * 100.0),
-            (accuracy + 0.001, y + 0.5),
+            if spread > 0.0 {
+                format!("{:.2}% ± {:.2}", accuracy * 100.0, spread * 100.0)
+            } else {
+                format!("{:.2}%", accuracy * 100.0)
+            },
+            (accuracy + spread + 0.001, y + 0.5),
             ("sans-serif", 14)
                 .into_font()
                 .color(&BLACK)

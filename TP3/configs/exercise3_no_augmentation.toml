@@ -13,6 +13,10 @@
 
 validation_ratio = 0.20
 split_seed = 42
+# Trainings per candidate: repeat r uses seed + r (initial weights, shuffle,
+# dropout and augmentation). Candidates are ranked by mean validation
+# accuracy; the refit uses the median-accuracy seed and the median best epoch.
+repeats = 10
 
 [[candidates]]
 name = "t4_dropout"

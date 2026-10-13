@@ -95,6 +95,11 @@ impl Default for CandidateConfig {
 pub struct DigitStudyConfig {
     pub validation_ratio: f64,
     pub split_seed: u64,
+    /// Trainings per candidate. Repeat `r` uses seed `candidate.seed + r` for
+    /// the initial weights, shuffle, dropout and augmentation; candidates are
+    /// compared by their mean validation accuracy.
+    #[serde(default = "default_repeats")]
+    pub repeats: usize,
     pub candidates: Vec<CandidateConfig>,
 }
 
@@ -106,6 +111,8 @@ pub enum DigitConfigError {
     Toml(#[from] toml::de::Error),
     #[error("validation_ratio must be finite and in (0, 1)")]
     InvalidValidationRatio,
+    #[error("repeats must be at least 1")]
+    InvalidRepeats,
     #[error("at least one candidate is required")]
     MissingCandidates,
     #[error("candidate names must be non-empty and unique")]
@@ -124,6 +131,9 @@ impl DigitStudyConfig {
     pub fn validate(&self) -> Result<(), DigitConfigError> {
         if !(self.validation_ratio > 0.0 && self.validation_ratio < 1.0) {
             return Err(DigitConfigError::InvalidValidationRatio);
+        }
+        if self.repeats == 0 {
+            return Err(DigitConfigError::InvalidRepeats);
         }
         if self.candidates.is_empty() {
             return Err(DigitConfigError::MissingCandidates);
@@ -237,6 +247,10 @@ fn default_decay_factor() -> f64 {
     1.0
 }
 
+fn default_repeats() -> usize {
+    1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +277,7 @@ mod tests {
         let config = DigitStudyConfig {
             validation_ratio: 0.2,
             split_seed: 42,
+            repeats: 1,
             candidates: vec![candidate("same"), candidate("same")],
         };
         assert!(matches!(
@@ -276,6 +291,7 @@ mod tests {
         let config = DigitStudyConfig {
             validation_ratio: 0.0,
             split_seed: 42,
+            repeats: 1,
             candidates: vec![candidate("valid")],
         };
         assert!(matches!(

@@ -2,7 +2,10 @@
 
 use anyhow::{bail, Result};
 
-use crate::model::{Activation, MultilayerPerceptron};
+use crate::{
+    metrics::mean_std,
+    model::{Activation, MultilayerPerceptron},
+};
 
 use super::super::{
     config::CandidateConfig,
@@ -10,7 +13,7 @@ use super::super::{
     live_dashboard::LiveMetricsPublisher,
     training::train_digit_candidate,
 };
-use super::{evaluate_digit_model, CandidateResult, CandidateRun};
+use super::{evaluate_digit_model, CandidateResult, CandidateRun, SeedRun};
 
 pub(super) fn validate_candidates(candidates: &[CandidateConfig], input_size: usize) -> Result<()> {
     if candidates.is_empty() {
@@ -34,25 +37,34 @@ pub(super) fn validate_candidates(candidates: &[CandidateConfig], input_size: us
     Ok(())
 }
 
-fn run_candidate(
-    candidate: CandidateConfig,
+/// Trains one repeat of `candidate` with `seed`. With several repeats the
+/// live dashboard sees each one as `name@seed<seed>`.
+fn run_repeat(
+    candidate: &CandidateConfig,
+    seed: u64,
+    repeats: usize,
     dataset: &DigitDataset,
     split: &DigitSplit,
     publisher: &LiveMetricsPublisher,
-) -> Result<CandidateRun> {
+) -> Result<SeedRun> {
+    let mut repeat = candidate.clone();
+    repeat.seed = seed;
+    if repeats > 1 {
+        repeat.name = format!("{}@seed{seed}", candidate.name);
+    }
     eprintln!(
         "training candidate '{}' ({})",
-        candidate.name,
+        repeat.name,
         candidate.axis_label()
     );
-    let mut model = create_model(&candidate)?;
+    let mut model = create_model(&repeat)?;
     let report = train_digit_candidate(
         &mut model,
         &dataset.features,
         &dataset.labels,
         &split.train,
         &split.validation,
-        &candidate,
+        &repeat,
         Some(publisher),
     )?;
     let validation = evaluate_digit_model(
@@ -63,36 +75,97 @@ fn run_candidate(
     )?;
     eprintln!(
         "finished candidate '{}': epochs={} best_epoch={} validation_accuracy={:.4} ({:.1}s)",
-        candidate.name,
+        repeat.name,
         report.history.len(),
         report.best_epoch,
         validation.accuracy,
         report.seconds
     );
-    Ok(CandidateRun {
-        result: CandidateResult {
-            candidate,
-            best_epoch: report.best_epoch,
-            validation_loss: validation.loss,
-            validation_accuracy: validation.accuracy,
-            stopped_early: report.stopped_early,
-        },
+    Ok(SeedRun {
+        seed,
+        best_epoch: report.best_epoch,
+        validation_loss: validation.loss,
+        validation_accuracy: validation.accuracy,
         report,
     })
 }
 
+/// Summarizes the repeats of one candidate: mean validation accuracy and
+/// loss, median best epoch, and the repeat with the median accuracy as the
+/// representative (a typical run, not the luckiest seed).
+fn summarize_repeats(mut candidate: CandidateConfig, mut repeats: Vec<SeedRun>) -> CandidateRun {
+    repeats.sort_by_key(|repeat| repeat.seed);
+    let accuracies = repeats
+        .iter()
+        .map(|repeat| repeat.validation_accuracy)
+        .collect::<Vec<_>>();
+    let (accuracy, accuracy_std) = mean_std(&accuracies);
+    let (loss, _) = mean_std(
+        &repeats
+            .iter()
+            .map(|repeat| repeat.validation_loss)
+            .collect::<Vec<_>>(),
+    );
+    let mut epochs = repeats
+        .iter()
+        .map(|repeat| repeat.best_epoch)
+        .collect::<Vec<_>>();
+    epochs.sort_unstable();
+    let mut order = (0..repeats.len()).collect::<Vec<_>>();
+    order.sort_by(|&left, &right| accuracies[left].total_cmp(&accuracies[right]));
+    let representative = &repeats[order[order.len() / 2]];
+    candidate.seed = representative.seed;
+    CandidateRun {
+        result: CandidateResult {
+            candidate,
+            best_epoch: epochs[epochs.len() / 2],
+            validation_loss: loss,
+            validation_accuracy: accuracy,
+            validation_accuracy_std: accuracy_std,
+            stopped_early: representative.report.stopped_early,
+        },
+        report: representative.report.clone(),
+        repeats,
+    }
+}
+
+/// Trains every (candidate, repeat) pair in parallel. Repeat `r` uses seed
+/// `candidate.seed + r`.
 pub(super) fn train_candidates(
     candidates: Vec<CandidateConfig>,
+    repeats: usize,
     dataset: &DigitDataset,
     split: &DigitSplit,
     publisher: &LiveMetricsPublisher,
 ) -> Result<Vec<CandidateRun>> {
     use rayon::prelude::*;
 
-    candidates
+    let jobs = candidates
+        .iter()
+        .enumerate()
+        .flat_map(|(index, candidate)| {
+            (0..repeats as u64).map(move |repeat| (index, candidate.seed.wrapping_add(repeat)))
+        })
+        .collect::<Vec<_>>();
+    let mut trained = jobs
         .into_par_iter()
-        .map(|candidate| run_candidate(candidate, dataset, split, publisher))
-        .collect()
+        .map(|(index, seed)| {
+            run_repeat(&candidates[index], seed, repeats, dataset, split, publisher)
+                .map(|run| (index, run))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut grouped = candidates
+        .iter()
+        .map(|_| Vec::with_capacity(repeats))
+        .collect::<Vec<_>>();
+    for (index, run) in trained.drain(..) {
+        grouped[index].push(run);
+    }
+    Ok(candidates
+        .into_iter()
+        .zip(grouped)
+        .map(|(candidate, runs)| summarize_repeats(candidate, runs))
+        .collect())
 }
 
 pub(super) fn create_model(candidate: &CandidateConfig) -> Result<MultilayerPerceptron> {
@@ -159,8 +232,10 @@ mod tests {
                 best_epoch: 1,
                 validation_loss: loss,
                 validation_accuracy: accuracy,
+                validation_accuracy_std: 0.0,
                 stopped_early: false,
             },
+            repeats: Vec::new(),
             report: DigitTrainingReport {
                 history: vec![crate::digits::training::DigitEpochMetrics {
                     epoch: 1,
@@ -176,6 +251,28 @@ mod tests {
                 seconds: 0.0,
             },
         }
+    }
+
+    #[test]
+    fn repeats_are_averaged_and_the_median_seed_represents_them() {
+        let template = run("x", 2, 0.0, 0.0);
+        let repeat = |seed: u64, accuracy: f64, epoch: usize| SeedRun {
+            seed,
+            best_epoch: epoch,
+            validation_loss: 1.0 - accuracy,
+            validation_accuracy: accuracy,
+            report: template.report.clone(),
+        };
+        let summary = summarize_repeats(
+            candidate("x", 2),
+            vec![repeat(9, 0.90, 7), repeat(7, 0.96, 3), repeat(8, 0.93, 5)],
+        );
+        assert!((summary.result.validation_accuracy - 0.93).abs() < 1e-12);
+        assert!(summary.result.validation_accuracy_std > 0.0);
+        assert_eq!(summary.result.best_epoch, 5);
+        assert_eq!(summary.result.candidate.seed, 8);
+        let seeds = summary.repeats.iter().map(|r| r.seed).collect::<Vec<_>>();
+        assert_eq!(seeds, [7, 8, 9]);
     }
 
     #[test]

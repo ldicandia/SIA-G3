@@ -286,6 +286,7 @@ pub fn study_toml(
     let study = DigitStudyConfig {
         validation_ratio,
         split_seed,
+        repeats: 1,
         candidates: vec![candidate.clone()],
     };
     study.validate().map_err(|error| error.to_string())?;

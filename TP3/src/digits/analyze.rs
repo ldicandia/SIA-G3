@@ -19,12 +19,20 @@ use candidates::*;
 use plots::*;
 use report::*;
 
+/// A candidate summarized over its repeats. `candidate.seed` is the
+/// representative repeat (median validation accuracy), which supplies the
+/// refit seed and the plotted curves.
 #[derive(Clone, Debug)]
 pub struct CandidateResult {
     pub candidate: CandidateConfig,
+    /// Median best epoch over the repeats: the refit epoch count.
     pub best_epoch: usize,
+    /// Mean over the repeats.
     pub validation_loss: f64,
+    /// Mean over the repeats.
     pub validation_accuracy: f64,
+    /// Population std over the repeats (0 with a single repeat).
+    pub validation_accuracy_std: f64,
     pub stopped_early: bool,
 }
 
@@ -33,10 +41,33 @@ pub struct TrainingOutcome {
     pub candidates: Vec<CandidateResult>,
 }
 
+/// One training of a candidate with one seed.
+#[derive(Clone)]
+struct SeedRun {
+    seed: u64,
+    best_epoch: usize,
+    validation_loss: f64,
+    validation_accuracy: f64,
+    report: DigitTrainingReport,
+}
+
+impl SeedRun {
+    fn train_accuracy_at_best(&self) -> f64 {
+        self.report
+            .history
+            .iter()
+            .find(|row| row.epoch == self.best_epoch)
+            .map_or(f64::NAN, |row| row.train_accuracy)
+    }
+}
+
 #[derive(Clone)]
 struct CandidateRun {
     result: CandidateResult,
+    /// History of the representative repeat.
     report: DigitTrainingReport,
+    /// Every repeat, in seed order.
+    repeats: Vec<SeedRun>,
 }
 
 pub fn run_digit_training(
@@ -59,10 +90,11 @@ pub fn run_digit_training(
     let split = stratified_digit_split(&dataset.labels, config.validation_ratio, config.split_seed);
     write_dataset_summary(dataset, &split.train, &split.validation, output)?;
 
-    let runs = train_candidates(candidates, dataset, &split, &publisher)?;
+    let runs = train_candidates(candidates, config.repeats, dataset, &split, &publisher)?;
 
     let best_index = select_best_index(&runs).context("candidate list cannot be empty")?;
     write_candidate_summary(&runs, output)?;
+    write_candidate_repeats(&runs, output)?;
     write_learning_history(&runs, output)?;
     plot_candidate_losses(&runs, &output.join("candidate_loss_curves.png"))?;
     plot_axis_losses(&runs, output)?;
@@ -104,11 +136,14 @@ pub fn run_digit_training(
     artifact.save(&output.join("selected_model.toml"))?;
     write_selected_model(&artifact, output)?;
     eprintln!(
-        "selected candidate '{}' (validation_accuracy={:.6}, validation_loss={:.6}, epoch={})",
+        "selected candidate '{}' (validation_accuracy={:.6}±{:.6} over {} repeats, validation_loss={:.6}, epoch={}, seed={})",
         artifact.candidate.name,
         artifact.selection_validation_accuracy,
+        best.result.validation_accuracy_std,
+        best.repeats.len(),
         artifact.selection_validation_loss,
-        artifact.selected_epoch
+        artifact.selected_epoch,
+        artifact.candidate.seed
     );
     let dropped_events = publisher.dropped_events();
     if dropped_events > 0 {

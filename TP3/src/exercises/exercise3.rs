@@ -50,6 +50,11 @@ pub fn train(
         .with_context(|| format!("failed to load configuration {}", config.display()))?;
     let mut baseline_candidate = baseline_artifact.candidate.clone();
     baseline_candidate.name = BASELINE_NAME.to_owned();
+    // The saved model carries its representative seed; repeat the baseline
+    // with the same seeds as the ladder so every step sees the same draws.
+    if let Some(ladder) = config.candidates.first() {
+        baseline_candidate.seed = ladder.seed;
+    }
     let outcome = run_digit_training(
         "exercise3",
         &dataset,
