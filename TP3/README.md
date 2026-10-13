@@ -304,7 +304,7 @@ Sí: **los datos mismos**, y se separan de las técnicas usando la línea de bas
 - `split`: holdout y k-fold estratificados y reproducibles.
 - `metrics`: métricas de regresión y clasificación, F1, average precision y barrido de umbrales.
 - `calibration`: Brier, ECE, bins de confiabilidad, Platt scaling (Newton-Raphson) e isotónica (pool-adjacent-violators), sin I/O.
-- `experiment`: orquesta el Ejercicio 1, genera CSV y PNG, y persiste el TinyModel. `generalize`, `calibrate` y `feature-study` comparten el mismo protocolo de CV (`cross_validate` + `refit_tinymodel`); `experiment::calibration` y `experiment::feature_study` son los dos opcionales.
+- `experiment`: orquesta el Ejercicio 1, genera CSV y PNG, y persiste el TinyModel. `generalize`, `calibrate` y `feature-study` comparten el mismo protocolo de CV (`cross_validate`); `generalize` y `calibrate` además reentrenan una vez por semilla (`refit_with_seed`); `experiment::calibration` y `experiment::feature_study` son los dos opcionales.
 - `digits`: loader, configuración de candidatos, entrenamiento por mini-batch (softmax + cross-entropy, SGD, Momentum, Adam, weight decay, dropout, decaimiento de la tasa, augmentation), métricas, persistencia, reportes y dashboard. `digits::noise` (ruido gaussiano y sal y pimienta), `digits::attribution` (saliency, gradiente × input, Integrated Gradients) y `digits::image_grid` (grillas de mapas 28×28) son los opcionales.
 - `exercises`: orquestación separada de cada ejercicio.
 
@@ -406,34 +406,36 @@ Un score está **calibrado** si `P(fraude | score = s) ≈ s`: de todas las tran
 - **Platt scaling:** `p = σ(a · logit(s) + b)`, ajustado por Newton-Raphson sobre log-loss.
 - **Regresión isotónica:** función escalonada no decreciente, ajustada con pool-adjacent-violators.
 
-Los dos calibradores se ajustan **solo sobre las predicciones out-of-fold de desarrollo**, las mismas que eligen el umbral. El test no se usa para ajustar nada. Las métricas son:
+Los dos calibradores se ajustan **solo sobre las predicciones out-of-fold de desarrollo**, las mismas que eligen el umbral. El test no se usa para ajustar nada. Igual que `generalize`, el estudio se repite con las 10 semillas (`search.repeats`): cada semilla ajusta su propio Platt e isotónica sobre sus predicciones out-of-fold y los aplica a su propio modelo reentrenado. Las tablas reportan media ± desvío entre semillas (`calibration_seeds.csv` y `calibration_decisions_seeds.csv` tienen cada semilla). Las métricas son:
 
 - **Brier:** MSE entre la probabilidad y el resultado 0/1.
 - **ECE:** gap medio ponderado entre la probabilidad media y la tasa observada, en 10 bins de igual ancho.
 
-Resultados en test (1.126 transacciones, `calibration_metrics.csv`):
+Resultados en test (1.126 transacciones, media ± desvío en 10 semillas, `calibration_metrics.csv`):
 
 | Modelo | Brier | ECE | Average precision |
 |---|---:|---:|---:|
-| TinyModel sin calibrar | 0,1422 | 0,2902 | 0,9486 |
-| TinyModel + Platt | **0,0215** | **0,0115** | 0,9486 |
-| TinyModel + isotónica | 0,0221 | 0,0117 | 0,9379 |
+| TinyModel sin calibrar | 0,1497 ± 0,0038 | 0,3015 ± 0,0054 | 0,9496 ± 0,0013 |
+| TinyModel + Platt | **0,0215 ± 0,0003** | **0,0105 ± 0,0016** | 0,9496 ± 0,0013 |
+| TinyModel + isotónica | 0,0222 ± 0,0004 | 0,0108 ± 0,0014 | 0,9395 ± 0,0041 |
 | BigModel | 0,1575 | 0,3039 | 1,0000 |
 
-- **Parámetros de Platt** (`platt_parameters.csv`): `a = 2,691`, `b = −5,070`. La isotónica queda con 22 escalones. Ambos se ajustan con las predicciones out-of-fold de la semilla representativa, que es también la del modelo guardado.
-- `reliability_diagram.png` muestra la tasa observada contra la probabilidad media por bin. El TinyModel sin calibrar y el BigModel quedan muy por debajo de la diagonal: en test, el bin [0,7; 0,8) del BigModel tiene 0 fraudes en 76 transacciones, y el del TinyModel tiene 15,4% de fraude con un score medio de 0,739. Con Platt, los puntos se acercan a la diagonal. Los bins entre 0,2 y 0,9 tienen muy pocas filas (2 a 13 con Platt), así que son ruidosos.
-- En test, el score medio del TinyModel es 0,410 y el del BigModel 0,422, pero la tasa real de fraude es 0,121. Con Platt, el score medio es 0,110.
-- En desarrollo, el TinyModel sin calibrar tiene ECE 0,306 (out-of-fold). Los valores de Platt e isotónica en desarrollo son in-sample (`calibrator_in_sample = true`), por eso no se reportan como resultado.
+- **Parámetros de Platt** (`platt_parameters.csv`): `a` entre 2,681 y 2,710 y `b` entre −5,101 y −5,014 según la semilla; la isotónica queda con 19 a 30 escalones. Que los parámetros casi no cambien muestra que la calibración no depende de la semilla. La semilla representativa (47, la del modelo guardado) da `a = 2,691`, `b = −5,070`, y sus predicciones fila por fila están en `calibrated_test_predictions.csv`.
+- `reliability_diagram.png` muestra la tasa observada contra la probabilidad media por bin, juntando las predicciones de test de las 10 semillas. El TinyModel sin calibrar y el BigModel quedan muy por debajo de la diagonal: en test, el bin [0,7; 0,8) del BigModel tiene 0 fraudes en 76 transacciones, y el del TinyModel tiene 15,4% de fraude con un score medio de 0,742. Con Platt, los puntos se acercan a la diagonal. Los bins entre 0,2 y 0,9 siguen siendo ruidosos: juntar semillas no agrega transacciones nuevas (son las mismas 1.126), y con Platt esos bins tienen entre 3 y 12 transacciones por semilla.
+- En test, el score medio del TinyModel es 0,421 y el del BigModel 0,422, pero la tasa real de fraude es 0,121. Con Platt, el score medio es 0,112.
+- En desarrollo, el TinyModel sin calibrar tiene ECE 0,307 ± 0,001 (out-of-fold). Los valores de Platt e isotónica en desarrollo son in-sample (`calibrator_in_sample = true`), por eso no se reportan como resultado.
 
-**Decisiones con costos** (`calibration_decisions.csv`, test, con `cost_ratio = 20`: un fraude no detectado cuesta 20 revisiones manuales; costo = FP + 20·FN):
+**Decisiones con costos** (`calibration_decisions.csv`, test, media en 10 semillas, con `cost_ratio = 20`: un fraude no detectado cuesta 20 revisiones manuales; costo = FP + 20·FN):
 
 | Política | Umbral | TP | FP | TN | FN | Precision | Recall | Costo |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| TinyModel sin calibrar, umbral F1 | 0,870 | 108 | 4 | 986 | 28 | 0,964 | 0,794 | 564 |
-| TinyModel sin calibrar, umbral de costo | 0,048 | 136 | 956 | 34 | 0 | 0,125 | 1,000 | 956 |
-| TinyModel + Platt, umbral de costo | 0,048 | 129 | 79 | 911 | 7 | 0,620 | 0,949 | 219 |
-| TinyModel + isotónica, umbral de costo | 0,048 | 132 | 128 | 862 | 4 | 0,508 | 0,971 | **208** |
+| TinyModel sin calibrar, umbral F1 | 0,870 | 107,7 | 3,3 | 986,7 | 28,3 | 0,970 | 0,792 | 569 ± 25 |
+| TinyModel sin calibrar, umbral de costo | 0,048 | 136,0 | 959,1 | 30,9 | 0,0 | 0,124 | 1,000 | 959 ± 2 |
+| TinyModel + Platt, umbral de costo | 0,048 | 130,8 | 85,7 | 904,3 | 5,2 | 0,605 | 0,962 | **190 ± 18** |
+| TinyModel + isotónica, umbral de costo | 0,048 | 132,0 | 132,8 | 857,2 | 4,0 | 0,499 | 0,971 | 213 ± 11 |
 | BigModel | 0,85 | 136 | 0 | 990 | 0 | 1,000 | 1,000 | 0 |
+
+Con la semilla representativa sola, la isotónica salía apenas mejor que Platt (208 contra 219). En el promedio de 10 semillas se invierte (190 contra 213): la diferencia entre los dos calibradores es del orden del desvío entre semillas, así que no hay un ganador claro.
 
 **¿Por qué sería apropiado calibrar en este caso?**
 
@@ -442,9 +444,9 @@ Resultados en test (1.126 transacciones, `calibration_metrics.csv`):
 - **La consigna pide una probabilidad** (0 = 0%, 1 = 100%), y hoy el número no significa eso: el score medio (0,410) es más del triple de la tasa real (0,121). El desbalance del 11,6% hace que un score que imita la forma del BigModel sobreestime mucho el fraude para la mayoría legítima. Además, la sigmoide satura en los extremos (3,7% de las salidas), donde el gradiente casi no corrige los errores.
 - **Las decisiones por costo esperado necesitan probabilidades calibradas.** Conviene marcar si `p · C_fraude > (1 − p) · C_revisión`, o sea si `p > p* = C_revisión / (C_revisión + C_fraude) = 1/21 ≈ 0,048` para la razón 20. Esa fórmula solo sirve si `p` está calibrada:
   - con el score crudo, `p*` marca 1.092 de 1.126 transacciones y cuesta 956;
-  - con Platt o isotónica, el mismo umbral teórico cuesta 219 y 208, **2,6 y 2,7 veces menos que el umbral F1** (564), sin buscar el umbral a mano;
+  - con Platt o isotónica, el mismo umbral teórico cuesta 190 y 213 en promedio, **3,0 y 2,7 veces menos que el umbral F1** (569), sin buscar el umbral a mano;
   - el umbral 0,048 sobre Platt equivale a un score crudo de ≈ 0,684 (derivado de `a` y `b`), y el umbral F1 de 0,870 equivale a una probabilidad calibrada de ≈ 0,51. El número crudo no dice nada de eso.
-- **Platt es monótona:** conserva el ranking y la average precision (0,9486 en ambos) y solo cambia el significado del número. Aplicada al logit, `σ(a·(w·x + c) + b) = σ((a·w)·x + (a·c + b))`: equivale a reescalar los pesos y el bias de la misma neurona. El TinyModel calibrado sigue siendo un perceptrón con los mismos 9 parámetros. La isotónica es más flexible pero crea empates, y baja un poco la AP (0,938).
+- **Platt es monótona:** conserva el ranking y la average precision (0,9496 en ambos) y solo cambia el significado del número. Aplicada al logit, `σ(a·(w·x + c) + b) = σ((a·w)·x + (a·c + b))`: equivale a reescalar los pesos y el bias de la misma neurona. El TinyModel calibrado sigue siendo un perceptrón con los mismos 9 parámetros. La isotónica es más flexible pero crea empates, y baja un poco la AP (0,940).
 - **Sin fuga de información:** el calibrador se ajusta sobre predicciones out-of-fold, como el umbral, y el test solo se usa para la evaluación final. Los pesos del TinyModel nunca ven `flagged_fraud`: la destilación sigue siendo contra el BigModel, y la etiqueta solo se usa, igual que antes, para el umbral y ahora para la calibración.
 - **Producción:** la calibración deriva con el tiempo (cambia la tasa de fraude o el comportamiento). Se puede reajustar `a` y `b` con etiquetas recientes sin reentrenar el TinyModel.
 

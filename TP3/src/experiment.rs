@@ -289,11 +289,14 @@ struct CrossValidation {
     seed_rows: Vec<SeedThreshold>,
     /// Seed with the median out-of-fold MSE at the chosen learning rate: a
     /// typical run, not the luckiest one. It supplies the saved model, the
-    /// pooled out-of-fold scores, the sweep and the plots.
+    /// threshold sweep and the plots.
     representative_seed: u64,
+    /// Pooled out-of-fold scores of every seed, aligned with `seed_rows`.
+    /// Folds are visited in the same order for every seed, so they all
+    /// share `oof_rows` and `oof_labels`.
+    seed_oof_scores: Vec<Vec<f64>>,
     /// Development row index of each pooled out-of-fold score.
     oof_rows: Vec<usize>,
-    oof_scores: Vec<f64>,
     oof_labels: Vec<bool>,
     sweep: Vec<ThresholdMetrics>,
     /// Mean of the per-seed F1-maximizing thresholds.
@@ -424,7 +427,11 @@ fn cross_validate(dataset: &FraudDataset, config: &AppConfig) -> Result<CrossVal
     });
     let representative = order[order.len() / 2];
     let representative_seed = seed_rows[representative].seed;
-    let (oof_rows, oof_scores, oof_labels, sweep) = pooled.swap_remove(representative);
+    let seed_oof_scores = pooled
+        .iter()
+        .map(|(_, scores, _, _)| scores.clone())
+        .collect();
+    let (oof_rows, _, oof_labels, sweep) = pooled.swap_remove(representative);
 
     let mut fold_rows = Vec::with_capacity(folds.len());
     for (fold, split) in folds.iter().enumerate() {
@@ -454,8 +461,8 @@ fn cross_validate(dataset: &FraudDataset, config: &AppConfig) -> Result<CrossVal
         chosen,
         seed_rows,
         representative_seed,
+        seed_oof_scores,
         oof_rows,
-        oof_scores,
         oof_labels,
         sweep,
         threshold,

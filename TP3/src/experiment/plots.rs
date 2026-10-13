@@ -355,6 +355,7 @@ fn padded_range(values: &[f64]) -> (f64, f64) {
 /// diagonal of perfect calibration.
 pub(super) fn plot_reliability_diagram(
     series: &[(&str, &[ReliabilityBin])],
+    title: &str,
     path: &Path,
 ) -> Result<()> {
     if series.is_empty() {
@@ -363,10 +364,7 @@ pub(super) fn plot_reliability_diagram(
     let root = BitMapBackend::new(path, (1000, 800)).into_drawing_area();
     root.fill(&WHITE)?;
     let mut chart = ChartBuilder::on(&root)
-        .caption(
-            "Reliability diagram on test (10 equal-width bins)",
-            ("sans-serif", 28),
-        )
+        .caption(title, ("sans-serif", 28))
         .margin(20)
         .x_label_area_size(50)
         .y_label_area_size(60)
