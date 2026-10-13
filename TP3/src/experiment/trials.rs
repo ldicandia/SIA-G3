@@ -63,10 +63,11 @@ impl LearningRateResult {
     }
 }
 
-/// One (learning rate, fold) cell of the cross-validation grid.
+/// One (learning rate, fold, seed) cell of the cross-validation grid.
 pub(super) struct FoldTrial {
     pub(super) learning_rate: f64,
     pub(super) fold: usize,
+    pub(super) seed: u64,
     pub(super) report: TrainingReport,
     pub(super) train_mse: f64,
     pub(super) validation_predictions: Vec<f64>,
@@ -125,13 +126,10 @@ pub(super) fn run_learning_trials(
 ) -> Result<Vec<LearningRateResult>> {
     use rayon::prelude::*;
 
-    let first_seed = config.search.initialization_seed;
+    let seeds = repeat_seeds(config);
     let cells = learning_rates
         .iter()
-        .flat_map(|&rate| {
-            (0..config.search.repeats)
-                .map(move |repeat| (rate, first_seed.wrapping_add(repeat as u64)))
-        })
+        .flat_map(|&rate| seeds.iter().map(move |&seed| (rate, seed)))
         .collect::<Vec<_>>();
     let mut runs = cells
         .into_par_iter()
@@ -158,19 +156,17 @@ pub(super) fn run_learning_trials(
         .collect())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_fold_trial(
     learning_rate: f64,
     fold_index: usize,
+    seed: u64,
     fold: &Fold,
     features: &DenseMatrix,
     teacher_targets: &[f64],
     config: &AppConfig,
 ) -> Result<FoldTrial> {
-    let mut model = SingleLayerPerceptron::new(
-        features.cols(),
-        Activation::Sigmoid,
-        config.search.initialization_seed,
-    )?;
+    let mut model = SingleLayerPerceptron::new(features.cols(), Activation::Sigmoid, seed)?;
     let report = train_single_layer(
         &mut model,
         features,
@@ -178,7 +174,7 @@ fn run_fold_trial(
         &fold.train,
         Some(&fold.validation),
         &MeanSquaredError,
-        search_training_config(config, learning_rate, config.search.initialization_seed),
+        search_training_config(config, learning_rate, seed),
     )?;
     let train_predictions = predict_single_indices(&model, features, &fold.train)?;
     let validation_predictions = predict_single_indices(&model, features, &fold.validation)?;
@@ -192,12 +188,13 @@ fn run_fold_trial(
         &select_values(teacher_targets, &fold.validation),
     )?;
     eprintln!(
-        "generalize learning_rate={learning_rate} fold={fold_index} best_epoch={} validation_mse={:.6}",
+        "generalize learning_rate={learning_rate} fold={fold_index} seed={seed} best_epoch={} validation_mse={:.6}",
         report.best_epoch, validation_metrics.mse
     );
     Ok(FoldTrial {
         learning_rate,
         fold: fold_index,
+        seed,
         report,
         train_mse,
         validation_predictions,
@@ -205,8 +202,9 @@ fn run_fold_trial(
     })
 }
 
-/// Trains every (learning rate, fold) pair in parallel. `fold_features[k]` is
-/// the full matrix scaled with a scaler fitted only on fold `k`'s train rows.
+/// Trains every (learning rate, fold, seed) cell in parallel, with the same
+/// `config.search.repeats` seeds as the activation comparison. `fold_features[k]`
+/// is the full matrix scaled with a scaler fitted only on fold `k`'s train rows.
 pub(super) fn run_cv_trials(
     learning_rates: &[f64],
     folds: &[Fold],
@@ -216,21 +214,39 @@ pub(super) fn run_cv_trials(
 ) -> Result<Vec<FoldTrial>> {
     use rayon::prelude::*;
 
+    let seeds = repeat_seeds(config);
     let cells = learning_rates
         .iter()
-        .flat_map(|&rate| (0..folds.len()).map(move |fold| (rate, fold)))
+        .flat_map(|&rate| {
+            let seeds = &seeds;
+            (0..folds.len()).flat_map(move |fold| seeds.iter().map(move |&seed| (rate, fold, seed)))
+        })
         .collect::<Vec<_>>();
     cells
         .into_par_iter()
-        .map(|(learning_rate, fold)| {
+        .map(|(learning_rate, fold, seed)| {
             run_fold_trial(
                 learning_rate,
                 fold,
+                seed,
                 &folds[fold],
                 &fold_features[fold],
                 teacher_targets,
                 config,
             )
+        })
+        .collect()
+}
+
+/// Repeat `r` seeds both the initial weights and the shuffle order with
+/// `initialization_seed + r`.
+pub(super) fn repeat_seeds(config: &AppConfig) -> Vec<u64> {
+    (0..config.search.repeats)
+        .map(|repeat| {
+            config
+                .search
+                .initialization_seed
+                .wrapping_add(repeat as u64)
         })
         .collect()
 }

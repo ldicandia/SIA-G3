@@ -55,7 +55,7 @@ cargo run --release -- exercise3 attribution --model output/exercise3/selected_m
 
 `exercise2 noise` y `exercise2 attribution` existen con los mismos argumentos. Los comandos de dígitos aceptan `--data` (y `exercise3 train` también `--previous-data` y `--baseline-model`) si los CSV no están en la ruta por defecto.
 
-Tiempos de referencia con 16 hilos: Ejercicio 1 completo en unos 5 s; los 26 candidatos del Ejercicio 2 en aproximadamente 1 min; el Ejercicio 3 en unos 4 min. Opcionales (medidos en esta corrida, con el binario ya compilado): `calibrate` 1,5 s; `feature-study` 34 s (18 variantes × 20 entrenamientos de CV); entrenar `exercise3_no_augmentation` 42 s; `exercise3 noise` con 3 modelos 2,2 s; `exercise3 attribution` 1,9 s.
+Tiempos de referencia con 16 hilos: Ejercicio 1 completo en unos 5 s; los 26 candidatos del Ejercicio 2 en aproximadamente 1 min; el Ejercicio 3 en unos 4 min. Opcionales (medidos en esta corrida, con el binario ya compilado): `calibrate` 1,5 s; `feature-study` unos 45 s (18 variantes × 200 entrenamientos de CV); entrenar `exercise3_no_augmentation` 42 s; `exercise3 noise` con 3 modelos 2,2 s; `exercise3 attribution` 1,9 s.
 
 ## Funcionalidades recomendadas por la cátedra
 
@@ -115,8 +115,8 @@ Las transformaciones tienen un trade-off medido: `log1p` baja la fidelidad al Bi
 
 | Features | R² vs BigModel (todas las muestras) | F1 CV (media) | Average precision CV | F1 test |
 |---|---:|---:|---:|---:|
-| Sin `timestamp`, sin `log1p` | 0,881 | 0,875 | 0,954 | 0,858 |
-| Sin `timestamp`, con `log1p` (**elegida**) | 0,822 | **0,898** | **0,957** | **0,880** |
+| Sin `timestamp`, sin `log1p` | 0,881 | 0,872 | 0,954 | 0,866 |
+| Sin `timestamp`, con `log1p` (**elegida**) | 0,822 | **0,895** | **0,957** | **0,871** |
 
 ### Comparación de aprendizaje: lineal vs no lineal
 
@@ -159,35 +159,39 @@ El desvío entre semillas es despreciable frente a la diferencia entre activacio
 - Primero se separa un test estratificado del 15% (1.126 filas) que se consulta **una sola vez**, al final.
 - Sobre el 85% restante se hace **validación cruzada estratificada de 5 folds**. La estratificación es por bandas de la probabilidad del BigModel, y cada fold tiene 11,1% a 11,8% de fraude.
 - Cada fold ajusta su propio scaler con sus filas de entrenamiento, así que no hay fuga de información hacia validación.
-- Con los folds se elige la tasa de aprendizaje (menor MSE medio de validación) y la cantidad de épocas (mediana de las épocas de early stopping).
-- El modelo final se reentrena con todo el 85% y se evalúa en test.
+- Cada par (tasa, fold) se entrena con las mismas `repeats = 10` semillas que la comparación de aprendizaje (pesos iniciales y orden del shuffle): 4 tasas × 5 folds × 10 semillas = 200 entrenamientos.
+- Con los folds se elige la tasa de aprendizaje (menor MSE medio de validación sobre folds y semillas) y la cantidad de épocas (mediana de las 50 épocas de early stopping de esa tasa).
+- El modelo final se reentrena con todo el 85% y se evalúa en test. Se guarda el de la **semilla representativa**: la de MSE out-of-fold mediano, una corrida típica y no la más afortunada. Además se reentrena con las 10 semillas para medir cuánto depende el test de la semilla (`test_seeds.csv`).
 
-¿Cómo se elige el mejor conjunto de entrenamiento? **No se elige**: elegir el split "que mejor da" es sobreajustar a la partición. K-fold hace que cada fila sea validación exactamente una vez y permite reportar media ± desvío. El desvío chico (F1 0,898 ± 0,007) muestra que el resultado no depende de un split afortunado.
+¿Cómo se elige el mejor conjunto de entrenamiento? **No se elige**: elegir el split "que mejor da" es sobreajustar a la partición. K-fold hace que cada fila sea validación exactamente una vez y permite reportar media ± desvío. El desvío chico (F1 0,895 ± 0,007) muestra que el resultado no depende de un split afortunado.
 
-| Métrica (5 folds, umbral elegido) | Media ± desvío |
+| Métrica (5 folds, umbral elegido; cada fold promedia sus 10 semillas) | Media ± desvío entre folds |
 |---|---:|
 | MSE vs BigModel | 0,0164 ± 0,0006 |
 | R² vs BigModel | 0,821 ± 0,006 |
-| Precision | 0,929 ± 0,013 |
-| Recall | 0,869 ± 0,013 |
-| F1 | 0,898 ± 0,007 |
+| Precision | 0,945 ± 0,018 |
+| Recall | 0,850 ± 0,012 |
+| F1 | 0,895 ± 0,007 |
 | Average precision | 0,957 ± 0,005 |
 
-Las cuatro tasas de aprendizaje probadas dan un MSE de validación prácticamente igual (0,01640 a 0,01648): en esta grilla alcanzan errores similares con distinta velocidad de convergencia. Esto no demuestra convexidad ni garantiza un mínimo global para MSE con sigmoide. Se eligió 0,05 con 76 épocas.
+Las cuatro tasas de aprendizaje probadas dan un MSE de validación prácticamente igual (0,01639 a 0,01650): en esta grilla alcanzan errores similares con distinta velocidad de convergencia. Esto no demuestra convexidad ni garantiza un mínimo global para MSE con sigmoide. Se eligió 0,05 con 69 épocas. `cv_summary.csv` separa las dos fuentes de variación: el desvío del MSE entre semillas dentro de un fold (≤ 0,00003) es unas 20 veces menor que el desvío entre folds (≈ 0,0006).
 
 **c) Mejor modelo y umbral recomendado.** El modelo es un perceptrón simple sigmoide con 8 entradas: 9 parámetros contra un BigModel desconocido. Se guarda en `output/fraud_model.toml` junto con su preprocesamiento.
 
-El umbral **recomendado es 0,858**. Es el que maximiza F1 sobre las predicciones *out-of-fold* de desarrollo: cada score usado para elegirlo viene de un modelo que no vio esa fila. En caso de empate se prefiere mayor recall, porque un fraude que se escapa suele costar más que una revisión manual. Coincide con el corte natural del BigModel en 0,85.
+El umbral **recomendado es 0,870**. Para cada semilla se toma el umbral que maximiza F1 sobre sus predicciones *out-of-fold* de desarrollo: cada score usado para elegirlo viene de un modelo que no vio esa fila. En caso de empate se prefiere mayor recall, porque un fraude que se escapa suele costar más que una revisión manual. El umbral recomendado es la media de los 10 (de 0,858 a 0,881, desvío 0,007; ver `cv_seeds.csv`) y queda cerca del corte natural del BigModel en 0,85.
 
 Resultado en test (1.126 transacciones, consultado una vez):
 
 | Métrica | Valor |
 |---|---:|
-| MSE / R² vs BigModel | 0,0157 / 0,828 |
-| Precision / Recall / F1 | 0,965 / 0,809 / 0,880 |
-| Average precision | 0,950 |
-| Specificity / Accuracy | 0,996 / 0,973 |
-| TP / FP / TN / FN | 110 / 4 / 986 / 26 |
+| MSE / R² vs BigModel | 0,0162 / 0,823 |
+| Precision / Recall / F1 | 0,964 / 0,794 / 0,871 |
+| Average precision | 0,949 |
+| Specificity / Accuracy | 0,996 / 0,972 |
+| TP / FP / TN / FN | 108 / 4 / 986 / 28 |
+| F1 reentrenando con las 10 semillas | 0,872 ± 0,005 (de 0,865 a 0,879) |
+
+La tabla es del modelo guardado (semilla 47, la representativa). El F1 de test de los 10 reentrenamientos varía poco, así que el resultado no depende de la semilla.
 
 `threshold_sweep.csv` y `threshold_metrics.png` guardan precision, recall, F1 y accuracy para cada umbral. Si CompanyX tiene costos explícitos (por ejemplo, un fraude cuesta 20 veces lo que una revisión), puede elegir otro punto operativo con esa tabla sin reentrenar. Por ejemplo, bajar el umbral sube el recall a cambio de precision. Con el score calibrado, ese umbral sale directo de los costos (ver "Opcionales", calibración).
 
@@ -335,7 +339,7 @@ Los cuatro opcionales de la consigna están implementados y medidos. El opcional
 
 ### Ejercicio 1: construcción y descarte de features
 
-`feature-study` evalúa cada variante con **exactamente el mismo protocolo de CV** que `generalize`: el mismo holdout, los mismos 5 folds, el scaler por fold, la búsqueda de tasa y el umbral F1 out-of-fold. **Solo usa las filas de desarrollo: el test no se consulta.** La fila `baseline` reproduce los números documentados (F1 0,898 ± 0,007, AP 0,957 ± 0,005). Las variantes son:
+`feature-study` evalúa cada variante con **exactamente el mismo protocolo de CV** que `generalize`: el mismo holdout, los mismos 5 folds con 10 semillas, el scaler por fold, la búsqueda de tasa y el umbral F1 out-of-fold. **Solo usa las filas de desarrollo: el test no se consulta.** La fila `baseline` reproduce los números documentados (F1 0,895 ± 0,007, AP 0,957 ± 0,005). Las variantes son:
 
 - `drop:<col>`: sacar una columna cruda que hoy se usa;
 - `add:<feature>`: sumar una feature derivada;
@@ -358,42 +362,42 @@ Los cuatro opcionales de la consigna están implementados y medidos. El opcional
 
 | Variante | Features | F1 CV | AP CV | ΔF1 | ΔAP |
 |---|---:|---:|---:|---:|---:|
-| `baseline` (configs/default.toml) | 8 | 0,898 ± 0,007 | 0,957 ± 0,005 | | |
-| `add:amount_per_item` | 9 | 0,899 ± 0,005 | 0,956 ± 0,006 | +0,09 | −0,12 |
-| `add:items_viewed_per_minute` | 9 | 0,897 ± 0,008 | 0,957 ± 0,005 | −0,07 | −0,06 |
-| `add:viewed_per_purchased` | 9 | 0,896 ± 0,008 | 0,957 ± 0,005 | −0,17 | −0,01 |
-| `add:amount_per_account_day` | 9 | **0,906 ± 0,008** | **0,960 ± 0,005** | **+0,79** | **+0,28** |
-| `add:amount_x_quantity` | 9 | 0,896 ± 0,009 | 0,957 ± 0,006 | −0,15 | −0,03 |
-| `add:hour_of_day` | 10 | 0,896 ± 0,010 | 0,957 ± 0,006 | −0,15 | −0,01 |
-| `add:weekend` | 9 | 0,899 ± 0,006 | 0,957 ± 0,005 | +0,09 | +0,02 |
-| `add:all_derived` | 16 | 0,908 ± 0,009 | 0,961 ± 0,005 | +1,00 | +0,42 |
-| `add:selected` (`amount_per_account_day` + `weekend`) | 10 | 0,903 ± 0,008 | 0,960 ± 0,005 | +0,53 | +0,23 |
-| `drop:amount_usd` | 7 | 0,871 ± 0,017 | 0,927 ± 0,009 | −2,64 | −3,07 |
-| `drop:quantity_purchased` | 7 | 0,887 ± 0,007 | 0,948 ± 0,005 | −1,04 | −0,90 |
-| `drop:session_duration_seconds` | 7 | 0,853 ± 0,012 | 0,935 ± 0,007 | −4,51 | −2,27 |
-| `drop:days_since_last_purchase` | 7 | 0,881 ± 0,009 | 0,951 ± 0,006 | −1,64 | −0,58 |
-| `drop:account_age_days` | 7 | 0,869 ± 0,019 | 0,936 ± 0,008 | −2,89 | −2,09 |
-| `drop:device_screen_resolution` | 7 | 0,896 ± 0,006 | 0,957 ± 0,005 | −0,14 | +0,01 |
-| `drop:time_since_last_login_s` | 7 | 0,898 ± 0,011 | 0,957 ± 0,005 | +0,06 | −0,03 |
-| `drop:items_viewed_before_purchase` | 7 | 0,907 ± 0,008 | 0,960 ± 0,005 | +0,90 | +0,28 |
+| `baseline` (configs/default.toml) | 8 | 0,895 ± 0,007 | 0,957 ± 0,005 | | |
+| `add:amount_per_item` | 9 | 0,892 ± 0,007 | 0,956 ± 0,006 | −0,34 | −0,11 |
+| `add:items_viewed_per_minute` | 9 | 0,895 ± 0,007 | 0,957 ± 0,005 | −0,00 | +0,01 |
+| `add:viewed_per_purchased` | 9 | 0,896 ± 0,007 | 0,957 ± 0,005 | +0,11 | +0,06 |
+| `add:amount_per_account_day` | 9 | **0,903 ± 0,005** | **0,960 ± 0,005** | **+0,85** | **+0,29** |
+| `add:amount_x_quantity` | 9 | 0,894 ± 0,007 | 0,957 ± 0,005 | −0,07 | −0,02 |
+| `add:hour_of_day` | 10 | 0,893 ± 0,007 | 0,957 ± 0,005 | −0,21 | −0,02 |
+| `add:weekend` | 9 | 0,893 ± 0,008 | 0,957 ± 0,005 | −0,21 | −0,03 |
+| `add:all_derived` | 16 | 0,905 ± 0,008 | 0,962 ± 0,005 | +1,04 | +0,48 |
+| `add:selected` (`viewed_per_purchased` + `amount_per_account_day`) | 10 | 0,904 ± 0,006 | 0,960 ± 0,005 | +0,95 | +0,32 |
+| `drop:amount_usd` | 7 | 0,867 ± 0,017 | 0,926 ± 0,007 | −2,75 | −3,12 |
+| `drop:quantity_purchased` | 7 | 0,886 ± 0,012 | 0,948 ± 0,005 | −0,89 | −0,85 |
+| `drop:session_duration_seconds` | 7 | 0,857 ± 0,010 | 0,936 ± 0,008 | −3,83 | −2,13 |
+| `drop:days_since_last_purchase` | 7 | 0,878 ± 0,009 | 0,951 ± 0,007 | −1,72 | −0,64 |
+| `drop:account_age_days` | 7 | 0,868 ± 0,020 | 0,938 ± 0,009 | −2,71 | −1,92 |
+| `drop:device_screen_resolution` | 7 | 0,894 ± 0,006 | 0,957 ± 0,005 | −0,10 | +0,02 |
+| `drop:time_since_last_login_s` | 7 | 0,894 ± 0,007 | 0,957 ± 0,005 | −0,09 | +0,00 |
+| `drop:items_viewed_before_purchase` | 7 | 0,906 ± 0,007 | 0,960 ± 0,005 | +1,09 | +0,30 |
 
 **¿Qué features construidas ayudan y por qué?**
 
 - Una sola neurona solo arma combinaciones lineales de sus entradas. Por eso una feature nueva suma capacidad solo si **no** es (casi) combinación lineal de las que ya están.
-- `amount_per_account_day` es la única que ayuda sola (+0,79 pp de F1, +0,28 pp de AP). `ln(amount/(edad+1)) ≈ ln(amount) − ln(edad+1)`: `ln(amount)` ya es entrada, pero `account_age_days` entra cruda, así que `ln(edad)` es una transformación nueva que la neurona no podía formar. Además es la derivada más correlacionada con el fraude real (ρ = 0,768).
-- Los otros cocientes (`amount_per_item`, `items_viewed_per_minute`, `viewed_per_purchased`) no ayudan, aunque `items_viewed_per_minute` correlacione 0,695 con el fraude. Correlación alta no alcanza: su información ya está en las entradas (sesión y artículos vistos) y el cociente agrega casi nada linealmente nuevo. Se confirma la hipótesis de que un log-cociente de columnas ya presentes aporta poco.
-- La interacción explícita `amount_x_quantity`, que la neurona no puede formar sola, **no** ayuda (−0,15 pp): la hipótesis de que un producto suma capacidad útil queda refutada con estos datos.
-- Las 7 derivadas juntas dan la mayor mejora (+1,00 pp de F1, +0,42 pp de AP, R² contra BigModel de 0,821 a 0,833), con el doble de entradas (16). El salto es del mismo orden que el desvío entre folds (0,009), así que es una mejora chica.
+- `amount_per_account_day` es la única que ayuda sola de forma clara (+0,85 pp de F1, +0,29 pp de AP). `ln(amount/(edad+1)) ≈ ln(amount) − ln(edad+1)`: `ln(amount)` ya es entrada, pero `account_age_days` entra cruda, así que `ln(edad)` es una transformación nueva que la neurona no podía formar. Además es la derivada más correlacionada con el fraude real (ρ = 0,768).
+- Los otros cocientes (`amount_per_item`, `items_viewed_per_minute`, `viewed_per_purchased`) no ayudan de forma apreciable (entre −0,34 y +0,11 pp, dentro del desvío entre folds), aunque `items_viewed_per_minute` correlacione 0,695 con el fraude. Correlación alta no alcanza: su información ya está en las entradas (sesión y artículos vistos) y el cociente agrega casi nada linealmente nuevo. Se confirma la hipótesis de que un log-cociente de columnas ya presentes aporta poco.
+- La interacción explícita `amount_x_quantity`, que la neurona no puede formar sola, **no** ayuda (−0,07 pp): la hipótesis de que un producto suma capacidad útil queda refutada con estos datos.
+- Las 7 derivadas juntas dan la mayor mejora (+1,04 pp de F1, +0,48 pp de AP, R² contra BigModel de 0,821 a 0,833), con el doble de entradas (16). El salto es del mismo orden que el desvío entre folds (0,008), así que es una mejora chica.
 
 **¿Qué columnas se podrían descartar?** Según las filas `drop:`:
 
-- `device_screen_resolution` y `time_since_last_login_s` se pueden sacar sin pérdida (−0,14 y +0,06 pp de F1, AP igual), como anticipaba su correlación casi nula.
-- Sacar `items_viewed_before_purchase` **mejora** (+0,90 pp de F1, +0,28 pp de AP). Es la sorpresa del estudio: para una sola neurona, esa columna cruda parece agregar más ruido que señal. La causa no está aislada, y la mejora es del orden del desvío entre folds (0,008).
-- `amount_usd`, `session_duration_seconds` y `account_age_days` son las columnas indispensables (sacarlas cuesta entre 2,6 y 4,5 pp de F1).
+- `device_screen_resolution` y `time_since_last_login_s` se pueden sacar sin pérdida (−0,10 y −0,09 pp de F1, AP igual), como anticipaba su correlación casi nula.
+- Sacar `items_viewed_before_purchase` **mejora** (+1,09 pp de F1, +0,30 pp de AP). Es la sorpresa del estudio: para una sola neurona, esa columna cruda parece agregar más ruido que señal. La causa no está aislada, y la mejora es del orden del desvío entre folds (0,007).
+- `amount_usd`, `session_duration_seconds` y `account_age_days` son las columnas indispensables (sacarlas cuesta entre 2,7 y 3,8 pp de F1).
 
-**¿Se confirma el descarte de `timestamp`?** Sí. `hour_of_day` y `weekend` tienen correlación prácticamente nula con el BigModel y con el fraude (|ρ| ≤ 0,011) y no mueven el CV (−0,15 y +0,09 pp de F1, dentro del ruido). Coincide con `timestamp_profile.csv`: la hora y el día no tienen señal.
+**¿Se confirma el descarte de `timestamp`?** Sí. `hour_of_day` y `weekend` tienen correlación prácticamente nula con el BigModel y con el fraude (|ρ| ≤ 0,011) y no mueven el CV (−0,21 pp de F1 cada una, dentro del ruido). Coincide con `timestamp_profile.csv`: la hora y el día no tienen señal.
 
-**Recomendación.** La regla de selección (mejorar F1 y AP a la vez) elige `amount_per_account_day` y `weekend`, y queda guardada en `configs/fraud_constructed_features.toml`. El aporte de `weekend` es ruido (+0,09 pp con un desvío de 0,6 pp), y de hecho `add:selected` (+0,53 pp) rinde menos que `amount_per_account_day` sola (+0,79 pp). En la práctica se recomienda sumar solo `amount_per_account_day` y descartar `device_screen_resolution` y `time_since_last_login_s`. Las mejoras son de menos de 1 pp, del orden del desvío entre folds. Como control final, `generalize --config configs/fraud_constructed_features.toml --output output/fraud_constructed_features` da F1 0,883 en test contra 0,880 del modelo principal (AP 0,948 contra 0,950): no hay diferencia real. **El modelo principal del Ejercicio 1 (`configs/default.toml`, umbral 0,858) no se cambia.**
+**Recomendación.** La regla de selección (mejorar F1 y AP a la vez) elige `viewed_per_purchased` y `amount_per_account_day`, y queda guardada en `configs/fraud_constructed_features.toml`. El aporte de `viewed_per_purchased` sola es ruido (+0,11 pp con un desvío de 0,7 pp); `add:selected` (+0,95 pp) rinde casi igual que `amount_per_account_day` sola (+0,85 pp). En la práctica se recomienda sumar `amount_per_account_day` y descartar `device_screen_resolution` y `time_since_last_login_s`. Las mejoras de CV son de menos de 1 pp, del orden del desvío entre folds. Como control final, `generalize --config configs/fraud_constructed_features.toml --output output/exercise1/generalize_constructed` da en test F1 0,880 con el modelo guardado y 0,890 ± 0,006 en 10 reentrenamientos, contra 0,871 y 0,872 ± 0,005 del modelo principal (AP 0,947 contra 0,949). La diferencia en test equivale a 2 o 3 fraudes de 136. **El modelo principal del Ejercicio 1 (`configs/default.toml`, umbral 0,870) no se cambia.**
 
 ### Ejercicio 1: calibración
 
@@ -411,36 +415,36 @@ Resultados en test (1.126 transacciones, `calibration_metrics.csv`):
 
 | Modelo | Brier | ECE | Average precision |
 |---|---:|---:|---:|
-| TinyModel sin calibrar | 0,1461 | 0,2966 | 0,9496 |
-| TinyModel + Platt | **0,0216** | **0,0107** | 0,9496 |
-| TinyModel + isotónica | 0,0224 | 0,0118 | 0,9410 |
+| TinyModel sin calibrar | 0,1422 | 0,2902 | 0,9486 |
+| TinyModel + Platt | **0,0215** | **0,0115** | 0,9486 |
+| TinyModel + isotónica | 0,0221 | 0,0117 | 0,9379 |
 | BigModel | 0,1575 | 0,3039 | 1,0000 |
 
-- **Parámetros de Platt** (`platt_parameters.csv`): `a = 2,683`, `b = −5,082`. La isotónica queda con 20 escalones.
-- `reliability_diagram.png` muestra la tasa observada contra la probabilidad media por bin. El TinyModel sin calibrar y el BigModel quedan muy por debajo de la diagonal: en test, el bin [0,7; 0,8) del BigModel tiene 0 fraudes en 76 transacciones, y el del TinyModel tiene 15,2% de fraude con un score medio de 0,743. Con Platt, los puntos se acercan a la diagonal. Los bins entre 0,2 y 0,9 tienen muy pocas filas (2 a 11 con Platt), así que son ruidosos.
-- En test, el score medio del TinyModel es 0,417 y el del BigModel 0,422, pero la tasa real de fraude es 0,121. Con Platt, el score medio es 0,110.
+- **Parámetros de Platt** (`platt_parameters.csv`): `a = 2,691`, `b = −5,070`. La isotónica queda con 22 escalones. Ambos se ajustan con las predicciones out-of-fold de la semilla representativa, que es también la del modelo guardado.
+- `reliability_diagram.png` muestra la tasa observada contra la probabilidad media por bin. El TinyModel sin calibrar y el BigModel quedan muy por debajo de la diagonal: en test, el bin [0,7; 0,8) del BigModel tiene 0 fraudes en 76 transacciones, y el del TinyModel tiene 15,4% de fraude con un score medio de 0,739. Con Platt, los puntos se acercan a la diagonal. Los bins entre 0,2 y 0,9 tienen muy pocas filas (2 a 13 con Platt), así que son ruidosos.
+- En test, el score medio del TinyModel es 0,410 y el del BigModel 0,422, pero la tasa real de fraude es 0,121. Con Platt, el score medio es 0,110.
 - En desarrollo, el TinyModel sin calibrar tiene ECE 0,306 (out-of-fold). Los valores de Platt e isotónica en desarrollo son in-sample (`calibrator_in_sample = true`), por eso no se reportan como resultado.
 
 **Decisiones con costos** (`calibration_decisions.csv`, test, con `cost_ratio = 20`: un fraude no detectado cuesta 20 revisiones manuales; costo = FP + 20·FN):
 
 | Política | Umbral | TP | FP | TN | FN | Precision | Recall | Costo |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| TinyModel sin calibrar, umbral F1 | 0,858 | 110 | 4 | 986 | 26 | 0,965 | 0,809 | 524 |
-| TinyModel sin calibrar, umbral de costo | 0,048 | 136 | 962 | 28 | 0 | 0,124 | 1,000 | 962 |
-| TinyModel + Platt, umbral de costo | 0,048 | 130 | 84 | 906 | 6 | 0,607 | 0,956 | **204** |
-| TinyModel + isotónica, umbral de costo | 0,048 | 132 | 124 | 866 | 4 | 0,516 | 0,971 | **204** |
+| TinyModel sin calibrar, umbral F1 | 0,870 | 108 | 4 | 986 | 28 | 0,964 | 0,794 | 564 |
+| TinyModel sin calibrar, umbral de costo | 0,048 | 136 | 956 | 34 | 0 | 0,125 | 1,000 | 956 |
+| TinyModel + Platt, umbral de costo | 0,048 | 129 | 79 | 911 | 7 | 0,620 | 0,949 | 219 |
+| TinyModel + isotónica, umbral de costo | 0,048 | 132 | 128 | 862 | 4 | 0,508 | 0,971 | **208** |
 | BigModel | 0,85 | 136 | 0 | 990 | 0 | 1,000 | 1,000 | 0 |
 
 **¿Por qué sería apropiado calibrar en este caso?**
 
 - **El TinyModel no aprende la probabilidad de fraude.** Se entrena con MSE para imitar los scores del BigModel, nunca contra `flagged_fraud`. En el mejor caso hereda la calibración del BigModel.
 - **El BigModel tampoco está calibrado.** Separa perfectamente en 0,85, así que una transacción con score 0,8 tiene una frecuencia empírica de fraude de ~0, no de 0,8. Su ECE en test es 0,304. Es un ranking excelente (AP = 1), no una probabilidad.
-- **La consigna pide una probabilidad** (0 = 0%, 1 = 100%), y hoy el número no significa eso: el score medio (0,417) es más del triple de la tasa real (0,121). El desbalance del 11,6% hace que un score que imita la forma del BigModel sobreestime mucho el fraude para la mayoría legítima. Además, la sigmoide satura en los extremos (3,7% de las salidas), donde el gradiente casi no corrige los errores.
+- **La consigna pide una probabilidad** (0 = 0%, 1 = 100%), y hoy el número no significa eso: el score medio (0,410) es más del triple de la tasa real (0,121). El desbalance del 11,6% hace que un score que imita la forma del BigModel sobreestime mucho el fraude para la mayoría legítima. Además, la sigmoide satura en los extremos (3,7% de las salidas), donde el gradiente casi no corrige los errores.
 - **Las decisiones por costo esperado necesitan probabilidades calibradas.** Conviene marcar si `p · C_fraude > (1 − p) · C_revisión`, o sea si `p > p* = C_revisión / (C_revisión + C_fraude) = 1/21 ≈ 0,048` para la razón 20. Esa fórmula solo sirve si `p` está calibrada:
-  - con el score crudo, `p*` marca 1.098 de 1.126 transacciones y cuesta 962;
-  - con Platt o isotónica, el mismo umbral teórico cuesta 204, **2,6 veces menos que el umbral F1** (524), sin buscar el umbral a mano;
-  - el umbral 0,048 sobre Platt equivale a un score crudo de ≈ 0,685 (derivado de `a` y `b`), y el umbral F1 de 0,858 equivale a una probabilidad calibrada de ≈ 0,44. El número crudo no dice nada de eso.
-- **Platt es monótona:** conserva el ranking y la average precision (0,9496 en ambos) y solo cambia el significado del número. Aplicada al logit, `σ(a·(w·x + c) + b) = σ((a·w)·x + (a·c + b))`: equivale a reescalar los pesos y el bias de la misma neurona. El TinyModel calibrado sigue siendo un perceptrón con los mismos 9 parámetros. La isotónica es más flexible pero crea empates, y baja un poco la AP (0,941).
+  - con el score crudo, `p*` marca 1.092 de 1.126 transacciones y cuesta 956;
+  - con Platt o isotónica, el mismo umbral teórico cuesta 219 y 208, **2,6 y 2,7 veces menos que el umbral F1** (564), sin buscar el umbral a mano;
+  - el umbral 0,048 sobre Platt equivale a un score crudo de ≈ 0,684 (derivado de `a` y `b`), y el umbral F1 de 0,870 equivale a una probabilidad calibrada de ≈ 0,51. El número crudo no dice nada de eso.
+- **Platt es monótona:** conserva el ranking y la average precision (0,9486 en ambos) y solo cambia el significado del número. Aplicada al logit, `σ(a·(w·x + c) + b) = σ((a·w)·x + (a·c + b))`: equivale a reescalar los pesos y el bias de la misma neurona. El TinyModel calibrado sigue siendo un perceptrón con los mismos 9 parámetros. La isotónica es más flexible pero crea empates, y baja un poco la AP (0,938).
 - **Sin fuga de información:** el calibrador se ajusta sobre predicciones out-of-fold, como el umbral, y el test solo se usa para la evaluación final. Los pesos del TinyModel nunca ven `flagged_fraud`: la destilación sigue siendo contra el BigModel, y la etiqueta solo se usa, igual que antes, para el umbral y ahora para la calibración.
 - **Producción:** la calibración deriva con el tiempo (cambia la tasa de fraude o el comportamiento). Se puede reajustar `a` y `b` con etiquetas recientes sin reentrenar el TinyModel.
 

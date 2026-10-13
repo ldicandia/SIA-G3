@@ -13,7 +13,7 @@ use crate::{
 
 use super::{
     trials::{FoldTrial, LearningRateResult, LearningRun},
-    FoldClassification, LearningRateSummary,
+    FoldClassification, LearningRateSummary, SeedTest, SeedThreshold,
 };
 
 pub(super) fn write_dataset_summary(dataset: &FraudDataset, path: &Path) -> Result<()> {
@@ -284,6 +284,7 @@ pub(super) fn write_cv_trials(trials: &[FoldTrial], path: &Path) -> Result<()> {
     writer.write_record([
         "learning_rate",
         "fold",
+        "seed",
         "best_epoch",
         "train_mse",
         "validation_mse",
@@ -295,6 +296,7 @@ pub(super) fn write_cv_trials(trials: &[FoldTrial], path: &Path) -> Result<()> {
         writer.serialize((
             trial.learning_rate,
             trial.fold,
+            trial.seed,
             trial.report.best_epoch,
             trial.train_mse,
             trial.validation_metrics.mse,
@@ -315,6 +317,7 @@ pub(super) fn write_cv_summary(summaries: &[LearningRateSummary], path: &Path) -
         "train_mse_std",
         "validation_mse_mean",
         "validation_mse_std",
+        "validation_mse_seed_std",
         "validation_r2_mean",
         "validation_r2_std",
         "median_best_epoch",
@@ -326,6 +329,7 @@ pub(super) fn write_cv_summary(summaries: &[LearningRateSummary], path: &Path) -
             row.train_mse.1,
             row.validation_mse.0,
             row.validation_mse.1,
+            row.validation_mse_seed_std,
             row.validation_r2.0,
             row.validation_r2.1,
             row.median_epoch,
@@ -371,6 +375,101 @@ pub(super) fn write_fold_metrics(rows: &[FoldClassification], path: &Path) -> Re
     let mut std_row = vec!["std".to_owned()];
     std_row.extend(stats.iter().map(|(_, std)| std.to_string()));
     writer.write_record(std_row)?;
+    writer.flush()?;
+    Ok(())
+}
+
+/// Out-of-fold MSE, threshold and F1 of every seed at the chosen learning
+/// rate, then their mean and std.
+pub(super) fn write_seed_thresholds(
+    rows: &[SeedThreshold],
+    representative_seed: u64,
+    path: &Path,
+) -> Result<()> {
+    let mut writer = csv::Writer::from_path(path)?;
+    writer.write_record([
+        "seed",
+        "validation_mse",
+        "threshold",
+        "f1",
+        "representative",
+    ])?;
+    for row in rows {
+        writer.serialize((
+            row.seed.to_string(),
+            row.validation_mse,
+            row.threshold,
+            row.f1,
+            row.seed == representative_seed,
+        ))?;
+    }
+    let columns: [fn(&SeedThreshold) -> f64; 3] =
+        [|row| row.validation_mse, |row| row.threshold, |row| row.f1];
+    let stats = columns
+        .iter()
+        .map(|column| mean_std(&rows.iter().map(column).collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    for (label, pick) in [("mean", 0), ("std", 1)] {
+        let mut record = vec![label.to_owned()];
+        record.extend(
+            stats
+                .iter()
+                .map(|stat| if pick == 0 { stat.0 } else { stat.1 }.to_string()),
+        );
+        record.push(String::new());
+        writer.write_record(record)?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+/// Test metrics of the model refit with every seed, then their mean and std.
+pub(super) fn write_seed_tests(
+    tests: &[SeedTest],
+    representative_seed: u64,
+    path: &Path,
+) -> Result<()> {
+    let mut writer = csv::Writer::from_path(path)?;
+    writer.write_record([
+        "seed",
+        "mse",
+        "r2",
+        "precision",
+        "recall",
+        "f1",
+        "accuracy",
+        "average_precision",
+        "representative",
+    ])?;
+    let columns: [fn(&SeedTest) -> f64; 7] = [
+        |test| test.regression.mse,
+        |test| test.regression.r2,
+        |test| test.confusion.precision(),
+        |test| test.confusion.recall(),
+        |test| test.confusion.f1(),
+        |test| test.confusion.accuracy(),
+        |test| test.average_precision,
+    ];
+    for test in tests {
+        let mut record = vec![test.seed.to_string()];
+        record.extend(columns.iter().map(|column| column(test).to_string()));
+        record.push((test.seed == representative_seed).to_string());
+        writer.write_record(record)?;
+    }
+    let stats = columns
+        .iter()
+        .map(|column| mean_std(&tests.iter().map(column).collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    for (label, pick) in [("mean", 0), ("std", 1)] {
+        let mut record = vec![label.to_owned()];
+        record.extend(
+            stats
+                .iter()
+                .map(|stat| if pick == 0 { stat.0 } else { stat.1 }.to_string()),
+        );
+        record.push(String::new());
+        writer.write_record(record)?;
+    }
     writer.flush()?;
     Ok(())
 }
@@ -514,6 +613,7 @@ pub(super) fn write_selected_model(
     learning_rate: f64,
     epochs: usize,
     threshold: f64,
+    seed: u64,
     path: &Path,
 ) -> Result<()> {
     let mut writer = csv::Writer::from_path(path)?;
@@ -525,6 +625,7 @@ pub(super) fn write_selected_model(
         "epochs",
         "threshold",
         "threshold_criterion",
+        "seed",
     ])?;
     writer.serialize((
         "single_layer_perceptron",
@@ -533,7 +634,8 @@ pub(super) fn write_selected_model(
         learning_rate,
         epochs,
         threshold,
-        "max_f1_out_of_fold",
+        "mean_of_per_seed_max_f1_out_of_fold",
+        seed,
     ))?;
     writer.flush()?;
     Ok(())

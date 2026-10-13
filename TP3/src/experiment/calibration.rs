@@ -49,7 +49,7 @@ pub fn run_calibration(
     fs::create_dir_all(&output)?;
     let dataset = apply_feature_config(raw, &config.features)?;
     let cv = cross_validate(&dataset, config)?;
-    let (scaler, model) = refit_tinymodel(&dataset, config, &cv)?;
+    let (scaler, model) = refit_tinymodel(&dataset, &cv)?;
     let features = scaler.transform(&dataset.features)?;
     let test_rows = &cv.holdout.test;
     let test_scores = predict_single_indices(&model, &features, test_rows)?;

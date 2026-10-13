@@ -18,7 +18,7 @@ use crate::{
     matrix::DenseMatrix,
     metrics::{
         average_precision, best_f1_threshold, confusion_matrix, mean_std, regression_metrics,
-        threshold_sweep, ThresholdMetrics,
+        threshold_sweep, ConfusionMatrix, RegressionMetrics, ThresholdMetrics,
     },
     model::{Activation, SingleLayerPerceptron},
     split::{stratified_folds, stratified_holdout, Fold, HoldoutSplit},
@@ -148,13 +148,15 @@ pub fn run_learning_comparison(
 /// Generalization study for the sigmoid TinyModel:
 ///
 /// 1. A stratified test set is held out and consulted exactly once.
-/// 2. Stratified k-fold cross-validation over the remaining rows selects the
-///    learning rate (lowest mean validation MSE) and the refit epoch count
-///    (median early-stopping epoch). Each fold fits its own scaler on its
-///    own train rows.
-/// 3. The fraud threshold maximizes F1 on the pooled out-of-fold predictions,
-///    so every score used to pick it comes from a model that never saw it.
-/// 4. The model is refit on all development rows and evaluated on test.
+/// 2. Stratified k-fold cross-validation over the remaining rows, with
+///    `repeats` seeds per (learning rate, fold), selects the learning rate
+///    (lowest mean validation MSE) and the refit epoch count (median
+///    early-stopping epoch). Each fold fits its own scaler on its own train rows.
+/// 3. Each seed's threshold maximizes F1 on its pooled out-of-fold predictions,
+///    so every score used to pick it comes from a model that never saw it; the
+///    chosen threshold is their mean.
+/// 4. The model is refit on all development rows with every seed and evaluated
+///    on test; the saved model is the representative seed's.
 pub fn run_generalization(raw: &FraudDataset, config: &AppConfig, output: &Path) -> Result<()> {
     fs::create_dir_all(output)?;
     let dataset = apply_feature_config(raw, &config.features)?;
@@ -169,8 +171,13 @@ pub fn run_generalization(raw: &FraudDataset, config: &AppConfig, output: &Path)
     write_cv_summary(&cv.summaries, &output.join("cv_summary.csv"))?;
     write_threshold_sweep(&cv.sweep, &output.join("threshold_sweep.csv"))?;
     write_fold_metrics(&cv.fold_rows, &output.join("fold_metrics.csv"))?;
+    write_seed_thresholds(
+        &cv.seed_rows,
+        cv.representative_seed,
+        &output.join("cv_seeds.csv"),
+    )?;
 
-    let (final_scaler, final_model) = refit_tinymodel(&dataset, config, &cv)?;
+    let (final_scaler, final_model) = refit_tinymodel(&dataset, &cv)?;
     let final_features = final_scaler.transform(&dataset.features)?;
     let holdout = &cv.holdout;
     let chosen = &cv.chosen;
@@ -184,10 +191,35 @@ pub fn run_generalization(raw: &FraudDataset, config: &AppConfig, output: &Path)
     let test_average_precision = average_precision(&test_predictions, &test_labels)?;
     let teacher_average_precision = average_precision(&test_targets, &test_labels)?;
 
+    // Refit once per seed to show how much the test result depends on it.
+    let seed_tests = {
+        use rayon::prelude::*;
+        repeat_seeds(config)
+            .into_par_iter()
+            .map(|seed| {
+                let (scaler, model) = refit_with_seed(&dataset, &cv, seed)?;
+                let features = scaler.transform(&dataset.features)?;
+                let predictions = predict_single_indices(&model, &features, &holdout.test)?;
+                Ok(SeedTest {
+                    seed,
+                    regression: regression_metrics(&predictions, &test_targets)?,
+                    confusion: confusion_matrix(&predictions, &test_labels, threshold)?,
+                    average_precision: average_precision(&predictions, &test_labels)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+    write_seed_tests(
+        &seed_tests,
+        cv.representative_seed,
+        &output.join("test_seeds.csv"),
+    )?;
+
     write_selected_model(
         chosen.learning_rate,
         chosen.median_epoch,
         threshold,
+        cv.representative_seed,
         &output.join("selected_model.csv"),
     )?;
     write_test_metrics(
@@ -226,10 +258,17 @@ pub fn run_generalization(raw: &FraudDataset, config: &AppConfig, output: &Path)
         &output.join("generalization_learning_curve.png"),
     )?;
     plot_threshold_metrics(&cv.sweep, threshold, &output.join("threshold_metrics.png"))?;
+    let (f1_mean, f1_std) = mean_std(
+        &seed_tests
+            .iter()
+            .map(|test| test.confusion.f1())
+            .collect::<Vec<_>>(),
+    );
     eprintln!(
-        "generalize selected learning_rate={} epochs={} threshold={threshold:.5} test_f1={:.4}",
+        "generalize selected learning_rate={} epochs={} threshold={threshold:.5} seed={} test_f1={:.4} (seeds {f1_mean:.4}±{f1_std:.4})",
         chosen.learning_rate,
         chosen.median_epoch,
+        cv.representative_seed,
         confusion.f1()
     );
     Ok(())
@@ -242,26 +281,53 @@ pub fn run_generalization(raw: &FraudDataset, config: &AppConfig, output: &Path)
 struct CrossValidation {
     holdout: HoldoutSplit,
     folds: Vec<Fold>,
-    /// Every (learning rate, fold) trial, sorted by (learning rate, fold).
+    /// Every (learning rate, fold, seed) trial, sorted in that order.
     trials: Vec<FoldTrial>,
     summaries: Vec<LearningRateSummary>,
     chosen: LearningRateSummary,
+    /// One row per seed at the chosen learning rate.
+    seed_rows: Vec<SeedThreshold>,
+    /// Seed with the median out-of-fold MSE at the chosen learning rate: a
+    /// typical run, not the luckiest one. It supplies the saved model, the
+    /// pooled out-of-fold scores, the sweep and the plots.
+    representative_seed: u64,
     /// Development row index of each pooled out-of-fold score.
     oof_rows: Vec<usize>,
     oof_scores: Vec<f64>,
     oof_labels: Vec<bool>,
     sweep: Vec<ThresholdMetrics>,
+    /// Mean of the per-seed F1-maximizing thresholds.
     threshold: f64,
+    /// Per fold, classification metrics averaged over the seeds.
     fold_rows: Vec<FoldClassification>,
 }
 
 impl CrossValidation {
-    /// Trials of the chosen learning rate, in fold order.
+    /// Trials of the chosen learning rate and representative seed, in fold order.
     fn chosen_trials(&self) -> impl Iterator<Item = &FoldTrial> {
-        self.trials
-            .iter()
-            .filter(|trial| trial.learning_rate == self.chosen.learning_rate)
+        self.trials.iter().filter(|trial| {
+            trial.learning_rate == self.chosen.learning_rate
+                && trial.seed == self.representative_seed
+        })
     }
+}
+
+/// Out-of-fold result of one seed at the chosen learning rate.
+pub(crate) struct SeedThreshold {
+    pub(crate) seed: u64,
+    /// Mean validation MSE over the folds.
+    pub(crate) validation_mse: f64,
+    /// Threshold that maximizes this seed's pooled out-of-fold F1.
+    pub(crate) threshold: f64,
+    pub(crate) f1: f64,
+}
+
+/// Test result of the model refit with one seed.
+pub(crate) struct SeedTest {
+    pub(crate) seed: u64,
+    pub(crate) regression: RegressionMetrics,
+    pub(crate) confusion: ConfusionMatrix,
+    pub(crate) average_precision: f64,
 }
 
 /// Holdout, stratified k-fold CV over the development rows (one scaler per
@@ -301,48 +367,83 @@ fn cross_validate(dataset: &FraudDataset, config: &AppConfig) -> Result<CrossVal
         left.learning_rate
             .total_cmp(&right.learning_rate)
             .then(left.fold.cmp(&right.fold))
+            .then(left.seed.cmp(&right.seed))
     });
 
-    let summaries = summarize_learning_rates(&config.search.learning_rates, &trials);
+    let summaries = summarize_learning_rates(&config.search.learning_rates, folds.len(), &trials);
     let chosen = summaries
         .iter()
         .min_by(|left, right| left.validation_mse.0.total_cmp(&right.validation_mse.0))
         .context("no learning-rate candidates were configured")?
         .clone();
-
-    // Out-of-fold scores cover every development row exactly once.
-    let mut oof_rows = Vec::with_capacity(holdout.development.len());
-    let mut oof_scores = Vec::with_capacity(holdout.development.len());
-    let mut oof_labels = Vec::with_capacity(holdout.development.len());
-    let mut fold_rows = Vec::new();
     let chosen_trials = trials
         .iter()
         .filter(|trial| trial.learning_rate == chosen.learning_rate)
         .collect::<Vec<_>>();
-    for trial in &chosen_trials {
-        let validation = &folds[trial.fold].validation;
-        oof_rows.extend_from_slice(validation);
-        oof_scores.extend_from_slice(&trial.validation_predictions);
-        oof_labels.extend(select_values(&dataset.fraud_labels, validation));
-    }
-    let sweep = threshold_sweep(&oof_scores, &oof_labels)?;
-    let threshold = best_f1_threshold(&sweep)
-        .context("threshold sweep was empty")?
-        .threshold;
 
-    for trial in &chosen_trials {
-        let labels = select_values(&dataset.fraud_labels, &folds[trial.fold].validation);
-        let confusion = confusion_matrix(&trial.validation_predictions, &labels, threshold)?;
-        fold_rows.push(FoldClassification {
-            fold: trial.fold,
-            mse: trial.validation_metrics.mse,
-            r2: trial.validation_metrics.r2,
-            precision: confusion.precision(),
-            recall: confusion.recall(),
-            f1: confusion.f1(),
-            accuracy: confusion.accuracy(),
-            average_precision: average_precision(&trial.validation_predictions, &labels)?,
+    // Each seed's out-of-fold scores cover every development row exactly once,
+    // and each seed gets its own F1-maximizing threshold.
+    let mut seed_rows = Vec::new();
+    let mut pooled = Vec::new();
+    for seed in repeat_seeds(config) {
+        let mut rows = Vec::with_capacity(holdout.development.len());
+        let mut scores = Vec::with_capacity(holdout.development.len());
+        let mut labels = Vec::with_capacity(holdout.development.len());
+        let mut mse = Vec::new();
+        for trial in chosen_trials.iter().filter(|trial| trial.seed == seed) {
+            let validation = &folds[trial.fold].validation;
+            rows.extend_from_slice(validation);
+            scores.extend_from_slice(&trial.validation_predictions);
+            labels.extend(select_values(&dataset.fraud_labels, validation));
+            mse.push(trial.validation_metrics.mse);
+        }
+        let sweep = threshold_sweep(&scores, &labels)?;
+        let best = best_f1_threshold(&sweep).context("threshold sweep was empty")?;
+        seed_rows.push(SeedThreshold {
+            seed,
+            validation_mse: mean_std(&mse).0,
+            threshold: best.threshold,
+            f1: best.f1(),
         });
+        pooled.push((rows, scores, labels, sweep));
+    }
+    // The threshold is a decision, so like the learning rate it comes from
+    // every seed: the mean of the per-seed thresholds.
+    let threshold = mean_std(
+        &seed_rows
+            .iter()
+            .map(|row| row.threshold)
+            .collect::<Vec<_>>(),
+    )
+    .0;
+    let mut order = (0..seed_rows.len()).collect::<Vec<_>>();
+    order.sort_by(|&left, &right| {
+        seed_rows[left]
+            .validation_mse
+            .total_cmp(&seed_rows[right].validation_mse)
+    });
+    let representative = order[order.len() / 2];
+    let representative_seed = seed_rows[representative].seed;
+    let (oof_rows, oof_scores, oof_labels, sweep) = pooled.swap_remove(representative);
+
+    let mut fold_rows = Vec::with_capacity(folds.len());
+    for (fold, split) in folds.iter().enumerate() {
+        let labels = select_values(&dataset.fraud_labels, &split.validation);
+        let mut per_seed = Vec::new();
+        for trial in chosen_trials.iter().filter(|trial| trial.fold == fold) {
+            let confusion = confusion_matrix(&trial.validation_predictions, &labels, threshold)?;
+            per_seed.push(FoldClassification {
+                fold,
+                mse: trial.validation_metrics.mse,
+                r2: trial.validation_metrics.r2,
+                precision: confusion.precision(),
+                recall: confusion.recall(),
+                f1: confusion.f1(),
+                accuracy: confusion.accuracy(),
+                average_precision: average_precision(&trial.validation_predictions, &labels)?,
+            });
+        }
+        fold_rows.push(FoldClassification::mean(fold, &per_seed));
     }
 
     Ok(CrossValidation {
@@ -351,6 +452,8 @@ fn cross_validate(dataset: &FraudDataset, config: &AppConfig) -> Result<CrossVal
         trials,
         summaries,
         chosen,
+        seed_rows,
+        representative_seed,
         oof_rows,
         oof_scores,
         oof_labels,
@@ -360,21 +463,26 @@ fn cross_validate(dataset: &FraudDataset, config: &AppConfig) -> Result<CrossVal
     })
 }
 
-/// Final TinyModel: a scaler fitted on all development rows and a sigmoid
-/// neuron trained for the chosen learning rate and median epoch count.
+/// Final TinyModel: the representative seed's refit.
 fn refit_tinymodel(
     dataset: &FraudDataset,
-    config: &AppConfig,
     cv: &CrossValidation,
+) -> Result<(StandardScaler, SingleLayerPerceptron)> {
+    refit_with_seed(dataset, cv, cv.representative_seed)
+}
+
+/// A scaler fitted on all development rows and a sigmoid neuron trained with
+/// `seed` for the chosen learning rate and median epoch count.
+fn refit_with_seed(
+    dataset: &FraudDataset,
+    cv: &CrossValidation,
+    seed: u64,
 ) -> Result<(StandardScaler, SingleLayerPerceptron)> {
     let development = &cv.holdout.development;
     let final_scaler = StandardScaler::fit(&dataset.features, development)?;
     let final_features = final_scaler.transform(&dataset.features)?;
-    let mut final_model = SingleLayerPerceptron::new(
-        final_features.cols(),
-        Activation::Sigmoid,
-        config.search.initialization_seed,
-    )?;
+    let mut final_model =
+        SingleLayerPerceptron::new(final_features.cols(), Activation::Sigmoid, seed)?;
     train_single_layer(
         &mut final_model,
         &final_features,
@@ -382,11 +490,7 @@ fn refit_tinymodel(
         development,
         None,
         &MeanSquaredError,
-        TrainingConfig::fixed(
-            cv.chosen.learning_rate,
-            cv.chosen.median_epoch,
-            config.search.initialization_seed,
-        ),
+        TrainingConfig::fixed(cv.chosen.learning_rate, cv.chosen.median_epoch, seed),
     )?;
     Ok((final_scaler, final_model))
 }
@@ -430,7 +534,10 @@ pub fn run_scoring(raw: &FraudDataset, artifact: &FraudModelArtifact, output: &P
 pub(crate) struct LearningRateSummary {
     pub(crate) learning_rate: f64,
     pub(crate) train_mse: (f64, f64),
+    /// Mean and std across folds of the per-fold mean over seeds.
     pub(crate) validation_mse: (f64, f64),
+    /// Std across seeds inside each fold, averaged over the folds.
+    pub(crate) validation_mse_seed_std: f64,
     pub(crate) validation_r2: (f64, f64),
     pub(crate) median_epoch: usize,
 }
@@ -446,7 +553,29 @@ pub(crate) struct FoldClassification {
     pub(crate) average_precision: f64,
 }
 
-fn summarize_learning_rates(rates: &[f64], trials: &[FoldTrial]) -> Vec<LearningRateSummary> {
+impl FoldClassification {
+    /// Average over the seeds of one fold.
+    fn mean(fold: usize, rows: &[Self]) -> Self {
+        let mean =
+            |metric: fn(&Self) -> f64| rows.iter().map(metric).sum::<f64>() / rows.len() as f64;
+        Self {
+            fold,
+            mse: mean(|row| row.mse),
+            r2: mean(|row| row.r2),
+            precision: mean(|row| row.precision),
+            recall: mean(|row| row.recall),
+            f1: mean(|row| row.f1),
+            accuracy: mean(|row| row.accuracy),
+            average_precision: mean(|row| row.average_precision),
+        }
+    }
+}
+
+fn summarize_learning_rates(
+    rates: &[f64],
+    folds: usize,
+    trials: &[FoldTrial],
+) -> Vec<LearningRateSummary> {
     rates
         .iter()
         .map(|&rate| {
@@ -454,8 +583,25 @@ fn summarize_learning_rates(rates: &[f64], trials: &[FoldTrial]) -> Vec<Learning
                 .iter()
                 .filter(|trial| trial.learning_rate == rate)
                 .collect::<Vec<_>>();
-            let collect =
-                |f: &dyn Fn(&FoldTrial) -> f64| cells.iter().map(|t| f(t)).collect::<Vec<_>>();
+            // Fold spread: std of the per-fold means over seeds. Seed spread:
+            // std over seeds inside each fold, averaged over the folds.
+            let spread = |metric: fn(&FoldTrial) -> f64| {
+                let per_fold = (0..folds)
+                    .map(|fold| {
+                        let values = cells
+                            .iter()
+                            .filter(|trial| trial.fold == fold)
+                            .map(|trial| metric(trial))
+                            .collect::<Vec<_>>();
+                        mean_std(&values)
+                    })
+                    .collect::<Vec<_>>();
+                let means = per_fold.iter().map(|(mean, _)| *mean).collect::<Vec<_>>();
+                let seed_std = per_fold.iter().map(|(_, std)| std).sum::<f64>() / folds as f64;
+                (mean_std(&means), seed_std)
+            };
+            let (validation_mse, validation_mse_seed_std) =
+                spread(|trial| trial.validation_metrics.mse);
             let mut epochs = cells
                 .iter()
                 .map(|trial| trial.report.best_epoch.max(1))
@@ -463,9 +609,10 @@ fn summarize_learning_rates(rates: &[f64], trials: &[FoldTrial]) -> Vec<Learning
             epochs.sort_unstable();
             LearningRateSummary {
                 learning_rate: rate,
-                train_mse: mean_std(&collect(&|t| t.train_mse)),
-                validation_mse: mean_std(&collect(&|t| t.validation_metrics.mse)),
-                validation_r2: mean_std(&collect(&|t| t.validation_metrics.r2)),
+                train_mse: spread(|trial| trial.train_mse).0,
+                validation_mse,
+                validation_mse_seed_std,
+                validation_r2: spread(|trial| trial.validation_metrics.r2).0,
                 median_epoch: epochs[epochs.len() / 2],
             }
         })

@@ -14,7 +14,7 @@ log1p = [
     "days_since_last_purchase",
     "time_since_last_login_s",
 ]
-derived = ["amount_per_account_day", "weekend"]
+derived = ["viewed_per_purchased", "amount_per_account_day"]
 
 [split]
 # 15% stratified test set, consulted once; 5-fold CV over the remaining 85%.
@@ -29,6 +29,7 @@ max_epochs = 2000
 patience = 100
 min_delta = 1e-8
 initialization_seed = 42
-# Activation comparison: trainings per learning rate. Each repeat changes the
-# seed of the initial weights and of the shuffle order (initialization_seed + r).
+# Trainings per learning rate (compare) and per (learning rate, fold)
+# (generalize). Each repeat changes the seed of the initial weights and of the
+# shuffle order (initialization_seed + r).
 repeats = 10
