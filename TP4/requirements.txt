@@ -3,7 +3,7 @@ numpy>=1.26,<3
 pandas>=2.2,<4
 
 # Plots (matplotlib with the Agg backend, seaborn for heatmaps).
-matplotlib>=3.8,<4
+matplotlib>=3.10,<4
 seaborn>=0.13,<1
 
 # PCA reference baseline (sklearn PCA only; Kohonen/Oja/Hopfield are hand-written).

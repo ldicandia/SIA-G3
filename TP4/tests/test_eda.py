@@ -173,7 +173,7 @@ def test_non_numeric_column_is_rejected_naming_column_and_creator(tmp_path, out_
 def test_header_only_outliers_csv_and_missing_values_reported(tmp_path, out_root, write_config):
     rows = [("C1", "a1", 1, 10), ("C2", "a2", 2, ""), ("C3", "a3", 3, 30), ("C4", "a4", 4, 40)]
     src = write_csv_file(tmp_path / "small.csv", rows)
-    assert main(["run", str(write_config(data=str(src))), "--out-root", str(out_root)]) == 0
+    assert main(["run", str(write_config(data=str(src), plots=False)), "--out-root", str(out_root)]) == 0
     run_dir = out_root / "eda"
     lines = (run_dir / "outliers.csv").read_text(encoding="utf-8").splitlines()
     assert lines == [OUTLIER_HEADER]
@@ -185,7 +185,7 @@ def test_header_only_outliers_csv_and_missing_values_reported(tmp_path, out_root
 def test_perfectly_correlated_pair_is_named_alphabetically(tmp_path, out_root, write_config):
     rows = [("C1", "a1", 1, 2), ("C2", "a2", 2, 4), ("C3", "a3", 3, 6), ("C4", "a4", 4, 8)]
     src = write_csv_file(tmp_path / "corr.csv", rows)
-    main(["run", str(write_config(data=str(src))), "--out-root", str(out_root)])
+    main(["run", str(write_config(data=str(src), plots=False)), "--out-root", str(out_root)])
     summary = json.loads((out_root / "eda" / "summary.json").read_text(encoding="utf-8"))
     assert summary["max_abs_correlation_pair"] == "a~b"
     assert summary["max_abs_correlation"] == 1.0
