@@ -58,6 +58,9 @@ class Experiment:
     extra_keys: frozenset[str]
     param_defaults: Mapping[str, Any]
     validate: Callable[[dict], None] | None = None
+    # Optional per-kind hook for sweeps over this kind: called with the sweep's context and the
+    # sweep.csv table after it is written; the returned dict is merged into the sweep summary.
+    sweep_report: Callable[[RunContext, pd.DataFrame], dict] | None = None
 
 
 @contextlib.contextmanager

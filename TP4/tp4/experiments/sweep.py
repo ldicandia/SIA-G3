@@ -174,8 +174,22 @@ def run(ctx: RunContext) -> dict:
         for k in scalar_keys:
             row[k] = summary.get(k)
         rows.append(row)
-    write_csv(ctx.artifact("sweep.csv"), pd.DataFrame(rows, columns=["child", *keys, *scalar_keys]))
-    return {"n_children": len(children), "workers": workers, "grid_keys": keys}
+    table = pd.DataFrame(rows, columns=["child", *keys, *scalar_keys])
+    write_csv(ctx.artifact("sweep.csv"), table)
+    summary: dict[str, Any] = {"n_children": len(children), "workers": workers, "grid_keys": keys}
+
+    # Registry import is function-local for the same cycle reason as `runner` above. The hook is
+    # a Python attribute of the registered Experiment, never a name read from a config (T-02-04).
+    from . import get_experiment
+
+    hook = get_experiment(base["kind"]).sweep_report
+    if hook is not None:
+        extra = hook(ctx, table)
+        clash = sorted(set(extra) & set(summary))
+        if clash:
+            raise ConfigError(f"sweep: the {base['kind']} sweep report returned reserved summary keys {clash}")
+        summary.update(extra)
+    return summary
 
 
 EXPERIMENT = Experiment(

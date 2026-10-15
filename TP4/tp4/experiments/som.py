@@ -38,6 +38,7 @@ from ..models.som import (
 from ..plotting import draw_grid_cells, plt, save_figure
 from ..runs import Experiment, RunContext, write_csv
 from .pca import TOPIC_COLORS, TOPIC_LABELS
+from .som_sweep_report import report
 
 EXTRA_KEYS = frozenset({"data", "feature_set"})
 PARAM_DEFAULTS: dict[str, Any] = {
@@ -285,4 +286,5 @@ EXPERIMENT = Experiment(
     extra_keys=EXTRA_KEYS,
     param_defaults=PARAM_DEFAULTS,
     validate=validate,
+    sweep_report=report,
 )
