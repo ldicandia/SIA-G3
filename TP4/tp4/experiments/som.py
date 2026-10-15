@@ -22,6 +22,7 @@ import pandas as pd
 from matplotlib.patheffects import withStroke
 
 from ..analysis.pca import standardize
+from ..analysis.som_maps import edge_feature_diffs, u_edges, u_matrix
 from ..errors import ConfigError
 from ..features import dominant_topic, load_design
 from ..models.som import (
@@ -162,6 +163,25 @@ def _plot_hit_map(grid, hits, labels, creator_topic_by_name, topology, path) -> 
     save_figure(fig, path)
 
 
+def _plot_u_matrix(grid, u, hits, topology, path) -> None:
+    rows, cols = grid.rows, grid.cols
+    height_unit = math.sqrt(3) / 2 if topology == "hex" else 1.0
+    fig, ax = plt.subplots(figsize=(1.4 * cols + 2.5, 1.4 * rows * height_unit + 1.5))
+    vmin, vmax = float(np.nanmin(u)), float(np.nanmax(u))
+    collection = draw_grid_cells(ax, grid.positions, topology, u, cmap="viridis", vmin=vmin, vmax=vmax)
+    cbar = fig.colorbar(collection, ax=ax, shrink=0.7)
+    cbar.set_label("distancia media a las neuronas vecinas (unidades z)")
+    span = (vmax - vmin) or 1.0
+    for (x, y), value, count in zip(grid.positions, u, hits):
+        dark = (value - vmin) / span < 0.5  # viridis is dark at the low end
+        ax.text(
+            x, y, str(int(count)), ha="center", va="center", fontsize=7,
+            color="white" if dark else "black", zorder=3,
+        )
+    ax.set_title(f"Matriz U ({rows}x{cols}, {topology}): distancias altas = fronteras entre grupos")
+    save_figure(fig, path)
+
+
 def _plot_training_curve(history, path) -> None:
     epochs = history["epoch"]
     fig, (top, bottom) = plt.subplots(2, 1, figsize=(9, 8), sharex=True)
@@ -220,6 +240,7 @@ def run(ctx: RunContext) -> dict:
     write_csv(ctx.artifact("bmus.csv"), bmus)
 
     labels = labels_by_neuron(bmu, names, n_neurons)
+    u = u_matrix(W, grid)
     idx = np.arange(n_neurons)
     neurons = pd.DataFrame(
         {
@@ -230,9 +251,29 @@ def run(ctx: RunContext) -> dict:
             "y": grid.positions[:, 1],
             "hits": hits,
             "creators": [";".join(n) for n in labels],
+            "u_distance": u,
         }
     )
     write_csv(ctx.artifact("neurons.csv"), neurons)
+
+    edges = u_edges(W, grid)
+    feature_names = list(design.X.columns)
+    ea, eb = edges["neuron_a"].to_numpy(), edges["neuron_b"].to_numpy()
+    edge_table = pd.DataFrame(
+        {
+            "neuron_a": ea,
+            "row_a": ea // grid.cols,
+            "col_a": ea % grid.cols,
+            "neuron_b": eb,
+            "row_b": eb // grid.cols,
+            "col_b": eb % grid.cols,
+            "distance": edges["distance"].to_numpy(),
+            "creators_a": [";".join(labels[a]) for a in ea],
+            "creators_b": [";".join(labels[b]) for b in eb],
+            "top_diff": [edge_feature_diffs(W, feature_names, int(a), int(b)) for a, b in zip(ea, eb)],
+        }
+    )
+    write_csv(ctx.artifact("u_edges.csv"), edge_table)
 
     weights = pd.DataFrame(W, columns=list(design.X.columns))
     weights.insert(0, "col", idx % grid.cols)
@@ -248,6 +289,7 @@ def run(ctx: RunContext) -> dict:
         _plot_training_curve(result.history, ctx.artifact("training_curve.png"))
         topic_by_name = dict(zip(names, topics.tolist()))
         _plot_hit_map(grid, hits, labels, topic_by_name, cfg.topology, ctx.artifact("hit_map.png"))
+        _plot_u_matrix(grid, u, hits, cfg.topology, ctx.artifact("u_matrix.png"))
 
     n_empty = int((hits == 0).sum())
     return {
@@ -276,6 +318,9 @@ def run(ctx: RunContext) -> dict:
         "max_hits": int(hits.max()),
         "mean_hits_occupied": round(int(Zn.shape[0]) / (n_neurons - n_empty), 4),
         "n_creators_mapped": int(len(bmu)),
+        "u_mean": round(float(np.nanmean(u)), 4),
+        "u_max": round(float(np.nanmax(u)), 4),
+        "u_max_edge": f"{int(edge_table['neuron_a'].iloc[0])}~{int(edge_table['neuron_b'].iloc[0])}",
         "backend_resolved": ctx.backend.name,
     }
 
