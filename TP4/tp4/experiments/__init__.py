@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from ..errors import ConfigError
 from ..runs import Experiment
-from . import eda
+from . import eda, pca
 
 REGISTRY: dict[str, Experiment] = {
     "eda": eda.EXPERIMENT,
+    "pca": pca.EXPERIMENT,
 }
 
 
