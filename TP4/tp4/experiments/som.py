@@ -10,6 +10,10 @@ Artifacts:
   history.csv   per epoch: eta, radius, quantization error, topographic error
   hit_map.png   hit map with every creator's name drawn in its winning neuron
   training_curve.png  errors and schedules per epoch
+  u_matrix.png, u_edges.csv  mean distance to adjacent neurons and the strongest neighbor walls
+  prototypes.csv, component_planes.png, pc_planes.png  neuron prototypes (original units) and their PC1/PC2
+  region_scan.csv, regions.csv, region_profiles.csv, region_map.png, region_profiles.png, biplot_regions.png
+                contiguous map regions (Ward on the prototypes), their creators and profiles
 """
 
 from __future__ import annotations
@@ -23,15 +27,22 @@ from matplotlib.patheffects import withStroke
 
 from ..analysis.pca import fit_pca, standardize
 from ..analysis.som_maps import (
+    REGION_K_RANGE,
+    choose_n_regions,
+    correlation_ratio,
     edge_feature_diffs,
     pc_projection,
     prototypes_original_units,
     reconstruct_topic_art,
+    region_border_ratio,
+    region_profiles,
+    region_scan,
+    segment_regions,
     u_edges,
     u_matrix,
 )
 from ..errors import ConfigError
-from ..features import dominant_topic, load_design
+from ..features import TOPIC_COLUMNS, dominant_topic, load_design
 from ..models.som import (
     ADJACENCY_TOL,
     DECAYS,
@@ -43,7 +54,7 @@ from ..models.som import (
     distance_preservation,
     train_som,
 )
-from ..plotting import draw_grid_cells, grid_shape, plt, save_figure
+from ..plotting import draw_grid_cells, draw_region_borders, grid_shape, plt, save_figure
 from ..runs import Experiment, RunContext, write_csv
 from .pca import TOPIC_COLORS, TOPIC_LABELS
 from .som_sweep_report import report
@@ -62,6 +73,7 @@ PARAM_DEFAULTS: dict[str, Any] = {
     "radius0": 3.0,
     "radius_min": 1.0,
     "radius_decay": "exponential",
+    "n_regions": None,
 }
 MAX_NEURONS = 400
 MAX_EPOCHS = 5000
@@ -105,6 +117,10 @@ def validate(config: dict) -> None:
         )
     if not (_is_int(p["epochs"]) and 1 <= p["epochs"] <= MAX_EPOCHS):
         raise ConfigError(f"som: params.epochs must be an integer in [1, {MAX_EPOCHS}], got {p['epochs']!r}")
+    if p["n_regions"] is not None and not (_is_int(p["n_regions"]) and 1 <= p["n_regions"] <= rows * cols):
+        raise ConfigError(
+            f"som: params.n_regions must be null (automatic) or an integer in [1, {rows * cols}], got {p['n_regions']!r}"
+        )
     eta0, eta_min = p["eta0"], p["eta_min"]
     if not (_is_real(eta0) and _is_real(eta_min) and 0 < eta_min <= eta0 <= 1):
         raise ConfigError(f"som: need 0 < params.eta_min <= params.eta0 <= 1, got eta_min={eta_min!r}, eta0={eta0!r}")
@@ -139,15 +155,8 @@ def labels_by_neuron(bmu, names, n_neurons: int) -> list[list[str]]:
     return out
 
 
-def _plot_hit_map(grid, hits, labels, creator_topic_by_name, topology, path) -> None:
-    rows, cols = grid.rows, grid.cols
-    height_unit = math.sqrt(3) / 2 if topology == "hex" else 1.0
-    fig, ax = plt.subplots(figsize=(1.6 * cols + 2.5, 1.6 * rows * height_unit + 1.8))
-    # vmax above the peak keeps the darkest cell mid-tone so the colored names stay legible
-    collection = draw_grid_cells(ax, grid.positions, topology, hits, cmap="Blues", vmin=0, vmax=max(1.8 * float(hits.max()), 1.0))
-    cbar = fig.colorbar(collection, ax=ax, shrink=0.7)
-    cbar.set_label("creadores por neurona")
-    cbar.set_ticks(list(range(0, int(hits.max()) + 1)))
+def _draw_names(ax, grid, labels, creator_topic_by_name) -> None:
+    """Creator names inside their neuron, colored by dominant topic (shared by hit and region maps)."""
     for (x, y), names in zip(grid.positions, labels):
         k = len(names)
         if k == 0:
@@ -161,16 +170,37 @@ def _plot_hit_map(grid, hits, labels, creator_topic_by_name, topology, path) -> 
                 color=TOPIC_COLORS[creator_topic_by_name[name]], zorder=3,
                 path_effects=[withStroke(linewidth=1.5, foreground="white")],
             )
+
+
+def _topic_legend(ax) -> None:
     handles = [
         plt.Line2D([], [], marker="s", linestyle="", color=TOPIC_COLORS[t], label=TOPIC_LABELS[t])
         for t in TOPIC_COLORS
     ]
     ax.legend(handles=handles, title="tópico dominante", loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=4, frameon=False)
+
+
+def _border_pairs(grid, region_labels):
+    return [(a, b) for a, b in grid.adjacency_pairs() if region_labels[a] != region_labels[b]]
+
+
+def _plot_hit_map(grid, hits, labels, creator_topic_by_name, topology, path, border_pairs=()) -> None:
+    rows, cols = grid.rows, grid.cols
+    height_unit = math.sqrt(3) / 2 if topology == "hex" else 1.0
+    fig, ax = plt.subplots(figsize=(1.6 * cols + 2.5, 1.6 * rows * height_unit + 1.8))
+    # vmax above the peak keeps the darkest cell mid-tone so the colored names stay legible
+    collection = draw_grid_cells(ax, grid.positions, topology, hits, cmap="Blues", vmin=0, vmax=max(1.8 * float(hits.max()), 1.0))
+    cbar = fig.colorbar(collection, ax=ax, shrink=0.7)
+    cbar.set_label("creadores por neurona")
+    cbar.set_ticks(list(range(0, int(hits.max()) + 1)))
+    _draw_names(ax, grid, labels, creator_topic_by_name)
+    draw_region_borders(ax, grid.positions, topology, border_pairs)
+    _topic_legend(ax)
     ax.set_title(f"Mapa de impactos: creadores por neurona ({rows}x{cols}, {topology})")
     save_figure(fig, path)
 
 
-def _plot_u_matrix(grid, u, hits, topology, path) -> None:
+def _plot_u_matrix(grid, u, hits, topology, path, border_pairs=()) -> None:
     rows, cols = grid.rows, grid.cols
     height_unit = math.sqrt(3) / 2 if topology == "hex" else 1.0
     fig, ax = plt.subplots(figsize=(1.4 * cols + 2.5, 1.4 * rows * height_unit + 1.5))
@@ -185,7 +215,76 @@ def _plot_u_matrix(grid, u, hits, topology, path) -> None:
             x, y, str(int(count)), ha="center", va="center", fontsize=7,
             color="white" if dark else "black", zorder=3,
         )
+    draw_region_borders(ax, grid.positions, topology, border_pairs, color="#e41a1c", linewidth=2.6)
     ax.set_title(f"Matriz U ({rows}x{cols}, {topology}): distancias altas = fronteras entre grupos")
+    save_figure(fig, path)
+
+
+def _region_legend_handles(counts, colors):
+    return [
+        plt.Line2D([], [], marker="s", markersize=9, linestyle="", color=colors[r], markeredgecolor="gray",
+                   label=f"región {r + 1} ({int(counts[r])} creadores)")
+        for r in range(len(counts))
+    ]
+
+
+def _plot_region_map(grid, region_labels, counts, labels, creator_topic_by_name, topology, path) -> None:
+    rows, cols = grid.rows, grid.cols
+    height_unit = math.sqrt(3) / 2 if topology == "hex" else 1.0
+    fig, ax = plt.subplots(figsize=(1.6 * cols + 4.0, 1.6 * rows * height_unit + 1.8))
+    cmap = plt.get_cmap("Pastel1")
+    colors = [cmap((r % cmap.N)) for r in range(len(counts))]
+    draw_grid_cells(ax, grid.positions, topology, colors=[colors[int(r) - 1] for r in region_labels])
+    _draw_names(ax, grid, labels, creator_topic_by_name)
+    draw_region_borders(ax, grid.positions, topology, _border_pairs(grid, region_labels))
+    _topic_legend(ax)
+    ax.add_artist(ax.get_legend())
+    ax.legend(handles=_region_legend_handles(counts, colors), loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False,
+              ncol=1 if len(counts) <= 20 else 2, fontsize=8)
+    ax.set_title(f"Regiones contiguas del mapa ({rows}x{cols}, {topology}): {len(counts)} regiones (Ward sobre los prototipos)")
+    save_figure(fig, path)
+
+
+def _plot_region_profiles(profile, k, counts, path) -> None:
+    features = list(dict.fromkeys(profile["feature"]))
+    matrix = profile.pivot(index="region", columns="feature", values="mean_z").reindex(columns=features)
+    values = matrix.to_numpy(dtype=float)
+    finite = values[np.isfinite(values)]
+    bound = max(float(np.abs(finite).max()) if finite.size else 0.0, 1e-9)
+    fig, ax = plt.subplots(figsize=(0.62 * len(features) + 3.0, 0.55 * k + 2.8))
+    image = ax.imshow(np.ma.masked_invalid(values), cmap="vlag", vmin=-bound, vmax=bound, aspect="auto")
+    ax.set_xticks(range(len(features)), labels=features, rotation=90, fontsize=8)
+    ax.set_yticks(range(k), labels=[f"región {r + 1} ({int(counts[r])})" for r in range(k)], fontsize=8)
+    for i in range(k):
+        for j in range(len(features)):
+            if np.isfinite(values[i, j]):
+                ax.text(j, i, f"{values[i, j]:.1f}", ha="center", va="center", fontsize=6,
+                        color="white" if abs(values[i, j]) > 0.6 * bound else "black")
+    fig.colorbar(image, ax=ax, shrink=0.8, label="media z de los creadores de la región")
+    ax.set_title("Perfil de cada región: media z de sus creadores")
+    fig.tight_layout()
+    save_figure(fig, path)
+
+
+def _plot_biplot_regions(creator_pcs, creator_regions, names, counts, explained_pct, path) -> None:
+    fig, ax = plt.subplots(figsize=(13, 10))
+    cmap = plt.get_cmap("Dark2")
+    for r in range(len(counts)):
+        mask = creator_regions == r + 1
+        if mask.any():
+            ax.scatter(
+                creator_pcs[mask, 0], creator_pcs[mask, 1], s=45, color=cmap(r % cmap.N), edgecolor="white",
+                linewidth=0.5, zorder=3, label=f"región {r + 1} ({int(counts[r])} creadores)",
+            )
+    for (x, y), name in zip(creator_pcs, names):
+        ax.annotate(str(name), (x, y), xytext=(3, 3), textcoords="offset points", fontsize=6, zorder=4)
+    ax.axhline(0, color="lightgray", linewidth=0.8)
+    ax.axvline(0, color="lightgray", linewidth=0.8)
+    ax.set_xlabel(f"PC1 ({explained_pct[0]:.1f}%)")
+    ax.set_ylabel(f"PC2 ({explained_pct[1]:.1f}%)")
+    ax.set_title("Regiones del mapa de Kohonen sobre el plano PC1-PC2")
+    ax.legend(title="región del mapa", loc="best", fontsize=8)
+    ax.grid(alpha=0.2)
     save_figure(fig, path)
 
 
@@ -249,6 +348,37 @@ def _plot_training_curve(history, path) -> None:
     save_figure(fig, path)
 
 
+def _regions_table(k, region_labels, creator_regions, names, topics, profile, creator_pcs) -> pd.DataFrame:
+    """One row per region: sizes, creators, topic mix, most extreme features and PC means (blank when empty)."""
+    topic_names = [c.removeprefix("topic_").removesuffix("_pct") for c in TOPIC_COLUMNS]
+    topic_values = topics.to_numpy()
+    rows = []
+    for r in range(1, k + 1):
+        mask = creator_regions == r
+        n = int(mask.sum())
+        row = {
+            "region": r,
+            "n_neurons": int((region_labels == r).sum()),
+            "n_creators": n,
+            "creators": ";".join(name for name, m in zip(names, mask) if m),
+            "topic_counts": ";".join(f"{t}:{int((topic_values[mask] == t).sum())}" for t in topic_names),
+            "top_high": "",
+            "top_low": "",
+            "pc1_mean": float("nan"),
+            "pc2_mean": float("nan"),
+        }
+        if n:
+            ranked = profile[profile["region"] == r][["feature", "mean_z"]].to_records(index=False)
+            ranked = sorted(((str(f), float(z)) for f, z in ranked), key=lambda t: (-t[1], t[0]))
+            lows = sorted(ranked, key=lambda t: (t[1], t[0]))
+            row["top_high"] = ";".join(f"{f}:{z:+.1f}" for f, z in ranked[:3])
+            row["top_low"] = ";".join(f"{f}:{z:+.1f}" for f, z in lows[:3])
+            row["pc1_mean"] = float(creator_pcs[mask, 0].mean())
+            row["pc2_mean"] = float(creator_pcs[mask, 1].mean())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def run(ctx: RunContext) -> dict:
     params = ctx.params
     design = load_design(ctx.config["data"], ctx.config["feature_set"])
@@ -270,6 +400,16 @@ def run(ctx: RunContext) -> dict:
     topics = dominant_topic(design.raw)
     names = design.raw["name"].tolist()
 
+    # Regions: contiguous groups of neurons (Ward on the prototypes), k from the config or the recorded rule.
+    k_values = list(range(REGION_K_RANGE[0], min(REGION_K_RANGE[1], n_neurons - 1) + 1))
+    scan = region_scan(W, grid, bmu, k_values)
+    n_regions_auto = params["n_regions"] is None
+    k = choose_n_regions(scan) if n_regions_auto else int(params["n_regions"])
+    region_labels = segment_regions(W, grid, k)
+    creator_regions = region_labels[bmu]
+    region_counts = np.bincount(creator_regions, minlength=k + 1)[1:]
+    border_pairs = _border_pairs(grid, region_labels)
+
     bmus = pd.concat(
         [
             design.ids.reset_index(drop=True),
@@ -284,6 +424,7 @@ def run(ctx: RunContext) -> dict:
                     "second_adjacent": grid.distances[bmu, second] <= 1.0 + ADJACENCY_TOL,
                     "pc1": creator_pcs[:, 0],
                     "pc2": creator_pcs[:, 1],
+                    "region": creator_regions,
                 }
             ),
         ],
@@ -306,6 +447,7 @@ def run(ctx: RunContext) -> dict:
             "u_distance": u,
             "pc1": neuron_pcs[:, 0],
             "pc2": neuron_pcs[:, 1],
+            "region": region_labels,
         }
     )
     write_csv(ctx.artifact("neurons.csv"), neurons)
@@ -345,19 +487,33 @@ def run(ctx: RunContext) -> dict:
     history = pd.DataFrame(result.history)
     write_csv(ctx.artifact("history.csv"), history)
 
+    write_csv(ctx.artifact("region_scan.csv"), scan)
+    profile = region_profiles(pd.DataFrame(Z, columns=feature_names), design.raw, creator_regions, k)
+    write_csv(ctx.artifact("region_profiles.csv"), profile)
+    regions = _regions_table(
+        k, region_labels, creator_regions, names, topics, profile, creator_pcs
+    )
+    write_csv(ctx.artifact("regions.csv"), regions)
+
     preservation = distance_preservation(Zn, W, grid)
+    explained_pct = [100.0 * float(r) for r in pca.explained_variance_ratio[:2]]
     if ctx.plots:
         _plot_training_curve(result.history, ctx.artifact("training_curve.png"))
         topic_by_name = dict(zip(names, topics.tolist()))
-        _plot_hit_map(grid, hits, labels, topic_by_name, cfg.topology, ctx.artifact("hit_map.png"))
-        _plot_u_matrix(grid, u, hits, cfg.topology, ctx.artifact("u_matrix.png"))
+        _plot_hit_map(grid, hits, labels, topic_by_name, cfg.topology, ctx.artifact("hit_map.png"), border_pairs)
+        _plot_u_matrix(grid, u, hits, cfg.topology, ctx.artifact("u_matrix.png"), border_pairs)
         _plot_component_planes(grid, prototypes, cfg.topology, ctx.artifact("component_planes.png"))
-        _plot_pc_planes(
-            grid, neuron_pcs, [100.0 * float(r) for r in pca.explained_variance_ratio[:2]], cfg.topology,
-            ctx.artifact("pc_planes.png"),
+        _plot_pc_planes(grid, neuron_pcs, explained_pct, cfg.topology, ctx.artifact("pc_planes.png"))
+        _plot_region_map(
+            grid, region_labels, region_counts, labels, topic_by_name, cfg.topology, ctx.artifact("region_map.png")
+        )
+        _plot_region_profiles(profile, k, region_counts, ctx.artifact("region_profiles.png"))
+        _plot_biplot_regions(
+            creator_pcs, creator_regions, names, region_counts, explained_pct, ctx.artifact("biplot_regions.png")
         )
 
     n_empty = int((hits == 0).sum())
+    ratio = region_border_ratio(W, grid, region_labels)
     return {
         "input": "features",
         "n_samples": int(Zn.shape[0]),
@@ -389,6 +545,12 @@ def run(ctx: RunContext) -> dict:
         "u_max_edge": f"{int(edge_table['neuron_a'].iloc[0])}~{int(edge_table['neuron_b'].iloc[0])}",
         "pc1_explained_variance_pct": round(float(pca.explained_variance_ratio[0]) * 100.0, 1),
         "pc2_explained_variance_pct": round(float(pca.explained_variance_ratio[1]) * 100.0, 1),
+        "n_regions": k,
+        "n_regions_auto": n_regions_auto,
+        "region_creator_counts": [int(c) for c in region_counts],
+        "u_border_ratio": None if math.isnan(ratio) else round(ratio, 4),
+        "pc1_region_eta2": round(correlation_ratio(creator_pcs[:, 0], creator_regions), 4),
+        "pc2_region_eta2": round(correlation_ratio(creator_pcs[:, 1], creator_regions), 4),
         "backend_resolved": ctx.backend.name,
     }
 

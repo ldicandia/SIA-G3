@@ -18,6 +18,7 @@
     "eta_decay": "exponential",
     "radius0": 5,
     "radius_min": 1,
-    "radius_decay": "exponential"
+    "radius_decay": "exponential",
+    "n_regions": null
   }
 }

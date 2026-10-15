@@ -129,6 +129,7 @@ hiperparámetros salen de `params` en `configs/som.json`:
 | `radius0` | radio de vecindad inicial (unidades de grilla) | número > 0 |
 | `radius_min` | piso del radio (el ganador siempre se actualiza) | `0 < radius_min <= radius0` |
 | `radius_decay` | cómo baja el radio de `radius0` a `radius_min` | igual que `eta_decay` |
+| `n_regions` | cantidad de regiones del mapa (ver más abajo) | `null` (automática) o entero entre 1 y `rows * cols` |
 
 Una config inválida (valores fuera de rango, opciones desconocidas, parámetros que no existen)
 sale con `error: ...` y código 2 antes de crear `runs/som/`.
@@ -141,6 +142,17 @@ sale con `error: ...` y código 2 antes de crear `runs/som/`.
 | `history.csv` | por época: `eta`, `radius`, error de cuantización y error topográfico |
 | `hit_map.png` | mapa de impactos con el nombre de cada creador dentro de su neurona |
 | `training_curve.png` | errores y parámetros (`eta`, radio) a lo largo del entrenamiento |
+| `u_matrix.png` | matriz U: distancia media de cada neurona a sus vecinas (con la cantidad de impactos y las fronteras de las regiones) |
+| `u_edges.csv` | todos los pares de neuronas vecinas con su distancia, los creadores de cada lado y las 3 variables que más difieren, de la pared más fuerte a la más débil |
+| `prototypes.csv` | prototipo de cada neurona en unidades originales (`media + w * desvío`), más `topic_art_pct_rec` = 100 - fútbol - maquillaje - perros |
+| `component_planes.png` | un plano de componentes por variable seleccionada (unidades originales) y uno para el arte reconstruido |
+| `pc_planes.png` | PC1 y PC2 de cada prototipo (mismo signo que `runs/pca`) |
+| `region_scan.csv` | para cada k de 2 a 8: razón de distancias frontera/interior, mínimo de creadores por región y regiones sin creadores |
+| `regions.csv` | una fila por región: neuronas, creadores, mezcla de tópicos, 3 variables más altas y más bajas, promedio de PC1 y PC2 |
+| `region_profiles.csv` | perfil largo región x variable: media z y media en unidades originales de los creadores de la región |
+| `region_profiles.png` | mapa de calor del perfil de cada región (media z) |
+| `region_map.png` | mapa con las regiones coloreadas, sus bordes y los nombres de los creadores |
+| `biplot_regions.png` | PC1 vs PC2 de cada creador coloreado por región del mapa |
 | `summary.json`, `run.json` | métricas finales y registro de la corrida |
 
 Métricas de calidad (en `summary.json`):
@@ -150,6 +162,25 @@ Métricas de calidad (en `summary.json`):
 - **Preservación de distancias:** correlación de Pearson entre la distancia en el espacio de entrada de cada par de creadores y la distancia en la grilla entre sus neuronas ganadoras (`null` si no está definida).
 
 Con la misma semilla, `summary.json`, `bmus.csv`, `weights.csv` y `history.csv` salen idénticos byte a byte.
+
+### Regiones del mapa
+
+Una **región** es un grupo de neuronas contiguas: se aglomeran los prototipos con el método de
+Ward (costo `|A||B| / (|A| + |B|) * ||media_A - media_B||²`), fusionando solo regiones que
+comparten al menos un par de neuronas vecinas. Así cada región es literalmente una zona de la
+grilla, está numerada de 1 a k por su neurona de menor índice y las mismas pesas dan siempre las
+mismas etiquetas. Los empates de costo van al par con menor (neurona mínima de A, neurona mínima de B).
+
+`params.n_regions` fija k. Con `null` se elige k así (regla registrada en `region_scan.csv`): entre
+k = 2..8 con al menos 3 creadores en cada región, el de mayor razón `u_border_ratio` (distancia
+media entre neuronas vecinas de regiones distintas / distancia media dentro de las regiones); los
+empates van al k menor y, si ningún k califica, se usa k = 2. Las regiones sin creadores (solo
+posibles con un `n_regions` explícito) tienen `n_creators` 0 y celdas vacías en los perfiles.
+
+En `summary.json`: `n_regions`, `n_regions_auto`, `region_creator_counts`, `u_border_ratio` y
+`pc1_region_eta2` / `pc2_region_eta2` (razón de correlación eta² = SS_entre / SS_total de los
+puntajes de cada creador en PC1 y PC2 agrupados por región: cuánto de cada componente explican las regiones).
+Ninguna de estas lecturas usa el generador aleatorio, así que no cambian el entrenamiento.
 
 ## Barrido de Kohonen y configuración final
 
