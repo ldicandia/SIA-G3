@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 
 import pytest
 
@@ -94,3 +95,103 @@ def test_invalid_map_size_exits_2_and_creates_nothing(tmp_path, write_config, ca
     assert main(["run", str(cfg), "--out-root", str(out)]) == 2
     assert "error:" in capsys.readouterr().err
     assert not (out / "som").exists()
+
+
+# --------------------------------------------------------------------------- Task 3: every hyperparameter from the config
+
+INVALID_CASES = [
+    {"params.rows": 0},
+    {"params.rows": 1, "params.cols": 1},
+    {"params.rows": 21, "params.cols": 20},  # 420 > MAX_NEURONS
+    {"params.epochs": 0},
+    {"params.epochs": 5001},
+    {"params.eta0": 0},
+    {"params.eta0": 1.5},
+    {"params.eta_min": 0.6, "params.eta0": 0.5},
+    {"params.radius0": 0},
+    {"params.radius_min": 4, "params.radius0": 3},
+    {"params.topology": "tri"},
+    {"params.neighborhood": "mexican"},
+    {"params.init": "pca"},
+    {"params.eta_decay": "cosine"},
+    {"params.radius_decay": "fast"},
+    {"params.unknown": 1},
+    {"params.rows": True},
+]
+
+
+@pytest.mark.parametrize("overrides", INVALID_CASES, ids=lambda o: ",".join(f"{k}={v}" for k, v in o.items()))
+def test_invalid_som_config_exits_2_and_creates_no_run_dir(tmp_path, write_config, capsys, overrides):
+    assert len(INVALID_CASES) == 17
+    cfg = write_config(base="configs/som.json", **overrides)
+    out = tmp_path / "out"
+    assert main(["run", str(cfg), "--out-root", str(out)]) == 2
+    assert "error:" in capsys.readouterr().err
+    assert not (out / "som").exists()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"params.topology": "rect"},
+        {"params.neighborhood": "step"},
+        {"params.init": "random"},
+        {"params.eta_decay": "linear", "params.radius_decay": "inverse"},
+        {"params.eta_decay": "constant", "params.eta0": 0.1},
+        {"params.rows": 1, "params.cols": 6},
+        {"params.rows": 4, "params.cols": 9},
+    ],
+    ids=lambda o: ",".join(f"{k}={v}" for k, v in o.items()),
+)
+def test_valid_variants_run(tmp_path, write_config, overrides):
+    cfg = write_config(base="configs/som.json", plots=False, **overrides)
+    assert main(["run", str(cfg), "--out-root", str(tmp_path / "out")]) == 0
+    summary = json.loads((tmp_path / "out" / "som" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["n_creators_mapped"] == len(_read(DATA_PATH))
+
+
+def test_history_has_one_row_per_epoch(som_run):
+    rows = _read(som_run / "history.csv")
+    assert list(rows[0]) == ["epoch", "eta", "radius", "quantization_error", "topographic_error"]
+    assert len(rows) == _config()["params"]["epochs"]
+    assert [int(r["epoch"]) for r in rows] == list(range(1, len(rows) + 1))
+
+
+def test_summary_echoes_hyperparameters_and_new_metrics(som_run):
+    summary = json.loads((som_run / "summary.json").read_text(encoding="utf-8"))
+    p = _config()["params"]
+    for key in ("topology", "neighborhood", "init", "eta_decay", "radius_decay"):
+        assert summary[key] == p[key]
+    assert summary["eta_min"] == p["eta_min"] and summary["radius_min"] == p["radius_min"]
+    assert "distance_preservation" in summary
+    assert summary["distance_preservation"] is None or -1 <= summary["distance_preservation"] <= 1
+    occupied = summary["n_neurons"] - summary["n_empty_neurons"]
+    assert summary["mean_hits_occupied"] == pytest.approx(summary["n_samples"] / occupied, abs=1e-4)
+
+
+def test_plots_include_the_training_curve(som_run):
+    assert (som_run / "training_curve.png").stat().st_size > 0
+
+
+def test_cupy_unavailable_falls_back_with_identical_weights(tmp_path, write_config, no_cupy):
+    numpy_cfg = write_config(base="configs/som.json", plots=False)
+    cupy_cfg = write_config(base="configs/som.json", plots=False, backend="cupy")
+    assert main(["run", str(numpy_cfg), "--out-root", str(tmp_path / "np")]) == 0
+    assert main(["run", str(cupy_cfg), "--out-root", str(tmp_path / "cp")]) == 0
+    record = json.loads((tmp_path / "cp" / "som" / "run.json").read_text(encoding="utf-8"))["backend"]
+    assert record["requested"] == "cupy" and record["resolved"] == "numpy" and record["fallback_reason"]
+    assert (tmp_path / "np" / "som" / "weights.csv").read_bytes() == (tmp_path / "cp" / "som" / "weights.csv").read_bytes()
+
+
+def test_same_seed_gives_byte_identical_summary_bmus_weights_history(tmp_path, write_config):
+    cfg = write_config(base="configs/som.json", plots=False)
+    out_a, out_b = tmp_path / "a", tmp_path / "b"
+    assert main(["run", str(cfg), "--out-root", str(out_a)]) == 0
+    assert main(["run", str(cfg), "--out-root", str(out_b)]) == 0
+    for name in ("summary.json", "bmus.csv", "weights.csv", "history.csv"):
+        assert (out_a / "som" / name).read_bytes() == (out_b / "som" / name).read_bytes(), name
+
+
+@pytest.fixture
+def no_cupy(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cupy", None)  # import cupy -> ImportError
