@@ -43,7 +43,7 @@ def test_bmus_has_every_creator_exactly_once(som_run):
     assert len(bmus) == len(creators)
     assert [r["creator_id"] for r in bmus] == [r["creator_id"] for r in creators]
     assert [r["name"] for r in bmus] == [r["name"] for r in creators]
-    assert list(bmus[0]) == [
+    assert list(bmus[0])[:9] == [
         "creator_id", "name", "dominant_topic", "bmu", "row", "col", "bmu_distance", "second_bmu", "second_adjacent",
     ]
 

@@ -21,8 +21,15 @@ import numpy as np
 import pandas as pd
 from matplotlib.patheffects import withStroke
 
-from ..analysis.pca import standardize
-from ..analysis.som_maps import edge_feature_diffs, u_edges, u_matrix
+from ..analysis.pca import fit_pca, standardize
+from ..analysis.som_maps import (
+    edge_feature_diffs,
+    pc_projection,
+    prototypes_original_units,
+    reconstruct_topic_art,
+    u_edges,
+    u_matrix,
+)
 from ..errors import ConfigError
 from ..features import dominant_topic, load_design
 from ..models.som import (
@@ -36,7 +43,7 @@ from ..models.som import (
     distance_preservation,
     train_som,
 )
-from ..plotting import draw_grid_cells, plt, save_figure
+from ..plotting import draw_grid_cells, grid_shape, plt, save_figure
 from ..runs import Experiment, RunContext, write_csv
 from .pca import TOPIC_COLORS, TOPIC_LABELS
 from .som_sweep_report import report
@@ -182,6 +189,43 @@ def _plot_u_matrix(grid, u, hits, topology, path) -> None:
     save_figure(fig, path)
 
 
+def _plot_component_planes(grid, prototypes, topology, path) -> None:
+    n_panels = prototypes.shape[1]
+    nrows, ncols = grid_shape(n_panels, 6)
+    height_unit = math.sqrt(3) / 2 if topology == "hex" else 1.0
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(3.1 * ncols, (0.38 * grid.rows * height_unit + 0.9) * nrows), squeeze=False
+    )
+    flat = list(axes.ravel())
+    for ax, column in zip(flat, prototypes.columns):
+        collection = draw_grid_cells(ax, grid.positions, topology, prototypes[column].to_numpy(), cmap="viridis")
+        cbar = fig.colorbar(collection, ax=ax, shrink=0.8, pad=0.02)
+        cbar.ax.tick_params(labelsize=6)
+        title = "topic_art_pct (reconstruida)" if column == "topic_art_pct_rec" else column
+        ax.set_title(title, fontsize=8)
+    for ax in flat[n_panels:]:
+        ax.axis("off")
+    fig.suptitle(
+        "Planos de componentes: valor de cada variable en el prototipo de cada neurona (unidades originales)",
+        fontsize=12,
+    )
+    fig.tight_layout()
+    save_figure(fig, path)
+
+
+def _plot_pc_planes(grid, neuron_pcs, explained_pct, topology, path) -> None:
+    height_unit = math.sqrt(3) / 2 if topology == "hex" else 1.0
+    fig, axes = plt.subplots(1, 2, figsize=(2 * (0.9 * grid.cols + 2.2), 0.9 * grid.rows * height_unit + 1.8))
+    for i, ax in enumerate(axes):
+        values = neuron_pcs[:, i]
+        bound = max(float(np.abs(values).max()), 1e-9)
+        collection = draw_grid_cells(ax, grid.positions, topology, values, cmap="vlag", vmin=-bound, vmax=bound)
+        fig.colorbar(collection, ax=ax, shrink=0.7)
+        ax.set_title(f"PC{i + 1} ({explained_pct[i]:.1f}%) del prototipo de cada neurona", fontsize=10)
+    fig.tight_layout()
+    save_figure(fig, path)
+
+
 def _plot_training_curve(history, path) -> None:
     epochs = history["epoch"]
     fig, (top, bottom) = plt.subplots(2, 1, figsize=(9, 8), sharex=True)
@@ -208,11 +252,17 @@ def _plot_training_curve(history, path) -> None:
 def run(ctx: RunContext) -> dict:
     params = ctx.params
     design = load_design(ctx.config["data"], ctx.config["feature_set"])
-    Z, _mean, _std = standardize(design.X)
+    Z, mean, std = standardize(design.X)
     cfg = som_config_from_params(params)
     result = train_som(Z, cfg, ctx.rng, xp=ctx.backend.xp)
     grid, W = result.grid, result.weights
     n_neurons = grid.n_neurons
+
+    # Map readings below never touch ctx.rng: training above is the only consumer.
+    feature_names = list(design.X.columns)
+    pca = fit_pca(Z, feature_names)  # same oriented components as runs/pca (full SVD, deterministic)
+    neuron_pcs = pc_projection(W, pca.components, 2)
+    creator_pcs = pca.scores[:, :2]
 
     Zn = Z
     bmu, second, bmu_dist = best_two_units(Zn, W)
@@ -232,6 +282,8 @@ def run(ctx: RunContext) -> dict:
                     "bmu_distance": bmu_dist,
                     "second_bmu": second,
                     "second_adjacent": grid.distances[bmu, second] <= 1.0 + ADJACENCY_TOL,
+                    "pc1": creator_pcs[:, 0],
+                    "pc2": creator_pcs[:, 1],
                 }
             ),
         ],
@@ -252,12 +304,21 @@ def run(ctx: RunContext) -> dict:
             "hits": hits,
             "creators": [";".join(n) for n in labels],
             "u_distance": u,
+            "pc1": neuron_pcs[:, 0],
+            "pc2": neuron_pcs[:, 1],
         }
     )
     write_csv(ctx.artifact("neurons.csv"), neurons)
 
+    prototypes = prototypes_original_units(W, mean, std, feature_names)
+    prototypes["topic_art_pct_rec"] = reconstruct_topic_art(prototypes).to_numpy()
+    proto_table = prototypes.copy()
+    proto_table.insert(0, "col", idx % grid.cols)
+    proto_table.insert(0, "row", idx // grid.cols)
+    proto_table.insert(0, "neuron", idx)
+    write_csv(ctx.artifact("prototypes.csv"), proto_table)
+
     edges = u_edges(W, grid)
-    feature_names = list(design.X.columns)
     ea, eb = edges["neuron_a"].to_numpy(), edges["neuron_b"].to_numpy()
     edge_table = pd.DataFrame(
         {
@@ -290,6 +351,11 @@ def run(ctx: RunContext) -> dict:
         topic_by_name = dict(zip(names, topics.tolist()))
         _plot_hit_map(grid, hits, labels, topic_by_name, cfg.topology, ctx.artifact("hit_map.png"))
         _plot_u_matrix(grid, u, hits, cfg.topology, ctx.artifact("u_matrix.png"))
+        _plot_component_planes(grid, prototypes, cfg.topology, ctx.artifact("component_planes.png"))
+        _plot_pc_planes(
+            grid, neuron_pcs, [100.0 * float(r) for r in pca.explained_variance_ratio[:2]], cfg.topology,
+            ctx.artifact("pc_planes.png"),
+        )
 
     n_empty = int((hits == 0).sum())
     return {
@@ -321,6 +387,8 @@ def run(ctx: RunContext) -> dict:
         "u_mean": round(float(np.nanmean(u)), 4),
         "u_max": round(float(np.nanmax(u)), 4),
         "u_max_edge": f"{int(edge_table['neuron_a'].iloc[0])}~{int(edge_table['neuron_b'].iloc[0])}",
+        "pc1_explained_variance_pct": round(float(pca.explained_variance_ratio[0]) * 100.0, 1),
+        "pc2_explained_variance_pct": round(float(pca.explained_variance_ratio[1]) * 100.0, 1),
         "backend_resolved": ctx.backend.name,
     }
 

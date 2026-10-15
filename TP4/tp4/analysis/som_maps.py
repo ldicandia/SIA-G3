@@ -59,3 +59,31 @@ def edge_feature_diffs(weights: np.ndarray, features: Sequence[str], a: int, b: 
     diff = np.asarray(weights, dtype=float)[b] - np.asarray(weights, dtype=float)[a]
     order = sorted(range(len(features)), key=lambda i: (-abs(float(diff[i])), features[i]))
     return ";".join(f"{features[i]}:{float(diff[i]):+.2f}" for i in order[:n])
+
+
+# --------------------------------------------------------------------------- planes in original units
+
+
+def prototypes_original_units(
+    weights: np.ndarray, mean: np.ndarray, std: np.ndarray, features: Sequence[str]
+) -> pd.DataFrame:
+    """Neuron prototypes back in the variables' own units: mean + w * std (the inverse of the z-score)."""
+    W = np.asarray(weights, dtype=float)
+    return pd.DataFrame(np.asarray(mean, dtype=float) + W * np.asarray(std, dtype=float), columns=list(features))
+
+
+_ART_PARTS = ("topic_football_pct", "topic_makeup_pct", "topic_dogs_pct")
+
+
+def reconstruct_topic_art(frame: pd.DataFrame) -> pd.Series:
+    """topic_art_pct rebuilt as 100 - football - makeup - dogs (the topic block sums to 100)."""
+    missing = [c for c in _ART_PARTS if c not in frame.columns]
+    if missing:
+        raise ValueError(f"cannot reconstruct topic_art_pct: missing column(s) {missing}")
+    out = 100.0 - frame[list(_ART_PARTS)].sum(axis=1, skipna=False)
+    return out.rename("topic_art_pct_rec")
+
+
+def pc_projection(weights: np.ndarray, components: np.ndarray, n: int = 2) -> np.ndarray:
+    """Project each row of `weights` on the first `n` principal axes: W @ components[:n].T."""
+    return np.asarray(weights, dtype=float) @ np.asarray(components, dtype=float)[:n].T
