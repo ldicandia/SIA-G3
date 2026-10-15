@@ -243,3 +243,10 @@ def validate_feature_set(df: pd.DataFrame, fs: FeatureSet) -> None:
             )
     if problems:
         raise ConfigError(f"feature set {fs.source}: " + "; ".join(problems))
+
+
+def dominant_topic(raw: pd.DataFrame) -> pd.Series:
+    """Topic with the largest raw share per creator (art included); ties go to the earlier topic."""
+    values = raw[list(TOPIC_COLUMNS)].to_numpy(dtype=float)
+    labels = np.array([c.removeprefix("topic_").removesuffix("_pct") for c in TOPIC_COLUMNS])
+    return pd.Series(labels[np.argmax(values, axis=1)], index=raw.index, name="dominant_topic")

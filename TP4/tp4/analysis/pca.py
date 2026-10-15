@@ -101,3 +101,20 @@ def components_for_threshold(cumulative: np.ndarray, threshold: float) -> int:
 def kaiser_count(result: PcaResult) -> int:
     """Number of correlation-matrix eigenvalues greater than 1."""
     return int((result.eigenvalues > 1.0).sum())
+
+
+def loadings_frame(result: PcaResult, n_pcs: int | None = None) -> pd.DataFrame:
+    """Oriented eigenvector coefficients: one row per feature (CSV order), columns PC1..PCk."""
+    k = result.components.shape[0] if n_pcs is None else min(n_pcs, result.components.shape[0])
+    return pd.DataFrame(
+        result.components[:k].T,
+        index=list(result.features),
+        columns=[f"PC{i + 1}" for i in range(k)],
+    )
+
+
+def top_loadings(result: PcaResult, pc: int, n: int) -> list[tuple[str, float]]:
+    """The n features with the largest |coefficient| on component `pc` (0-based), ties by name."""
+    coefs = result.components[pc]
+    order = sorted(range(len(coefs)), key=lambda i: (-abs(float(coefs[i])), result.features[i]))
+    return [(result.features[i], float(coefs[i])) for i in order[:n]]
