@@ -6,6 +6,7 @@
   "plots": true,
   "data": "datos/creadores.csv",
   "feature_set": "configs/feature_set.json",
+  "som_config": "configs/som.json",
   "params": {
     "epochs": 200,
     "eta0": 0.001,

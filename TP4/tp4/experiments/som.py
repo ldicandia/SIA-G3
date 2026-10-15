@@ -19,6 +19,7 @@ Artifacts:
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -41,6 +42,7 @@ from ..analysis.som_maps import (
     u_edges,
     u_matrix,
 )
+from ..config import load_config
 from ..errors import ConfigError
 from ..features import TOPIC_COLUMNS, dominant_topic, load_design
 from ..models.som import (
@@ -55,7 +57,7 @@ from ..models.som import (
     train_som,
 )
 from ..plotting import draw_grid_cells, draw_region_borders, grid_shape, plt, save_figure
-from ..runs import Experiment, RunContext, write_csv
+from ..runs import Experiment, RunContext, resolve_project_path, write_csv
 from .pca import TOPIC_COLORS, TOPIC_LABELS
 from .som_sweep_report import report
 
@@ -145,6 +147,49 @@ def som_config_from_params(params) -> SomConfig:
         radius_min=float(params["radius_min"]),
         radius_decay=params.get("radius_decay", "exponential"),
     )
+
+
+@dataclass(frozen=True)
+class SomEvidence:
+    """Where a trained map puts each creator (CSV order): winning neuron, grid cell and region (1-based)."""
+
+    bmu: np.ndarray
+    row: np.ndarray
+    col: np.ndarray
+    region: np.ndarray
+    n_regions: int
+
+
+def load_som_config(path: str, who: str) -> dict[str, Any]:
+    """Load and validate a `som` config named by another kind (read only through load_config).
+
+    `tp4.runner` is imported only inside the function: the runner imports the experiment
+    registry, which imports this module (a top-level import would cycle).
+    """
+    from .. import runner
+
+    loaded = load_config(resolve_project_path(path))
+    if loaded.get("kind") != "som":
+        raise ConfigError(f"{who}: som_config must be a config of kind 'som', got kind {loaded.get('kind')!r}")
+    return runner.validate_config(loaded)
+
+
+def som_evidence(som_config: dict[str, Any], Z: np.ndarray, xp=np) -> SomEvidence:
+    """The creator regions of runs/som, recomputed from a validated som config (same seed, same maths).
+
+    This is the computation of `run` below (training, k from the config or the recorded rule,
+    contiguous regions), so the assignment equals runs/som/bmus.csv `region` and does not depend
+    on a stale or missing runs/ directory.
+    """
+    cfg = som_config_from_params(som_config["params"])
+    result = train_som(Z, cfg, np.random.default_rng(som_config["seed"]), xp=xp)
+    grid, W = result.grid, result.weights
+    bmu = best_two_units(Z, W)[0]
+    k_values = list(range(REGION_K_RANGE[0], min(REGION_K_RANGE[1], grid.n_neurons - 1) + 1))
+    n_regions = som_config["params"]["n_regions"]
+    k = int(n_regions) if n_regions is not None else choose_n_regions(region_scan(W, grid, bmu, k_values))
+    region = segment_regions(W, grid, k)[bmu]
+    return SomEvidence(bmu=bmu, row=bmu // grid.cols, col=bmu % grid.cols, region=region, n_regions=k)
 
 
 def labels_by_neuron(bmu, names, n_neurons: int) -> list[list[str]]:
