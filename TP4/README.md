@@ -46,7 +46,7 @@ Las configs son JSON (o TOML, por extensión `.toml`) con estas claves comunes:
 | `experiment` | nombre de la corrida; define el directorio `runs/<experiment>/` (`[a-z0-9_-]`, hasta 64 caracteres) |
 | `kind` | tipo de experimento (por ahora `eda`) |
 | `seed` | semilla entera obligatoria; misma semilla, mismos números |
-| `backend` | `numpy` (único soportado por ahora) |
+| `backend` | `numpy` (por defecto) o `cupy` (opcional, ver "Backend CUDA opcional") |
 | `plots` | `true`/`false`: escribir o no los PNG |
 
 Para `kind: "eda"` además: `data` (ruta al CSV, relativa a `TP4/`) y `params.outlier_iqr_k`
@@ -78,3 +78,64 @@ contiene un `run.json` de tp4; una carpeta ajena se rechaza sin tocarla.
 Los outliers solo se **marcan y reportan**: ningún creador se elimina ni se modifica.
 
 `runs/` se regenera a partir de las configs y no se commitea (está en `.gitignore`).
+
+## Barridos en paralelo
+
+`kind: "sweep"` corre otro experimento (`base`) sobre una grilla de valores de config (`grid`),
+en procesos de CPU paralelos (`workers`, con el método `spawn`). Claves:
+
+| Clave | Significado |
+|-------|-------------|
+| `base` | config a barrer (ruta relativa a `TP4/`); no puede ser otro `sweep` |
+| `grid` | `{"clave.con.puntos": [valores...]}`; se corre el producto cartesiano, en el orden en que escribas las claves |
+| `workers` | cantidad de procesos (entero ≥ 1, por defecto 1) |
+| `child_plots` | `true`/`false`: escribir los PNG de cada corrida hija (por defecto `false`) |
+
+Cada punto de la grilla es una corrida completa en `runs/<experimento>/<hijo>/` (con su
+`run.json` y `summary.json`), y `runs/<experimento>/sweep.csv` tiene una fila por hijo con las
+claves de la grilla y las métricas escalares. El orden de las filas y el contenido no dependen
+de la cantidad de workers. Ejemplo, PCA estandarizada contra PCA sin estandarizar:
+
+```bash
+.venv/bin/python -m tp4 run configs/pca_scaling_sweep.json
+```
+
+Una grilla vacía, un valor repetido, más de 512 hijos o una `base` inválida se rechazan antes
+de correr nada.
+
+## Backend CUDA opcional
+
+Con `"backend": "cupy"` en la config, los cálculos de arrays que usan `ctx.backend.xp` (por ahora
+la verificación por autovalores de la PCA) corren en la GPU. Es **opcional**: nada de este
+repo ni ningún test necesita CUDA, y `numpy` es el backend por defecto. Para habilitarlo:
+
+```bash
+.venv/bin/pip install -r requirements-cuda.txt
+```
+
+La RTX 5070 (Blackwell) necesita un driver de NVIDIA que exponga CUDA 12.8 o superior en WSL.
+Si `cupy` no está instalado, no hay dispositivo CUDA o algo falla, tp4 emite un `RuntimeWarning`,
+sigue con `numpy` y deja el motivo en `run.json` (`backend.requested`, `backend.resolved`,
+`backend.fallback_reason`); la corrida termina con código 0.
+
+## Hallazgos
+
+Las conclusiones del Ejercicio 1 (EDA, conjunto de variables, PCA y la decisión sobre la entrada
+de Kohonen) están en [`docs/hallazgos/ej1.md`](docs/hallazgos/ej1.md). Para verificar que cada
+gráfico y número que cita viene de una corrida regenerada:
+
+```bash
+.venv/bin/python -m tp4 run configs/eda.json
+.venv/bin/python -m tp4 run configs/pca.json
+.venv/bin/python -m tp4 run configs/pca_scaling_sweep.json
+.venv/bin/python -m tp4.findings docs/hallazgos/ej1.md \
+  --cite runs/pca/summary.json:pc1_explained_variance_pct \
+  --cite runs/pca/summary.json:pc2_explained_variance_pct \
+  --cite runs/pca/summary.json:cumulative_pc2_pct \
+  --cite runs/pca/summary.json:pc1_top_feature \
+  --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
+  --cite runs/eda/summary.json:n_selected_features
+```
+
+El comando imprime `MISSING artifact:` o `MISSING cite:` por cada archivo o valor que falte y
+sale con código 1; si todo está, imprime `ok: ...` y sale con 0.
