@@ -237,3 +237,254 @@ Verificación de la evidencia:
   --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
   --cite runs/eda/summary.json:n_selected_features
 ```
+
+## 1.2 Implementación: mapa de Kohonen
+
+Todo lo de esta sección sale de `runs/som_design_sweep/`, `runs/som_sweep/`, `runs/som/` y `runs/som_pca_control/`,
+regenerados con los comandos de "Cómo regenerar (1.2)". Los valores del `summary.json` se copian con su precisión guardada (4 decimales).
+Hay decisiones que son criterio nuestro y el grupo todavía tiene que aceptar: están marcadas en "Supuestos (1.2)".
+
+### Qué se implementó
+
+**Escribimos el mapa de Kohonen a mano en numpy (`tp4/models/som.py`), sin ninguna librería de SOM ni de clustering, y se entrena con las 25 variables estandarizadas, como se decidió en 1.1.**
+
+- Entrenamiento online, un creador por vez: se busca la neurona ganadora (BMU, la de menor distancia euclídea al creador) y se actualizan los pesos
+  `W += eta * h(d(BMU, neurona), radio) * (x - W)`. Una iteración es un creador; una época son los 50 creadores en orden aleatorio.
+- La vecindad `h` vale 1 en la ganadora y cae con la distancia en la grilla. Hay dos versiones: la regla escalón del curso (1 si `d <= radio`, 0 si no) y la gaussiana
+  `exp(-d² / (2 radio²))`. `eta` y el radio decrecen en el tiempo (exponencial, lineal, inversa o constante) hasta un piso (`eta_min`, `radio_min`).
+  La inicialización de pesos puede ser `sample` (creadores al azar) o `random` (uniforme dentro del rango de cada variable).
+- Todos los hiperparámetros salen de `configs/som.json`, y esa config no se edita a mano (ver la elección más abajo).
+- Métricas de desempeño, una línea cada una:
+  - **Error de cuantización (QE):** distancia euclídea media entre cada creador y su neurona ganadora (unidades z). Baja si el mapa tiene más neuronas.
+  - **Error topográfico (TE):** fracción de creadores cuya segunda neurona más cercana **no** es vecina de la ganadora en la grilla. Mide si el mapa preserva el orden.
+  - **Preservación de distancias:** correlación de Pearson, sobre todos los pares de creadores, entre su distancia en el espacio de variables y la distancia en la grilla entre sus neuronas ganadoras.
+- Lo que los tests (`tests/test_som_model.py`) garantizan: la ganadora es la neurona más cercana (contra fuerza bruta), la influencia de la vecindad vale 1 en la ganadora y baja con la distancia
+  y con un radio que se achica, los pesos quedan dentro del casco convexo de los datos, y ningún módulo de `tp4/` importa una librería de SOM o clustering.
+
+### Elección de la configuración (barridos)
+
+**La configuración no se eligió a mano: la elige una regla fija sobre dos barridos, y el mapa final es de 8x8 hexagonal con vecindad escalón.**
+
+![Métricas contra cada hiperparámetro en el barrido principal](../../runs/som_sweep/sweep_metrics.png)
+
+![QE contra preservación de distancias, con el mapa elegido](../../runs/som_sweep/sweep_tradeoff.png)
+
+Etapa 1, diseño (`runs/som_design_sweep/selection.csv`): topología x vecindad x inicialización sobre un mapa de referencia de 6x6, eta0 0,5, radio0 3 y 200 épocas.
+Quedó elegido `topology-hex__neighborhood-step__init-random`.
+
+| Topología | Vecindad | Inicialización | QE | TE | Preservación | Neuronas vacías | Elegido |
+|-----------|----------|----------------|----|----|--------------|-----------------|---------|
+| hex | gaussiana | sample | 2,818 | 0,02 | 0,762 | 0,3889 | no |
+| hex | gaussiana | random | 2,8154 | 0 | 0,7673 | 0,3889 | no |
+| hex | escalón | sample | 2,6175 | 0,02 | 0,7191 | 0,3056 | no |
+| hex | escalón | random | 2,6006 | 0 | 0,7443 | 0,2222 | **sí** |
+| rect | gaussiana | sample | 2,7739 | 0,06 | 0,7578 | 0,3056 | no (TE) |
+| rect | gaussiana | random | 2,7749 | 0,06 | 0,7529 | 0,3056 | no (TE) |
+| rect | escalón | sample | 2,5167 | 0,02 | 0,6982 | 0,1667 | no (preservación) |
+| rect | escalón | random | 2,4103 | 0 | 0,6844 | 0,2778 | no (preservación) |
+
+- Los mapas `rect` tienen menor QE, pero la regla los descarta: ninguno cumple a la vez el TE y la preservación. **Ojo:** el TE es más exigente con `rect` (4 vecinas por neurona) que con
+  `hex` (6 vecinas), así que parte de esa diferencia es de definición y no solo de calidad del mapa.
+- **La vecindad elegida es la escalón, no la gaussiana** (la gaussiana era el valor por defecto de la primera versión del mapa). La escalón también cumple lo pedido (la influencia no crece con la distancia en la grilla)
+  y dio menor QE (2,6006 contra 2,8154 con la misma inicialización).
+
+Etapa 2, hiperparámetros numéricos (`runs/som_sweep/`): 216 mapas = lado de la grilla cuadrada (4, 5, 6, 7, 8, 10) x eta0 (0,1; 0,5; 0,9) x radio0 (1, 2, 3, 5) x épocas (50, 200, 500) sobre el diseño ya elegido.
+
+- **El QE solo siempre prefiere el mapa más grande.** Promedio por lado: 3,09 con 4x4, 2,85 con 5x5, 2,62 con 6x6, 2,39 con 7x7, 2,13 con 8x8 y 1,62 con 10x10. El de menor QE de todo el barrido
+  (`rows-10__eta0-0p5__radius0-1__epochs-500`, QE 1,0524) deja 0,63 de sus neuronas vacías y tiene preservación de distancias 0,5914: es el mapa que memoriza a los creadores, no el que los ordena.
+- **El TE solo no alcanza para rankear con 50 creadores:** solo toma valores en pasos de 0,02 (un creador de 50), y 173 de los 216 mapas tienen TE exactamente 0.
+- La regla, en cuatro etapas (inclusivas, con umbrales que viven en `tp4/analysis/som_selection.py`):
+  1. ocupación: a lo sumo 0,5 de neuronas vacías (la pasan 164 de 216, `n_occupancy_ok`);
+  2. TE: a lo sumo 0,02 por encima del mejor (159, `n_topology_ok`);
+  3. preservación de distancias: a lo sumo 0,05 por debajo de la mejor (35, `n_order_ok`);
+  4. entre los que quedan, el de menor QE (empates: menos neuronas, luego menos épocas).
+
+**Configuración final:** `rows-8__eta0-0p5__radius0-5__epochs-500` sobre `topology-hex__neighborhood-step__init-random` (topología hexagonal, vecindad escalón, inicialización aleatoria), con QE 2,1214, TE 0,0 y preservación de distancias 0,776.
+
+- El segundo de la regla es `rows-8__eta0-0p5__radius0-3__epochs-500` (QE 2,1871, preservación 0,755, 0,4531 de neuronas vacías).
+- **Caveat que el grupo tiene que ver:** el mapa elegido tiene exactamente 0,5 de neuronas vacías (32 de 64), o sea que pasa el filtro de ocupación solo porque el umbral es inclusivo.
+  Los tres umbrales (0,5; 0,02; 0,05) son un criterio del plan, no un resultado: con otros valores la regla podría elegir otro mapa.
+
+### Entrenamiento
+
+**El QE baja de 3,90 en la época 1 a 2,12 y se estabiliza en las últimas 100 épocas; el TE llega a 0 y se queda ahí.**
+
+![Curvas de entrenamiento](../../runs/som/training_curve.png)
+
+- Según `runs/som/history.csv`: QE 3,9000 en la época 1, 2,5060 en la 300, 2,1195 en la 400 y 2,1214 en la 500; entre las épocas 401 y 500 se mueve en un rango de 2,0901 a 2,1215.
+  El TE vale 0 en cada una de las épocas 400 a 500 (llegó a 0,68 en la época 10, cuando el radio todavía era grande).
+- eta baja de 0,5 a 0,01 y el radio de 5 a 1 (sus pisos), así que en el final solo se actualizan la ganadora y sus vecinas inmediatas.
+
+### Distribución de los creadores en la grilla
+
+**Los 50 creadores ocupan la mitad de las 64 neuronas: 32 quedan vacías, ninguna neurona junta más de 3 creadores.**
+
+![Mapa de impactos](../../runs/som/hit_map.png)
+
+- `runs/som/summary.json`: `n_empty_neurons` = 32 (`empty_neuron_frac` = 0,5), `max_hits` = 3, `mean_hits_occupied` = 1,5625 creadores por neurona ocupada.
+- Las neuronas con 3 creadores (`runs/som/neurons.csv`):
+  - neurona 0: `@huellasyconsejos`, `@mundoanimal.ar` y `@consejoscaninos` (los tres de perros);
+  - neurona 32: `@pasionalbirroja`, `@futbolentrepases` y `@reelconideas` (los tres de fútbol);
+  - neurona 50: `@canchaaldia` y `@manosalaobra` (fútbol) con `@canvasycafe` (arte);
+  - neurona 38: `@vidaperruna`, `@tacticavisual` y `@makeupconsejos` (los tres con fútbol como tópico dominante, ojo: el color sale de las columnas, no del nombre de la cuenta).
+- Las neuronas vacías no son un error: guardan prototipos interpolados entre grupos. Eso importa para leer la matriz U (abajo).
+
+### Matriz U: qué indica una distancia alta
+
+**Una distancia alta entre neuronas vecinas es una frontera: los creadores de un lado y del otro se parecen poco en las variables. Distancia baja es una zona de creadores intercambiables.**
+
+![Matriz U con las fronteras de las regiones](../../runs/som/u_matrix.png)
+
+- Matriz U (distancia media a las vecinas, unidades z): media 2,0213 y máximo 3,2606 (`u_mean`, `u_max`). Las celdas más claras son la de `@tallerurbano` (3,2606) y la de
+  `@mateconideas` con `@maquillajereal` (3,0531). Las más oscuras son las neuronas 48 y 50 (U 1,0777 y 1,0667) de la esquina inferior izquierda, donde se juntan `@brochasycolor` con `@reelargentino` y `@canchaaldia` con `@manosalaobra` y `@canvasycafe`: ahí los creadores son los más parecidos entre sí.
+- Las tres paredes más fuertes (`runs/som/u_edges.csv`, distancia en unidades z, diferencias de la neurona B respecto de la A) rodean todas a **`@tallerurbano`** (neurona 22):
+  1. 22~23, 4,4767: `topic_makeup_pct:+1.70;shares_per_1000:-1.61;price_usd:+1.26`;
+  2. 22~30, 4,2266: `price_usd:+1.83;topic_dogs_pct:-1.23;shares_per_1000:-1.20`;
+  3. 14~22, 3,9982: `topic_makeup_pct:-1.67;sponsored_posts_pct:-1.47;shares_per_1000:+1.23`.
+  Las vecinas de `@tallerurbano` son neuronas vacías, así que la pared dice que no se parece a ningún otro creador: es un perfil aislado (en 1.1 ya era uno de los de más celdas atípicas).
+  Esas neuronas difieren de la suya hasta 1,8 desvíos en maquillaje, `shares_per_1000` y `price_usd`.
+- Las paredes entre dos neuronas **ocupadas** son más informativas. De las 161 aristas del mapa, solo 25 tienen creadores en los dos lados, y las más fuertes son:
+  - `@lookdecancha` | `@tribunacreativa` (60~61, 3,2628): `average_watch_time_seconds:-1.21;average_video_views:+1.15;average_impressions:+1.15`. Es parte de la frontera entre las regiones 2 y 3: mismo tópico (fútbol) pero otro nivel de alcance y de tiempo de visualización.
+  - `@trazosyreels` | `@rinconcreativo` (18~19, 2,7484): `saves_per_1000:-1.44;content_tutorial_pct:-1.10;content_entertainment_pct:+1.05`. Es parte de la frontera entre las regiones 1 y 2: dos creadores de arte, uno con muchos guardados y tutoriales y el otro con más entretenimiento.
+  - `@estiloydetalle` | `@creatividadaldia` (25~34, 2,3570): `saves_per_1000:-1.24;sponsored_posts_pct:+0.95;argentina_audience_pct:-0.87`. Dentro de la región 1: una diferencia fuerte entre creadores de la misma región.
+- Las fronteras de las regiones (líneas rojas) siguen las paredes del centro-arriba y del costado derecho, pero la frontera larga de la mitad inferior pasa por celdas de U intermedia:
+  `u_border_ratio` = 1,5729 (la distancia media a través de las fronteras es 1,57 veces la media dentro de las regiones).
+  La separación es real pero moderada, y con la mitad del mapa vacía hay que leerla con cuidado.
+
+### Planos de componentes
+
+**Las variables de un mismo bloque casi colineal dibujan el mismo plano, y lo que ordena el mapa es el eje alcance y video contra engagement profundo.**
+
+![Planos de componentes en unidades originales](../../runs/som/component_planes.png)
+
+Los planos se leen en unidades originales (`runs/som/prototypes.csv`). Siguiendo el compromiso de 1.1, cada bloque casi colineal se lee como una sola variable:
+
+- **Audiencia** (`average_reach`, `average_impressions`, `average_video_views`): sus planos son prácticamente iguales (correlación entre los 64 prototipos 1,00); `followers` y `price_usd` los acompañan (0,96).
+  Valor alto en la esquina inferior derecha del mapa.
+- **Video corto y tendencia** (`video_posts_pct`, `short_form_posts_pct`, `trend_posts_pct`): correlación de 0,97 a 0,99 entre sus planos, valor alto en el centro-derecha y abajo a la derecha.
+- **Engagement profundo** (`saves_per_1000`, `average_caption_words`, `comments_per_1000`, `profile_visits_per_1000`): altos en el borde izquierdo y en la esquina superior izquierda,
+  y correlacionados negativamente con el alcance (de −0,76 a −0,91 con `average_reach`). Es el mismo eje PC1 de 1.1 (audiencia y video corto contra epígrafes largos y guardados).
+- **Tópicos:** `topic_makeup_pct` alto arriba a la derecha, `topic_dogs_pct` arriba a la izquierda y `topic_football_pct` abajo en el centro.
+- **Arte reconstruido** (`topic_art_pct`, `100 − fútbol − maquillaje − perros`): alto en una zona del centro-izquierda, con el máximo de 63,3% en la neurona 35 (`@artealpaso`); también es alto en las neuronas de `@pincelcotidiano` (53,4%) y de `@patitasenred` con `@artequeinspira` (49,5%).
+  Arte no tiene un rincón propio como maquillaje: está en el medio del mapa, entre los otros tópicos.
+
+### Regiones del mapa y perfil de los creadores
+
+**El mapa se parte en 3 regiones contiguas: engagement profundo con audiencia chica (21 creadores), un grupo intermedio y mezclado (18) y alcance masivo con video y entretenimiento (11).**
+
+![Regiones contiguas del mapa](../../runs/som/region_map.png)
+
+![Perfil de cada región (media z)](../../runs/som/region_profiles.png)
+
+- **Cómo se definieron.** Las regiones son grupos de neuronas contiguas (aglomeración de Ward con restricción de contigüidad sobre los 64 prototipos). `k` lo elige una regla registrada
+  (`runs/som/region_scan.csv`): entre los `k` de 2 a 8 cuyas regiones tienen al menos 3 creadores, el que maximiza la razón entre la distancia media a través de las fronteras y dentro de las regiones.
+  Eligió **k = 3** (`n_regions`, razón 1,5729); los `k` de 6 a 8 quedan descartados por una región de solo 2 creadores. **Ojo:** la razón es casi plana entre `k` = 3 y 8 (de 1,52 a 1,57),
+  o sea que la U-matrix no determina `k` con fuerza. `k` = 5 (razón 1,5515, mínimo 8 creadores por región) es la siguiente granularidad defendible si hace falta más detalle.
+- **Perfil de cada región** (`runs/som/regions.csv` y `runs/som/region_profiles.csv`; z = desvíos respecto del promedio de los 50 creadores):
+
+| Región | Neuronas / creadores | Tópicos dominantes | Más altas (z) | Más bajas (z) |
+|--------|----------------------|--------------------|---------------|---------------|
+| 1 | 26 / 21 | perros 9, fútbol 6, arte 4, maquillaje 2 | `saves_per_1000` +1,0; `average_caption_words` +1,0; `comments_per_1000` +0,8 | `video_posts_pct` −1,0; `trend_posts_pct` −1,0; `short_form_posts_pct` −0,9 |
+| 2 | 22 / 18 | fútbol 6, arte 6, maquillaje 3, perros 3 | `trend_posts_pct` +0,6; `short_form_posts_pct` +0,5; `video_posts_pct` +0,5 | `saves_per_1000` −0,5; `average_caption_words` −0,4; `profile_visits_per_1000` −0,3 |
+| 3 | 16 / 11 | maquillaje 6, fútbol 3, perros 1, arte 1 | `average_video_views` +1,5; `average_reach` +1,5; `average_impressions` +1,5 | `average_caption_words` −1,2; `comments_per_1000` −1,0; `saves_per_1000` −1,0 |
+
+- **Región 1, audiencia chica y comunidad que interactúa.** Seguidores 52029 de promedio (z −0,82), epígrafes de 149,6 palabras, 18,9 guardados por mil y solo 40,7% de posts en video;
+  perros es el tópico más repetido (38,2% de contenido de perros en promedio). Creadores: `@huellasyconsejos`, `@mundoanimal.ar`, `@consejoscaninos`, `@canchaaldia`, `@pasionalbirroja`.
+  En lenguaje de campaña: **profundidad educativa y comunidad cercana**, no alcance. Lo muestran las variables de engagement y de tutoriales/reseñas altas (`content_tutorial_pct` +0,66, `content_review_pct` +0,75) y el alcance bajo.
+- **Región 2, intermedia y mezclada.** Es la región con más arte (28,6% de contenido de arte en promedio, la más alta; `@artealpaso`, `@pincelcotidiano`, `@rinconcreativo`, `@artequeinspira`) pero también 6 de fútbol.
+  Más video corto y tendencia (60,6% de posts en video, 48,8% de tendencia), 65,1% de alcance a no seguidores y más publicaciones por mes (18,9), con alcance y seguidores en el promedio (`followers` z +0,06).
+  No tiene un perfil de tópico: es el grupo "de paso" entre las regiones 1 y 3, y es donde están las neuronas con más arte. Para una campaña sirve cuando importa el descubrimiento (alcance a no seguidores) y no el tópico.
+- **Región 3, alcance masivo y entretenimiento.** Seguidores 525920 de promedio (z +1,48), alcance 205146, impresiones 281961 y 157233 vistas de video, con un precio medio de 3846,71 USD (z +1,25) y 69,1% de contenido de entretenimiento;
+  pocos epígrafes (43,6 palabras), comentarios y guardados bajos. El maquillaje domina (43,8% de contenido en promedio; `@mateconideas`, `@maquillajereal`, `@brillourbano`, `@glamencasa`),
+  con `@futbolsinvueltas`, `@golconmate` y `@galeriacotidiana`. En lenguaje de campaña: **alcance masivo y descubrimiento, a un precio alto y con poca conversación.**
+- Los perfiles salen de las medias de los creadores de cada región, no de las neuronas vacías, y con 50 creadores y regiones de 11 a 21 las diferencias chicas (por ejemplo ±0,3 z en la región 2) no son concluyentes.
+
+### Comparación con PC1 y PC2 (biplot)
+
+**Las regiones coinciden con PC1 y casi nada con PC2: PC1 explica el 83% de la diferencia entre regiones, PC2 el 21%.**
+
+![Regiones del mapa sobre el plano PC1-PC2](../../runs/som/biplot_regions.png)
+
+![Planos de PC1 y PC2 en el mapa](../../runs/som/pc_planes.png)
+
+- `pc1_region_eta2` = 0,8314 y `pc2_region_eta2` = 0,2066 (`runs/som/summary.json`): la fracción de la varianza de cada componente que explican las 3 regiones.
+- En el biplot de 1.1 (`runs/pca/biplot.png`) las regiones se ordenan de derecha a izquierda: región 1 con PC1 medio +3,61 (engagement profundo, epígrafes largos), región 2 en el centro con −1,31 y
+  región 3 con −4,75 (audiencia grande y video corto de tendencia). **Es exactamente la lectura de PC1 de 1.1**, y es lo que esperábamos: el mapa y la PCA ven el mismo eje dominante (53,2% de la varianza).
+- En PC2 las regiones casi no se separan: medias de −0,05, −0,62 y +1,11, con desvíos de 1,1 a 1,5 dentro de cada región. Solo la región 3 se corre hacia arriba (PC2 positivo, donde 1.1 ubicaba la audiencia argentina y a perros arriba y fútbol abajo).
+  **El eje "perros arriba, fútbol abajo" de PC2 no se corresponde con ninguna región:** los 13 creadores de perros están repartidos en las tres regiones (9, 3 y 1), y la región 1 abarca casi todo el rango de PC2 del biplot (desvío 1,48 en PC2).
+- Lo que el biplot no puede mostrar: solo tiene el 61,1% de la varianza (queda afuera el 38,9% de 1.1), y en el mapa se ve el resto. Las paredes de la matriz U de arriba dicen qué variables separan a creadores vecinos
+  (por ejemplo, `@lookdecancha` y `@tribunacreativa`, los dos de fútbol, difieren sobre todo en visualizaciones y tiempo de visualización). La frontera entre las regiones 2 y 3 aparece en el biplot como una zona de solapamiento
+  (puntos naranjas y violetas mezclados entre PC1 = −4,5 y −1,5), no como un corte limpio: ahí están justamente los 6 creadores que cambian de región en el mapa de control (abajo).
+
+### Mapa de control sobre 6 componentes principales
+
+**El mapa de control sobre 6 componentes (83,0% de la varianza) da prácticamente las mismas regiones: la conclusión de 1.1 no cambia.**
+
+![Mapa sobre las variables y mapa de control sobre 6 componentes](../../runs/som_pca_control/control_region_maps.png)
+
+Cumplimos lo prometido en 1.1: un mapa entrenado sobre las 6 primeras componentes, con los mismos hiperparámetros y la misma semilla (`runs/som_pca_control/control_comparison.csv`). El mapa sobre las variables de esta corrida es exactamente el de `runs/som` (un test lo verifica).
+
+| Métrica | Mapa sobre las 25 variables | Mapa de control (6 componentes) |
+|---------|-----------------------------|---------------------------------|
+| QE | 2,1214 | 1,4506 (no comparable) |
+| TE | 0,0 | 0,02 |
+| Preservación de distancias | 0,776 | 0,8009 |
+| Neuronas vacías | 0,5 | 0,3906 |
+| Regiones (k) | 3 | 3 |
+
+- **El QE no se puede comparar:** el espacio de 6 componentes deja afuera el 17,0% de la varianza (se conserva el 83,0%), así que todas las distancias son más cortas. Se comparan el TE, la preservación y las regiones.
+- **Acuerdo de regiones:** `region_ari` = 0,748 (índice de Rand ajustado entre las regiones de los dos mapas, con el mismo k = 3). Con la escala que fijamos (≥ 0,5: grupos en lo esencial iguales; 0,3 a 0,5: acuerdo parcial; < 0,3: grupos distintos), es **acuerdo alto**.
+  De los 50 creadores, 44 quedan en la misma región (21 de la región 1 coinciden todos); los 6 que cambian están en la frontera entre las regiones 2 y 3: `@vidaperruna`, `@tacticavisual`, `@lookdecancha` y `@makeupconsejos` pasan de la 2 a la 3,
+  y `@bellezasimple` y `@brilloytendencia` de la 3 a la 2 (`runs/som_pca_control/creator_regions.csv`). Las regiones quedan en 21, 16 y 13 creadores contra 21, 18 y 11.
+- **Acuerdo de disposición:** `bmu_distance_agreement` = 0,7459 (correlación, sobre todos los pares de creadores, entre su distancia en la grilla de un mapa y en el otro).
+- **¿Cambian las conclusiones de 1.1?** No. Como `region_ari` ≥ 0,3, las regiones no dependen de los bloques casi colineales de audiencia y de video, y el tratamiento de 1.1 ("aceptarlo, sin ponderar") se mantiene.
+  La ponderación por bloques, que era el plan B de 1.1, no se activa. La única diferencia real es de detalle: el control reparte distinto a 6 creadores de frontera.
+
+### Supuestos (1.2)
+
+- **Umbrales de la regla de selección** (vacías ≤ 0,5; TE a lo sumo 0,02 sobre el mejor; preservación a lo sumo 0,05 bajo la mejor): son un criterio del plan y el grupo todavía tiene que aceptarlos.
+  El mapa final cae justo en el borde de ocupación (0,5 de vacías).
+- **Geometría y fórmulas:** grilla hexagonal con filas desplazadas (todas las vecinas a distancia 1) y vecindad escalón con borde incluido; los decaimientos son `eta0 → eta_min` y `radio0 → radio_min` exponenciales sobre todas las iteraciones, con el radio nunca por debajo de `radio_min`.
+- **Barrido en dos etapas, coordenada por coordenada:** primero el diseño (topología, vecindad, inicialización) sobre una referencia de 6x6 y después los numéricos con el diseño elegido; no se barre el producto completo de las 7 dimensiones.
+- **Regiones:** Ward con contigüidad sobre los prototipos (sin ponderar por impactos); `k` lo elige la razón de U entre `k` = 2 a 8 con al menos 3 creadores por región (con k = 3 salió la razón más alta). Una región es una agrupación de creadores, no una categoría de campaña.
+- **Escala del ARI:** ≥ 0,5 grupos en lo esencial iguales; 0,3 a 0,5 acuerdo parcial; < 0,3 grupos distintos (criterio del plan; por debajo de 0,3 se reabre la ponderación por bloques de 1.1).
+- **Planos de componentes** en unidades originales (`media + w * desvío`), y `topic_art_pct` reconstruido como 100 menos los otros tres tópicos.
+- **Perfil de una región:** media de los valores estandarizados de sus creadores, más la media en unidades originales para leerlo. **Matriz U:** distancia media a las neuronas vecinas; una pared hacia una neurona vacía mide aislamiento, no una frontera entre dos grupos.
+- Los gráficos se enlazan desde `runs/` (se regeneran, no se versionan). Copiarlos a `docs/` queda para la fase de documentación.
+
+### Cómo regenerar (1.2)
+
+```bash
+.venv/bin/python -m tp4 run configs/eda.json
+.venv/bin/python -m tp4 run configs/pca.json
+.venv/bin/python -m tp4 run configs/pca_scaling_sweep.json
+.venv/bin/python -m tp4 run configs/som_design_sweep.json
+.venv/bin/python -m tp4 run configs/som_sweep.json
+.venv/bin/python -m tp4 run configs/som.json
+.venv/bin/python -m tp4 run configs/som_pca_control.json
+.venv/bin/python -m tp4.experiments.som_sweep_report check configs/som.json runs/som_design_sweep runs/som_sweep --run runs/som
+```
+
+Verificación de la evidencia (los seis valores de 1.1 más los de 1.2):
+
+```bash
+.venv/bin/python -m tp4.findings docs/hallazgos/ej1.md \
+  --cite runs/pca/summary.json:pc1_explained_variance_pct \
+  --cite runs/pca/summary.json:pc2_explained_variance_pct \
+  --cite runs/pca/summary.json:cumulative_pc2_pct \
+  --cite runs/pca/summary.json:pc1_top_feature \
+  --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
+  --cite runs/eda/summary.json:n_selected_features \
+  --cite runs/som_sweep/summary.json:selected_child \
+  --cite runs/som_sweep/summary.json:selected_quantization_error \
+  --cite runs/som_sweep/summary.json:selected_topographic_error \
+  --cite runs/som_sweep/summary.json:selected_distance_preservation \
+  --cite runs/som_design_sweep/summary.json:selected_child \
+  --cite runs/som/summary.json:n_regions \
+  --cite runs/som/summary.json:u_border_ratio \
+  --cite runs/som/summary.json:pc1_region_eta2 \
+  --cite runs/som/summary.json:pc2_region_eta2 \
+  --cite runs/som/summary.json:empty_neuron_frac \
+  --cite runs/som_pca_control/summary.json:region_ari \
+  --cite runs/som_pca_control/summary.json:bmu_distance_agreement
+```
