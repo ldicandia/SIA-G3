@@ -101,6 +101,7 @@ def _plot_metrics(table: pd.DataFrame, grid: dict[str, list], selected_values: d
             sel = grid[key].index(selected_values[key])
             ax.axvline(sel, color="#D55E00", linestyle="--", linewidth=1.2)
             ax.set_xticks(xs)
+            ax.set_xlim(-0.4, len(xs) - 0.6)
             ax.set_xticklabels([str(v) for v in grid[key]], fontsize=8)
             ax.grid(alpha=0.3)
             if r == len(metrics) - 1:
@@ -134,19 +135,22 @@ def _plot_tradeoff(sel_table: pd.DataFrame, selected_position: int, path: Path) 
         ax.scatter(qe[kept], dp[kept], s=34, color=color, label=_neuron_label(size))
         ax.scatter(qe[hollow], dp[hollow], s=34, facecolors="none", edgecolors=color, linewidths=1.1)
         ax.scatter(qe[crossed], dp[crossed], s=40, marker="x", color=color, linewidths=1.3)
+    ax.margins(y=0.08)
     b_dp = dp[b_ok & np.isfinite(dp)]
     if len(b_dp):
-        ax.axhline(b_dp.max() - DP_SLACK, color="#444444", linestyle="--", linewidth=1.1)
+        threshold = b_dp.max() - DP_SLACK
+        ax.axhline(threshold, color="#444444", linestyle="--", linewidth=1.1)
         ax.text(
-            ax.get_xlim()[1], b_dp.max() - DP_SLACK, f" umbral de preservación ({DP_SLACK:g} bajo el máximo)",
-            ha="right", va="bottom", fontsize=8, color="#444444",
+            0.99, threshold, f"umbral de preservación ({DP_SLACK:g} bajo el máximo)",
+            transform=ax.get_yaxis_transform(), ha="right", va="bottom", fontsize=8, color="#444444",
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.85, "pad": 1.5},
         )
     row = sel_table.iloc[selected_position]
     if np.isfinite(qe[selected_position]) and np.isfinite(dp[selected_position]):
         ax.scatter([qe[selected_position]], [dp[selected_position]], s=320, marker="*", color="#D55E00", edgecolors="black", zorder=5, label="elegido")
         ax.annotate(
             str(row["child"]), (qe[selected_position], dp[selected_position]),
-            textcoords="offset points", xytext=(10, 10), fontsize=8,
+            textcoords="offset points", xytext=(-14, 14), ha="right", fontsize=8,
             arrowprops={"arrowstyle": "-", "color": "#444444"},
         )
     ax.plot([], [], "o", color="#777777", label=f"cumple ocupación (<= {MAX_EMPTY_FRAC:g} vacías) y topología")
