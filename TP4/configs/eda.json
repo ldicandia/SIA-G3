@@ -1,0 +1,11 @@
+{
+  "experiment": "eda",
+  "kind": "eda",
+  "seed": 42,
+  "backend": "numpy",
+  "plots": true,
+  "data": "datos/creadores.csv",
+  "params": {
+    "outlier_iqr_k": 1.5
+  }
+}
