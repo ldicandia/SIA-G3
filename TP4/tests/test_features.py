@@ -132,8 +132,12 @@ def test_near_redundant_real_data_leads_with_reach_video_views(creators):
     from tp4.data import numeric_columns
 
     cols = numeric_columns(creators)
-    pairs = near_redundant_pairs(correlation_matrix(creators, cols), 0.95, cols)
-    first = pairs.iloc[0]
+    pairs = near_redundant_pairs(
+        correlation_matrix(creators, cols), 0.95, [c for c in cols if c not in EXPECTED_DROPS]
+    )
+    # The full matrix leads with the exact-identity pairs (|r| = 1, a dropped member), not selected.
+    assert pairs.iloc[0]["abs_r"] == pytest.approx(1.0) and not pairs.iloc[0]["both_selected"]
+    first = pairs[pairs["both_selected"]].iloc[0]
     assert {first["column_a"], first["column_b"]} == {"average_reach", "average_video_views"}
     assert first["abs_r"] == pytest.approx(0.997, abs=1e-3)
 
@@ -225,7 +229,8 @@ def test_eda_cli_proves_the_feature_set(tmp_path):
     assert summary["numeric_rank"] == 26
     assert summary["n_identities"] == 6 and summary["n_identities_holding"] == 6
     pairs = pd.read_csv(run / "near_redundant.csv")
-    assert set(pairs.iloc[0][["column_a", "column_b"]]) == {"average_reach", "average_video_views"}
+    kept = pairs[pairs["both_selected"]].iloc[0]
+    assert {kept["column_a"], kept["column_b"]} == {"average_reach", "average_video_views"}
     assert (np.diff(pairs["abs_r"].to_numpy()) <= 1e-12).all()
     assert (run / "correlation_heatmap_selected.png").stat().st_size > 0
 

@@ -4,7 +4,10 @@ Artifacts (all rows are kept; outliers are only flagged, never dropped):
   columns.csv       one row per CSV column, in CSV order
   outliers.csv      Tukey-fence outliers, by CSV column order then creator_id
   correlation.csv   Pearson matrix over the numeric columns, in CSV order
-  *.png             distributions, standardized boxplots, scale ranges, heatmap
+  identities.csv    the six documented identities: holds on the data? which dropped column breaks it?
+  near_redundant.csv  pairs with |r| >= near_redundant_abs_r over all numeric columns (both_selected flag)
+  feature_set.json  resolved feature set: selected columns, dropped reasons, validity
+  *.png             distributions, standardized boxplots, scale ranges, heatmaps (all / selected)
 """
 
 from __future__ import annotations
@@ -24,20 +27,25 @@ from ..analysis.eda import (
 )
 from ..data import load_creators, numeric_columns
 from ..errors import ConfigError
+from ..features import check_identities, load_feature_set, near_redundant_pairs, selected_columns
 from ..plotting import grid_shape, plt, save_figure
-from ..runs import Experiment, RunContext, resolve_project_path, write_csv
+from ..runs import Experiment, RunContext, resolve_project_path, write_csv, write_json
 
-PARAM_DEFAULTS: dict[str, Any] = {"outlier_iqr_k": 1.5}
-EXTRA_KEYS = frozenset({"data"})
+PARAM_DEFAULTS: dict[str, Any] = {"outlier_iqr_k": 1.5, "near_redundant_abs_r": 0.95}
+EXTRA_KEYS = frozenset({"data", "feature_set"})
 
 
 def validate(config: dict) -> None:
-    data = config.get("data")
-    if not isinstance(data, str) or not data:
-        raise ConfigError(f"eda: data must be a non-empty string path, got {data!r}")
+    for key in ("data", "feature_set"):
+        value = config.get(key)
+        if not isinstance(value, str) or not value:
+            raise ConfigError(f"eda: {key} must be a non-empty string path, got {value!r}")
     k = config["params"]["outlier_iqr_k"]
     if not k > 0:
         raise ConfigError(f"eda: params.outlier_iqr_k must be > 0, got {k!r}")
+    t = config["params"]["near_redundant_abs_r"]
+    if not 0 < t <= 1:
+        raise ConfigError(f"eda: params.near_redundant_abs_r must be in (0, 1], got {t!r}")
 
 
 def _strongest_pair(corr: pd.DataFrame) -> tuple[float | None, str | None]:
@@ -119,7 +127,9 @@ def _plot_scale_ranges(df: pd.DataFrame, cols: list[str], path) -> None:
     save_figure(fig, path)
 
 
-def _plot_heatmap(corr: pd.DataFrame, path) -> None:
+def _plot_heatmap(
+    corr: pd.DataFrame, path, title: str = "Matriz de correlación entre variables numéricas"
+) -> None:
     fig, ax = plt.subplots(figsize=(14, 12))
     sns.heatmap(
         corr,
@@ -132,12 +142,18 @@ def _plot_heatmap(corr: pd.DataFrame, path) -> None:
         cbar_kws={"label": "correlación de Pearson"},
         ax=ax,
     )
-    ax.set_title("Matriz de correlación entre variables numéricas")
+    ax.set_title(title)
     ax.set_xlabel("variable")
     ax.set_ylabel("variable")
     ax.tick_params(axis="x", labelrotation=90, labelsize=8)
     ax.tick_params(axis="y", labelrotation=0, labelsize=8)
     save_figure(fig, path)
+
+
+def _rank(df: pd.DataFrame, columns: list[str]) -> int:
+    """Rank of the standardized matrix (a missing cell counts as the mean, i.e. 0)."""
+    z = zscores(df, columns).fillna(0.0).to_numpy()
+    return int(np.linalg.matrix_rank(z))
 
 
 def run(ctx: RunContext) -> dict:
@@ -151,11 +167,37 @@ def run(ctx: RunContext) -> dict:
     write_csv(ctx.artifact("outliers.csv"), outliers)
     write_csv(ctx.artifact("correlation.csv"), corr.rename_axis("column").reset_index())
 
+    # EDA-02: the EDA REPORTS on the declared feature set; select_features enforces it elsewhere.
+    fs = load_feature_set(ctx.config["feature_set"])
+    selected = selected_columns(df, fs)
+    threshold = float(ctx.params["near_redundant_abs_r"])
+    identities = check_identities(df, fs)
+    pairs = near_redundant_pairs(corr, threshold, selected)
+    feature_set_valid = bool((~(identities["holds"] & (identities["broken_by"] == ""))).all())
+    write_csv(ctx.artifact("identities.csv"), identities)
+    write_csv(ctx.artifact("near_redundant.csv"), pairs)
+    write_json(
+        ctx.artifact("feature_set.json"),
+        {
+            "source": fs.source,
+            "selected": selected,
+            "n_selected": len(selected),
+            "dropped": dict(fs.drop),
+            "reconstruct": dict(fs.reconstruct),
+            "valid": feature_set_valid,
+        },
+    )
+
     if ctx.plots:
         _plot_distributions(df, cols, k, ctx.artifact("distributions.png"))
         _plot_boxplots(df, cols, k, ctx.artifact("boxplots_standardized.png"))
         _plot_scale_ranges(df, cols, ctx.artifact("scale_ranges.png"))
         _plot_heatmap(corr, ctx.artifact("correlation_heatmap.png"))
+        _plot_heatmap(
+            corr.loc[selected, selected],
+            ctx.artifact("correlation_heatmap_selected.png"),
+            title=f"Matriz de correlación de las {len(selected)} variables seleccionadas",
+        )
 
     max_r, pair = _strongest_pair(corr)
     return {
@@ -168,6 +210,14 @@ def run(ctx: RunContext) -> dict:
         "outlier_iqr_k": k,
         "max_abs_correlation": max_r,
         "max_abs_correlation_pair": pair,
+        "n_identities": int(len(identities)),
+        "n_identities_holding": int(identities["holds"].sum()),
+        "n_near_redundant_pairs": int(len(pairs)),
+        "near_redundant_abs_r": threshold,
+        "numeric_rank": _rank(df, cols),
+        "selected_rank": _rank(df, selected),
+        "n_selected_features": len(selected),
+        "feature_set_valid": feature_set_valid,
     }
 
 
