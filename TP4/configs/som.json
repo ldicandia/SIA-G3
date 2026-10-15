@@ -9,10 +9,15 @@
   "params": {
     "rows": 6,
     "cols": null,
+    "topology": "hex",
+    "neighborhood": "gaussian",
+    "init": "sample",
     "epochs": 200,
     "eta0": 0.5,
     "eta_min": 0.01,
+    "eta_decay": "exponential",
     "radius0": 3,
-    "radius_min": 1
+    "radius_min": 1,
+    "radius_decay": "exponential"
   }
 }

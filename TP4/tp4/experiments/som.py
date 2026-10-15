@@ -7,7 +7,9 @@ Artifacts:
   bmus.csv      one row per creator (CSV order): winning neuron, grid cell, distance, second winner
   neurons.csv   one row per neuron: grid cell, position, hits, creators mapped there
   weights.csv   trained weight vector of every neuron (standardized units)
+  history.csv   per epoch: eta, radius, quantization error, topographic error
   hit_map.png   hit map with every creator's name drawn in its winning neuron
+  training_curve.png  errors and schedules per epoch
 """
 
 from __future__ import annotations
@@ -22,7 +24,17 @@ from matplotlib.patheffects import withStroke
 from ..analysis.pca import standardize
 from ..errors import ConfigError
 from ..features import dominant_topic, load_design
-from ..models.som import ADJACENCY_TOL, SomConfig, best_two_units, train_som
+from ..models.som import (
+    ADJACENCY_TOL,
+    DECAYS,
+    INITS,
+    NEIGHBORHOODS,
+    TOPOLOGIES,
+    SomConfig,
+    best_two_units,
+    distance_preservation,
+    train_som,
+)
 from ..plotting import draw_grid_cells, plt, save_figure
 from ..runs import Experiment, RunContext, write_csv
 from .pca import TOPIC_COLORS, TOPIC_LABELS
@@ -31,11 +43,16 @@ EXTRA_KEYS = frozenset({"data", "feature_set"})
 PARAM_DEFAULTS: dict[str, Any] = {
     "rows": 6,
     "cols": None,
+    "topology": "hex",
+    "neighborhood": "gaussian",
+    "init": "sample",
     "epochs": 200,
     "eta0": 0.5,
     "eta_min": 0.01,
+    "eta_decay": "exponential",
     "radius0": 3.0,
     "radius_min": 1.0,
+    "radius_decay": "exponential",
 }
 MAX_NEURONS = 400
 MAX_EPOCHS = 5000
@@ -63,6 +80,15 @@ def validate(config: dict) -> None:
         raise ConfigError(f"som: params.rows must be an integer >= 1, got {p['rows']!r}")
     if p["cols"] is not None and not (_is_int(p["cols"]) and p["cols"] >= 1):
         raise ConfigError(f"som: params.cols must be null or an integer >= 1, got {p['cols']!r}")
+    for key, allowed in (
+        ("topology", TOPOLOGIES),
+        ("neighborhood", NEIGHBORHOODS),
+        ("init", INITS),
+        ("eta_decay", DECAYS),
+        ("radius_decay", DECAYS),
+    ):
+        if p[key] not in allowed:
+            raise ConfigError(f"som: params.{key} must be one of {list(allowed)}, got {p[key]!r}")
     rows, cols = _grid_dims(p)
     if rows * cols < 2 or rows * cols > MAX_NEURONS:
         raise ConfigError(
@@ -135,6 +161,29 @@ def _plot_hit_map(grid, hits, labels, creator_topic_by_name, topology, path) -> 
     save_figure(fig, path)
 
 
+def _plot_training_curve(history, path) -> None:
+    epochs = history["epoch"]
+    fig, (top, bottom) = plt.subplots(2, 1, figsize=(9, 8), sharex=True)
+    (qe,) = top.plot(epochs, history["quantization_error"], color="#0072B2", label="error de cuantización (QE)")
+    top.set_ylabel("QE (distancia media al ganador)")
+    top_te = top.twinx()
+    (te,) = top_te.plot(epochs, history["topographic_error"], color="#D55E00", label="error topográfico (TE)")
+    top_te.set_ylabel("TE (fracción)")
+    top.legend(handles=[qe, te], loc="upper right")
+    top.grid(alpha=0.3)
+    top.set_title("Entrenamiento del mapa: errores y parámetros por época")
+    (eta,) = bottom.plot(epochs, history["eta"], color="#009E73", label="tasa de aprendizaje (eta)")
+    bottom.set_ylabel("eta")
+    bottom_r = bottom.twinx()
+    (rad,) = bottom_r.plot(epochs, history["radius"], color="#CC79A7", label="radio de vecindad")
+    bottom_r.set_ylabel("radio (unidades de grilla)")
+    bottom.legend(handles=[eta, rad], loc="upper right")
+    bottom.grid(alpha=0.3)
+    bottom.set_xlabel("época")
+    fig.tight_layout()
+    save_figure(fig, path)
+
+
 def run(ctx: RunContext) -> dict:
     params = ctx.params
     design = load_design(ctx.config["data"], ctx.config["feature_set"])
@@ -190,7 +239,12 @@ def run(ctx: RunContext) -> dict:
     weights.insert(0, "neuron", idx)
     write_csv(ctx.artifact("weights.csv"), weights)
 
+    history = pd.DataFrame(result.history)
+    write_csv(ctx.artifact("history.csv"), history)
+
+    preservation = distance_preservation(Zn, W, grid)
     if ctx.plots:
+        _plot_training_curve(result.history, ctx.artifact("training_curve.png"))
         topic_by_name = dict(zip(names, topics.tolist()))
         _plot_hit_map(grid, hits, labels, topic_by_name, cfg.topology, ctx.artifact("hit_map.png"))
 
@@ -203,15 +257,23 @@ def run(ctx: RunContext) -> dict:
         "cols": grid.cols,
         "n_neurons": n_neurons,
         "topology": cfg.topology,
+        "neighborhood": cfg.neighborhood,
+        "init": cfg.init,
         "epochs": cfg.epochs,
         "iterations": cfg.epochs * int(Zn.shape[0]),
         "eta0": round(cfg.eta0, 4),
+        "eta_min": round(cfg.eta_min, 4),
+        "eta_decay": cfg.eta_decay,
         "radius0": round(cfg.radius0, 4),
+        "radius_min": round(cfg.radius_min, 4),
+        "radius_decay": cfg.radius_decay,
         "quantization_error": round(float(result.history["quantization_error"][-1]), 4),
         "topographic_error": round(float(result.history["topographic_error"][-1]), 4),
+        "distance_preservation": None if math.isnan(preservation) else round(preservation, 4),
         "n_empty_neurons": n_empty,
         "empty_neuron_frac": round(n_empty / n_neurons, 4),
         "max_hits": int(hits.max()),
+        "mean_hits_occupied": round(int(Zn.shape[0]) / (n_neurons - n_empty), 4),
         "n_creators_mapped": int(len(bmu)),
         "backend_resolved": ctx.backend.name,
     }

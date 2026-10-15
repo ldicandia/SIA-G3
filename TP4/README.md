@@ -103,6 +103,54 @@ de la cantidad de workers. Ejemplo, PCA estandarizada contra PCA sin estandariza
 Una grilla vacía, un valor repetido, más de 512 hijos o una `base` inválida se rechazan antes
 de correr nada.
 
+## Mapa de Kohonen (`kind: "som"`)
+
+```bash
+.venv/bin/python -m tp4 run configs/som.json
+```
+
+El mapa autoorganizado está escrito **a mano en numpy** (`tp4/models/som.py`); no se usa ninguna
+librería de SOM ni de clustering, y un test lo verifica mirando los imports de `tp4/`. Entrena
+sobre las **25 variables seleccionadas y estandarizadas**, tal como se decidió en
+[`docs/hallazgos/ej1.md`](docs/hallazgos/ej1.md) (no sobre componentes principales). Todos los
+hiperparámetros salen de `params` en `configs/som.json`:
+
+| Parámetro | Significado | Valores permitidos |
+|-----------|-------------|--------------------|
+| `rows` | filas de la grilla | entero >= 1 (`rows * cols` entre 2 y 400) |
+| `cols` | columnas de la grilla | `null` (= `rows`, grilla cuadrada) o entero >= 1 |
+| `topology` | forma de las celdas | `"hex"` (6 vecinos) o `"rect"` (4 vecinos) |
+| `neighborhood` | influencia del ganador sobre sus vecinas | `"gaussian"` (`exp(-d²/2R²)`) o `"step"` (1 si `d <= R`, 0 si no) |
+| `init` | inicialización de los pesos | `"sample"` (creadores al azar) o `"random"` (uniforme por variable) |
+| `epochs` | pasadas sobre los creadores | entero entre 1 y 5000 |
+| `eta0` | tasa de aprendizaje inicial | `0 < eta_min <= eta0 <= 1` |
+| `eta_min` | piso de la tasa de aprendizaje | `0 < eta_min <= eta0` |
+| `eta_decay` | cómo baja la tasa de `eta0` a `eta_min` | `"exponential"`, `"linear"`, `"inverse"` (familia 1/i de la teoría) o `"constant"` |
+| `radius0` | radio de vecindad inicial (unidades de grilla) | número > 0 |
+| `radius_min` | piso del radio (el ganador siempre se actualiza) | `0 < radius_min <= radius0` |
+| `radius_decay` | cómo baja el radio de `radius0` a `radius_min` | igual que `eta_decay` |
+
+Una config inválida (valores fuera de rango, opciones desconocidas, parámetros que no existen)
+sale con `error: ...` y código 2 antes de crear `runs/som/`.
+
+| Artefacto en `runs/som/` | Contenido |
+|--------------------------|-----------|
+| `bmus.csv` | una fila por creador: neurona ganadora, fila y columna, distancia al ganador, segunda ganadora y si es adyacente |
+| `neurons.csv` | una fila por neurona: posición, cantidad de impactos (`hits`) y creadores que cayeron ahí |
+| `weights.csv` | vector de pesos de cada neurona (unidades estandarizadas) |
+| `history.csv` | por época: `eta`, `radius`, error de cuantización y error topográfico |
+| `hit_map.png` | mapa de impactos con el nombre de cada creador dentro de su neurona |
+| `training_curve.png` | errores y parámetros (`eta`, radio) a lo largo del entrenamiento |
+| `summary.json`, `run.json` | métricas finales y registro de la corrida |
+
+Métricas de calidad (en `summary.json`):
+
+- **QE (error de cuantización):** distancia euclídea media entre cada creador y los pesos de su neurona ganadora.
+- **TE (error topográfico):** fracción de creadores cuya primera y segunda ganadora no son vecinas en la grilla.
+- **Preservación de distancias:** correlación de Pearson entre la distancia en el espacio de entrada de cada par de creadores y la distancia en la grilla entre sus neuronas ganadoras (`null` si no está definida).
+
+Con la misma semilla, `summary.json`, `bmus.csv`, `weights.csv` y `history.csv` salen idénticos byte a byte.
+
 ## Backend CUDA opcional
 
 Con `"backend": "cupy"` en la config, los cálculos de arrays que usan `ctx.backend.xp` (por ahora
