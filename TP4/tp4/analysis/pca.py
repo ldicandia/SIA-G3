@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from types import ModuleType
 
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 
+from ..backend import to_numpy
 from ..errors import DataError
 
 
@@ -89,6 +91,20 @@ def fit_pca(Z: np.ndarray, features: Sequence[str], n_components: int | None = N
         scores=scores,
         n_samples=int(Z.shape[0]),
     )
+
+
+def eigen_crosscheck(Z: np.ndarray, explained_variance_ratio: np.ndarray, xp: ModuleType) -> float:
+    """Max |difference| between sklearn's ratios and an eigen-decomposition on backend `xp`.
+
+    This is the course's view of PCA: eigenvalues of the covariance `Z.T @ Z / n`
+    (the correlation matrix when `Z` is standardized), normalized to ratios.
+    """
+    Zx = xp.asarray(Z)
+    cov = Zx.T @ Zx / Zx.shape[0]
+    eigvals = np.sort(to_numpy(xp.linalg.eigvalsh(cov)))[::-1]
+    ratios = eigvals / eigvals.sum()
+    expected = np.asarray(explained_variance_ratio, dtype=float)
+    return float(np.max(np.abs(ratios[: expected.size] - expected)))
 
 
 def components_for_threshold(cumulative: np.ndarray, threshold: float) -> int:

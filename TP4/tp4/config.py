@@ -17,7 +17,7 @@ from .errors import ConfigError
 
 EXPERIMENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 COMMON_KEYS = ("experiment", "kind", "seed", "backend", "plots")
-SUPPORTED_BACKENDS = ("numpy",)
+SUPPORTED_BACKENDS = ("numpy", "cupy")
 
 
 def load_config(path: str | Path) -> dict[str, Any]:

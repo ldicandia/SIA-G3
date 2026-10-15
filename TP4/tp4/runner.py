@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 
+from .backend import resolve_backend
 from .config import COMMON_KEYS, load_config, merge_params, validate_common
 from .errors import ConfigError
 from .experiments import get_experiment
@@ -103,6 +104,7 @@ def execute(
     started = datetime.now(UTC)
     t0 = time.perf_counter()
     experiment = get_experiment(config["kind"])
+    backend = resolve_backend(config["backend"])
     ctx = RunContext(
         experiment=config["experiment"],
         kind=config["kind"],
@@ -112,7 +114,7 @@ def execute(
         params=config["params"],
         run_dir=Path(run_dir),
         plots=config["plots"],
-        backend=config["backend"],
+        backend=backend,
     )
     summary = _clean_summary(experiment.run(ctx))
     write_json(ctx.artifact("summary.json"), summary)
@@ -125,7 +127,7 @@ def execute(
             "experiment": config["experiment"],
             "kind": config["kind"],
             "seed": config["seed"],
-            "backend": {"requested": config["backend"], "resolved": "numpy", "fallback_reason": None},
+            "backend": backend.as_record(),
             "config": dict(config),
             "config_path": _portable_config_path(config_path),
             "versions": _versions(),

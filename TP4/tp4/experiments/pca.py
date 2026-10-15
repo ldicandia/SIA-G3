@@ -21,6 +21,7 @@ from ..analysis.pca import (
     PcaResult,
     center,
     components_for_threshold,
+    eigen_crosscheck,
     fit_pca,
     kaiser_count,
     loadings_frame,
@@ -248,6 +249,8 @@ def run(ctx: RunContext) -> dict:
         "pc1_explained_variance_pct": _pct(ratio[0]),
         "pc2_explained_variance_pct": _pct(ratio[1]) if k > 1 else None,
         "cumulative_pc2_pct": _pct(result.cumulative_ratio[min(1, k - 1)]),
+        "backend_resolved": ctx.backend.name,
+        "eigen_crosscheck_max_abs_diff": eigen_crosscheck(Z, ratio, ctx.backend.xp),
     }
     for t in thresholds:
         summary[f"k_cum_{round(t * 100)}"] = components_for_threshold(result.cumulative_ratio, t)
