@@ -1,0 +1,18 @@
+{
+  "experiment": "som",
+  "kind": "som",
+  "seed": 42,
+  "backend": "numpy",
+  "plots": true,
+  "data": "datos/creadores.csv",
+  "feature_set": "configs/feature_set.json",
+  "params": {
+    "rows": 6,
+    "cols": null,
+    "epochs": 200,
+    "eta0": 0.5,
+    "eta_min": 0.01,
+    "radius0": 3,
+    "radius_min": 1
+  }
+}
