@@ -19,9 +19,9 @@ import numpy as np
 from ..backend import to_numpy
 
 TOPOLOGIES = ("hex", "rect")
-NEIGHBORHOODS = ("gaussian",)
-DECAYS = ("exponential",)
-INITS = ("sample",)
+NEIGHBORHOODS = ("gaussian", "step")
+DECAYS = ("exponential", "linear", "inverse", "constant")
+INITS = ("sample", "random")
 ADJACENCY_TOL = 1e-9
 
 
@@ -92,27 +92,42 @@ class SomConfig:
 
 
 def decay(start: float, end: float, step: int, total: int, kind: str) -> float:
-    """Schedule value at `step` of `total`: `start` at step 0, `end` at step total-1."""
+    """Schedule value at `step` of `total`: `start` at step 0, `end` at step total-1.
+
+    p = step / max(total - 1, 1). exponential: start * (end / start)^p; linear: start + (end - start) * p;
+    inverse: start / (1 + p * (start / end - 1)) (the course's 1/i family rescaled to hit `end`);
+    constant: start. Values are clamped between start and end.
+    """
     if kind not in DECAYS:
         raise ValueError(f"unknown decay {kind!r}; allowed: {list(DECAYS)}")
-    if kind == "exponential" and not (start > 0 and end > 0):
-        raise ValueError(f"exponential decay needs start > 0 and end > 0, got {start}, {end}")
-    if total <= 1 or step <= 0:
+    if kind in ("exponential", "inverse") and not (start > 0 and end > 0):
+        raise ValueError(f"{kind} decay needs start > 0 and end > 0, got {start}, {end}")
+    if kind == "constant" or total <= 1 or step <= 0:
         return float(start)
     if step >= total - 1:
         return float(end)
     p = step / (total - 1)
-    value = start * (end / start) ** p
+    if kind == "exponential":
+        value = start * (end / start) ** p
+    elif kind == "linear":
+        value = start + (end - start) * p
+    else:  # inverse
+        value = start / (1.0 + p * (start / end - 1.0))
     return float(min(max(value, min(start, end)), max(start, end)))
 
 
 def neighborhood(distances, radius: float, kind: str, xp=np):
-    """Influence of the winner on neurons at grid `distances`; 1 at distance 0."""
+    """Influence of the winner on neurons at grid `distances`; 1 at distance 0 for every radius > 0.
+
+    gaussian: exp(-d^2 / (2 r^2)), not truncated. step: 1 for d <= r (+ ADJACENCY_TOL), else 0.
+    """
     if kind not in NEIGHBORHOODS:
         raise ValueError(f"unknown neighborhood {kind!r}; allowed: {list(NEIGHBORHOODS)}")
     if not radius > 0:
         raise ValueError(f"neighborhood radius must be > 0, got {radius}")
     d = xp.asarray(distances)
+    if kind == "step":  # the course rule: 1 inside the radius (boundary included), 0 outside
+        return xp.where(d <= radius + ADJACENCY_TOL, 1.0, 0.0)
     return xp.exp(-(d**2) / (2.0 * radius**2))
 
 
@@ -123,6 +138,8 @@ def init_weights(X: np.ndarray, n_neurons: int, method: str, rng: np.random.Gene
     if method not in INITS:
         raise ValueError(f"unknown init {method!r}; allowed: {list(INITS)}")
     n_samples = X.shape[0]
+    if method == "random":
+        return rng.uniform(X.min(axis=0), X.max(axis=0), size=(n_neurons, X.shape[1]))
     idx = rng.choice(n_samples, n_neurons, replace=n_neurons > n_samples)
     return np.array(X[idx], dtype=float)
 
@@ -157,6 +174,24 @@ def quantization_error(X: np.ndarray, W: np.ndarray) -> float:
 def topographic_error(X: np.ndarray, W: np.ndarray, grid: SomGrid) -> float:
     bmu, second, _ = best_two_units(X, W)
     return float(np.mean(grid.distances[bmu, second] > 1.0 + ADJACENCY_TOL))
+
+
+def distance_preservation(X: np.ndarray, W: np.ndarray, grid: SomGrid) -> float:
+    """Pearson r between input-space distances of all creator pairs and the grid distances of their BMUs.
+
+    NaN when undefined (fewer than 3 samples, or either distance vector is constant).
+    """
+    X = np.asarray(X, dtype=float)
+    n = X.shape[0]
+    if n < 3:
+        return float("nan")
+    bmu = best_two_units(X, W)[0]
+    i, j = np.triu_indices(n, k=1)
+    input_d = np.sqrt(((X[i] - X[j]) ** 2).sum(axis=1))
+    grid_d = grid.distances[bmu[i], bmu[j]]
+    if input_d.std() == 0.0 or grid_d.std() == 0.0:
+        return float("nan")
+    return float(np.corrcoef(input_d, grid_d)[0, 1])
 
 
 # --------------------------------------------------------------------------- training
