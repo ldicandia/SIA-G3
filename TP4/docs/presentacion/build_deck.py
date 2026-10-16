@@ -365,6 +365,13 @@ fig_side("Los cinco QR se parecen demasiado", "05. Hopfield · códigos QR 37×3
     "Son todo menos ortogonales: las letras elegidas estaban en el otro extremo.",
 ], head="Matriz de superposiciones", side="left", tw=4.6)
 
+fig_side("Cómo deterioramos un código QR", "05. Hopfield · códigos QR 37×37", "hopfield_qr__damage_examples.png", [
+    ("Ruido aleatorio: ", "nivel p entre 0 y 0,5 → se invierten k = round(p · 1369) módulos distintos, elegidos al azar (±1 → ∓1). Ej.: p = 0,05 → 68; p = 0,35 → 479."),
+    ("Esquina rota: ", "triángulo blanco de tamaño 8 a 32 en una de las 4 esquinas."),
+    ("Mancha: ", "bloque negro cuadrado de lado 8 a 24 en una posición al azar."),
+    ("Recuperada ", "si el estado final es exactamente el código de origen. Semilla fija."),
+], head="Funciones de ruido", side="left", tw=5.6, size=15)
+
 fig_wide("Hebb no recupera ningún código QR", "05. Hopfield · códigos QR 37×37", "hopfield_qr__hebb_attractor.png",
          "Ninguno de los 5 códigos es un punto fijo, y 97,47% de las consultas termina en el mismo \"QR promedio\". "
          "Es la interferencia que las letras ortogonales evitaban.", h_fig=4.2)
