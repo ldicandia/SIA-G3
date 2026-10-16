@@ -179,6 +179,78 @@ def followers_top(evidence: pd.DataFrame, n: int, mask=None) -> pd.DataFrame:
     return top
 
 
+def _pooled_cost(rows: pd.DataFrame) -> float:
+    """Total price over total estimated Argentine reach, per 1000 (one sponsored post per creator)."""
+    reach = float(rows["est_arg_reach"].sum())
+    return float(rows["price_usd"].sum()) / reach * 1000.0 if reach > 0 else float("nan")
+
+
+def strategy_metrics(rows: pd.DataFrame, topic: str) -> dict[str, float]:
+    """The D-15 metrics of one set of creators: shares averaged, reach and price summed, cost pooled."""
+    return {
+        "mean_topic_share": float(rows[topic].mean()),
+        "mean_argentina_audience_pct": float(rows["argentina_audience_pct"].mean()),
+        "total_est_arg_reach": float(rows["est_arg_reach"].sum()),
+        "mean_engagement_per_1000": float(rows["engagement_per_1000"].mean()),
+        "total_price_usd": float(rows["price_usd"].sum()),
+        "cost_per_1000_arg_reach": _pooled_cost(rows),
+        "mean_followers": float(rows["followers"].mean()),
+    }
+
+
+def overlaps(picks_by_client: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
+    """creator_id -> sorted clients that picked it, only for creators picked by two or more clients (D-12)."""
+    by_creator: dict[str, set[str]] = {}
+    for client, creators in picks_by_client.items():
+        for creator in creators:
+            by_creator.setdefault(creator, set()).add(client)
+    return {creator: sorted(clients) for creator, clients in by_creator.items() if len(clients) > 1}
+
+
+REGION_PROFILE_COLUMNS = (
+    "client", "som_region", "n_candidates", "creators", "mean_followers", "mean_est_arg_reach",
+    "mean_argentina_audience_pct", "mean_non_follower_reach_pct", "mean_engagement_per_1000",
+    "mean_saves_per_1000", "mean_profile_visits_per_1000", "mean_content_tutorial_pct", "mean_price_usd",
+    "cost_per_1000_arg_reach", "mean_oja_index",
+)
+
+_REGION_MEANS = (
+    ("mean_followers", "followers"),
+    ("mean_est_arg_reach", "est_arg_reach"),
+    ("mean_argentina_audience_pct", "argentina_audience_pct"),
+    ("mean_non_follower_reach_pct", "non_follower_reach_pct"),
+    ("mean_engagement_per_1000", "engagement_per_1000"),
+    ("mean_saves_per_1000", "saves_per_1000"),
+    ("mean_profile_visits_per_1000", "profile_visits_per_1000"),
+    ("mean_content_tutorial_pct", "content_tutorial_pct"),
+    ("mean_price_usd", "price_usd"),
+    ("mean_oja_index", "oja_index"),
+)
+
+
+def region_profiles(evidence: pd.DataFrame, client: Mapping) -> pd.DataFrame:
+    """The client's topic candidates (topic filter only, no region filter) profiled by SOM region.
+
+    This is the evidence for the strategy question (massive reach, discovery or educational depth):
+    each map region is one strategy. Regions without candidates are omitted.
+    """
+    topic = evidence[client["topic"]].to_numpy(dtype=float) >= float(client["min_share"])
+    rows = evidence.loc[topic]
+    out = []
+    for region, group in rows.groupby("som_region", sort=True):
+        record = {
+            "client": client["name"],
+            "som_region": int(region),
+            "n_candidates": int(len(group)),
+            "creators": ";".join(group["name"].tolist()),
+        }
+        for column, source in _REGION_MEANS:
+            record[column] = float(group[source].mean())
+        record["cost_per_1000_arg_reach"] = _pooled_cost(group)
+        out.append(record)
+    return pd.DataFrame(out, columns=list(REGION_PROFILE_COLUMNS))
+
+
 def _decimal_comma(value: float | int | str, spec: str = "g") -> str:
     return format(value, spec).replace(".", ",")
 

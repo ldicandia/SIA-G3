@@ -22,6 +22,45 @@
         {"column": "comments_per_1000", "weight": 0.5},
         {"column": "saves_per_1000", "weight": 0.5}
       ]
+    },
+    {
+      "name": "football",
+      "label": "Ropa de entrenamiento de fútbol",
+      "objective": "ventas",
+      "topic": "topic_football_pct",
+      "min_share": 40,
+      "regions": [],
+      "rank_by": [
+        {"column": "cost_per_1000_arg_reach", "weight": -1.0},
+        {"column": "argentina_audience_pct", "weight": 0.5},
+        {"column": "profile_visits_per_1000", "weight": 0.5}
+      ]
+    },
+    {
+      "name": "makeup",
+      "label": "Productos de belleza",
+      "objective": "ventas",
+      "topic": "topic_makeup_pct",
+      "min_share": 40,
+      "regions": [],
+      "rank_by": [
+        {"column": "cost_per_1000_arg_reach", "weight": -1.0},
+        {"column": "argentina_audience_pct", "weight": 0.5},
+        {"column": "saves_per_1000", "weight": 0.5}
+      ]
+    },
+    {
+      "name": "art",
+      "label": "Materiales de arte",
+      "objective": "ventas",
+      "topic": "topic_art_pct",
+      "min_share": 40,
+      "regions": [],
+      "rank_by": [
+        {"column": "cost_per_1000_arg_reach", "weight": -1.0},
+        {"column": "argentina_audience_pct", "weight": 0.5},
+        {"column": "content_tutorial_pct", "weight": 0.5}
+      ]
     }
   ]
 }

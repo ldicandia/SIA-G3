@@ -16,8 +16,14 @@ Config keys (besides the common ones):
 
 Artifacts:
   evidence.csv   one row per creator: PC1/PC2, SOM cell and region, Oja index and rank, metrics
-  picks.csv      the method's picks per client with the three D-13 evidence pieces
-  baselines.csv  the agency's followers-only picks (D-14)
+  picks.csv      the method's picks per client with the three D-13 evidence pieces and the
+                 other clients that picked the same creator (D-12 overlap flag)
+  baselines.csv  the followers-only picks (D-14): top-N over the whole catalog (the agency's
+                 current practice) and top-N inside the client's topic filter
+  comparison.csv method, followers_global and followers_in_topic side by side on the D-15 metrics
+  strategy_profiles.csv  each client's topic candidates profiled by SOM region (the evidence for
+                 the football question: massive reach, discovery or educational depth)
+  comparison.png the comparison as bars, one row per client
 
 `tp4.runner` is imported only inside functions: the runner imports the experiment registry,
 which imports this module (a top-level import would cycle).
@@ -37,14 +43,18 @@ from ..analysis.campaigns import (
     build_evidence,
     describe_rule,
     followers_top,
+    overlaps,
     pick,
+    region_profiles,
     rule_scores,
     score_client,
+    strategy_metrics,
 )
 from ..analysis.pca import fit_pca, standardize
 from ..config import load_config
 from ..errors import ConfigError
 from ..features import TOPIC_COLUMNS, load_design
+from ..plotting import plt, save_figure
 from ..runs import Experiment, RunContext, resolve_project_path, write_csv
 from .oja import fit_index, oja_config_from_params
 from .som import load_som_config, som_evidence
@@ -171,6 +181,52 @@ def _view(rows: pd.DataFrame, client: dict, scores: np.ndarray) -> pd.DataFrame:
     return out
 
 
+def _num(value: float, digits: int = 2) -> float | None:
+    value = float(value)
+    return None if math.isnan(value) else round(value, digits)
+
+
+STRATEGY_LABELS = {
+    "method": "método (regla)",
+    "followers_global": "followers (todo el catálogo)",
+    "followers_in_topic": "followers (dentro del tópico)",
+}
+STRATEGY_COLORS = {"method": "#332288", "followers_global": "#999999", "followers_in_topic": "#D55E00"}
+_PANELS = (
+    ("mean_topic_share", "participación media del tópico (%)", "{:.1f}"),
+    ("total_est_arg_reach", "alcance argentino estimado total", "{:.0f}"),
+    ("cost_per_1000_arg_reach", "USD por 1000 de alcance argentino", "{:.1f}"),
+)
+
+
+def _plot_comparison(comparison: pd.DataFrame, labels: dict[str, str], path) -> None:
+    """One row per client, three panels, one bar per strategy (same colors in every panel)."""
+    clients = list(dict.fromkeys(comparison["client"]))
+    fig, axes = plt.subplots(len(clients), len(_PANELS), figsize=(12.5, 2.5 * len(clients) + 1.4), squeeze=False)
+    for i, client in enumerate(clients):
+        rows = comparison[comparison["client"] == client].set_index("strategy")
+        for j, (column, title, fmt) in enumerate(_PANELS):
+            ax = axes[i][j]
+            strategies = [s for s in STRATEGY_LABELS if s in rows.index]
+            values = [float(rows.loc[s, column]) for s in strategies]
+            bars = ax.bar(range(len(strategies)), values, color=[STRATEGY_COLORS[s] for s in strategies], width=0.7)
+            for bar, value in zip(bars, values):
+                ax.annotate(fmt.format(value), (bar.get_x() + bar.get_width() / 2, value), xytext=(0, 2),
+                            textcoords="offset points", ha="center", fontsize=7)
+            ax.set_xticks([])
+            ax.set_ylim(0, max(values) * 1.18 if max(values) > 0 else 1)
+            ax.grid(alpha=0.3, axis="y")
+            if i == 0:
+                ax.set_title(title, fontsize=9)
+            if j == 0:
+                ax.set_ylabel(labels[client], fontsize=9)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=STRATEGY_COLORS[s]) for s in STRATEGY_LABELS]
+    fig.legend(handles, list(STRATEGY_LABELS.values()), loc="lower center", ncol=3, frameon=False, fontsize=9)
+    fig.suptitle("Selección por regla frente a selección solo por followers, por cliente")
+    fig.tight_layout(rect=(0, 0.05, 1, 0.97))
+    save_figure(fig, path)
+
+
 def run(ctx: RunContext) -> dict:
     oja_base = _load_oja_base(ctx.config)
     som_base = load_som_config(oja_base["som_config"], who="campaigns")
@@ -200,9 +256,7 @@ def run(ctx: RunContext) -> dict:
     )
     write_csv(ctx.artifact("evidence.csv"), evidence)
 
-    global_top = followers_top(evidence, n_picks)
-    pick_frames: list[pd.DataFrame] = []
-    baseline_frames: list[pd.DataFrame] = []
+    global_top = followers_top(evidence, n_picks)  # the agency's practice: same creators for every client
     summary: dict[str, Any] = {}
     _put(summary, "n_creators", int(len(evidence)))
     _put(summary, "n_clients", len(clients))
@@ -212,36 +266,94 @@ def run(ctx: RunContext) -> dict:
     _put(summary, "som_config", str(oja_base["som_config"]))
     _put(summary, "oja_eta0", float(oja_base["params"]["eta0"]))
     _put(summary, "followers_global_picks", global_top["name"].tolist())
-    _put(summary, "oja_top_creator", str(evidence.loc[evidence["oja_rank"] == 1, "name"].iloc[0]))
+    top_row = evidence.loc[evidence["oja_rank"] == 1].iloc[0]
+    _put(summary, "oja_top_creator", str(top_row["name"]))
     _put(summary, "backend_resolved", ctx.backend.name)
 
+    pick_frames: list[pd.DataFrame] = []
+    baseline_frames: list[pd.DataFrame] = []
+    comparison_rows: list[dict[str, Any]] = []
+    profile_frames: list[pd.DataFrame] = []
+    picked_ids: dict[str, list[str]] = {}
+    names_by_id = dict(zip(evidence["creator_id"], evidence["name"]))
     for client in clients:
+        c = client["name"]
         scores = rule_scores(evidence, client)
         n_candidates = len(score_client(evidence, client))
         if n_candidates < n_picks:
             raise ConfigError(
-                f"campaigns: client {client['name']!r} has {n_candidates} candidates after its filters, "
+                f"campaigns: client {c!r} has {n_candidates} candidates after its filters, "
                 f"fewer than n_picks {n_picks}"
             )
         picked = pick(evidence, client, n_picks)
+        in_topic = followers_top(evidence, n_picks, mask=evidence[client["topic"]].to_numpy(dtype=float) >= client["min_share"])
+        picked_ids[c] = picked["creator_id"].tolist()
+
         view = _view(picked, client, scores)[PICK_COLUMNS]
         view.insert(0, "label", client["label"])
-        view.insert(0, "client", client["name"])
+        view.insert(0, "client", c)
         pick_frames.append(view)
+        for strategy, rows in (("followers_global", global_top), ("followers_in_topic", in_topic)):
+            base = _view(rows, client, scores)[PICK_COLUMNS]
+            base.insert(0, "strategy", strategy)
+            base.insert(0, "client", c)
+            baseline_frames.append(base)
 
-        base = _view(global_top, client, scores)[PICK_COLUMNS]
-        base.insert(0, "strategy", "followers_global")
-        base.insert(0, "client", client["name"])
-        baseline_frames.append(base)
+        metrics = {}
+        for strategy, rows in (("method", picked), ("followers_global", global_top), ("followers_in_topic", in_topic)):
+            metrics[strategy] = strategy_metrics(rows, client["topic"])
+            comparison_rows.append(
+                {
+                    "client": c,
+                    "strategy": strategy,
+                    "creators": ";".join(rows["name"]),
+                    **metrics[strategy],
+                    "shared_with_method": int(rows["creator_id"].isin(picked["creator_id"]).sum()),
+                }
+            )
+        profile_frames.append(region_profiles(evidence, client))
 
-        c = client["name"]
+        m, g, t = metrics["method"], metrics["followers_global"], metrics["followers_in_topic"]
         _put(summary, f"{c}_rule", describe_rule(client))
         _put(summary, f"{c}_n_candidates", int(n_candidates))
         _put(summary, f"{c}_picks", picked["name"].tolist())
+        _put(summary, f"{c}_baseline_topic", in_topic["name"].tolist())
+        _put(summary, f"{c}_mean_topic_share", _num(m["mean_topic_share"]))
+        _put(summary, f"{c}_global_mean_topic_share", _num(g["mean_topic_share"]))
+        _put(summary, f"{c}_topic_mean_topic_share", _num(t["mean_topic_share"]))
+        _put(summary, f"{c}_cost_per_1000_arg_reach", _num(m["cost_per_1000_arg_reach"]))
+        _put(summary, f"{c}_topic_cost_per_1000_arg_reach", _num(t["cost_per_1000_arg_reach"]))
+        _put(summary, f"{c}_total_est_arg_reach", int(round(m["total_est_arg_reach"])))
+        _put(summary, f"{c}_mean_argentina_audience_pct", _num(m["mean_argentina_audience_pct"]))
+        _put(summary, f"{c}_mean_engagement_per_1000", _num(m["mean_engagement_per_1000"]))
 
+    shared = overlaps(picked_ids)
     picks = pd.concat(pick_frames, ignore_index=True)
+    picks["also_picked_for"] = [
+        ";".join(other for other in shared.get(creator_id, []) if other != client)
+        for client, creator_id in zip(picks["client"], picks["creator_id"])
+    ]
     write_csv(ctx.artifact("picks.csv"), picks)
     write_csv(ctx.artifact("baselines.csv"), pd.concat(baseline_frames, ignore_index=True))
+    comparison = pd.DataFrame(comparison_rows)
+    write_csv(ctx.artifact("comparison.csv"), comparison)
+    write_csv(ctx.artifact("strategy_profiles.csv"), pd.concat(profile_frames, ignore_index=True))
+    if ctx.plots:
+        _plot_comparison(comparison, {c["name"]: c["label"] for c in clients}, ctx.artifact("comparison.png"))
+
+    # The followers-only top is the same for every client, so its non-topic metrics are client independent.
+    g = strategy_metrics(global_top, TOPIC_COLUMNS[0])
+    catalog_order = {cid: i for i, cid in enumerate(evidence["creator_id"])}
+    _put(summary, "followers_global_cost_per_1000_arg_reach", _num(g["cost_per_1000_arg_reach"]))
+    _put(summary, "followers_global_total_est_arg_reach", int(round(g["total_est_arg_reach"])))
+    _put(summary, "followers_global_mean_argentina_audience_pct", _num(g["mean_argentina_audience_pct"]))
+    _put(summary, "n_overlapping_creators", len(shared))
+    _put(summary, "overlapping_creators", [names_by_id[cid] for cid in sorted(shared, key=catalog_order.get)])
+    _put(
+        summary,
+        "oja_top_creator_picked_for",
+        [c["name"] for c in clients if str(top_row["creator_id"]) in picked_ids[c["name"]]],
+    )
     return summary
 
 
