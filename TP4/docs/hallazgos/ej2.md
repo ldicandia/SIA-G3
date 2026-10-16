@@ -12,10 +12,46 @@ El enunciado recomienda probar primero el caso simple antes de pasar a las imág
 mostramos con las letras: la ortogonalidad de los patrones y la capacidad de la red. Los títulos conservan la
 numeración del enunciado (2.1 y 2.2) para poder ubicarlos después.
 
+## Resumen para la presentación
+
+Esta sección es el esqueleto de las diapositivas: qué sección responde cada pregunta del enunciado, una diapositiva por hallazgo (afirmación, figura y número) y la historia que une las letras con los códigos QR. Los números de acá son los mismos valores que ya cita el texto de abajo, y `python -m tp4.delivery check` los verifica contra las corridas; si armás una diapositiva con otro número, buscalo primero en la sección que lo explica.
+
+### Preguntas del enunciado y dónde se responden
+
+| Pregunta del enunciado | Dónde se responde |
+|------------------------|-------------------|
+| **2.1** "representar cada uno mediante una matriz binaria" | `### Los cinco códigos como matrices de 37×37`, `### Por qué los cinco códigos se parecen tanto` |
+| **2.1** "almacenar los cinco vectores en la red y construir patrones de consulta" | `### Red de Hopfield implementada`, `### Regla de Hebb: ningún código se recupera`, `### Regla de la pseudoinversa: la misma red sin la interferencia` |
+| **2.1** "analizar la alteración de los códigos QR mediante la adición de ruido aleatorio con distintos niveles de ruido" | `### Deterioro: ruido, esquina rota y manchas` |
+| **2.1** "analizar la cantidad de iteraciones y la energía en cada paso de la red" | `### Iteraciones y energía en cada paso` |
+| **2.1** "explicar las limitaciones del caso de uso" | `### Limitaciones del caso de uso` |
+| **2.1** "recuperar los códigos QR deteriorados y enviarlos a un lector de QR para que pueda decodificarlos" | `### Lectura con un decodificador QR` |
+| **2.2** "almacenar patrones de letras. Implementar el modelo de Hopfield para asociar matrices con los patrones de las letras almacenadas" | `### Red de Hopfield implementada`, `### Ortogonalidad: qué 4 letras guardar`, `### Recuperación de letras con ruido` |
+| **2.2** "realizar un análisis de ortogonalidad y de la capacidad de almacenamiento de la red" | `### Ortogonalidad: qué 4 letras guardar`, `### Capacidad de almacenamiento` |
+| **2.2** "ingresar un patrón muy ruidoso e identificar un estado espúreo" | `### Un patrón muy ruidoso y un estado espúreo` |
+
+### Guion para las diapositivas
+
+1. **Escribimos la red de Hopfield a mano en numpy: pesos de Hebb con diagonal cero, energía y actualización asincrónica o sincrónica.** [Energía por actualización individual de neurona](figuras/hopfield_letters__energy.png). Número: la energía no sube en ninguna actualización (`energy_never_increased` = true). Es la misma red para las letras y para los códigos QR.
+2. **De las letras dibujadas a mano, las más ortogonales son G, R, T y V: su producto interno máximo es 1 en valor absoluto, contra 21 en el peor conjunto.** [Alfabeto con el conjunto elegido y el peor](figuras/hopfield_letters__alphabet.png) y [productos internos entre las letras](figuras/hopfield_letters__dot_products.png). Números: `selected_max_abs_dot` = 1 y `worst_max_abs_dot` = 21. En el peor conjunto la red ya cambia píxeles de letras guardadas exactas.
+3. **La cota teórica de Hebb es de 3,45 patrones y guardamos cuatro letras, por encima de la cota: funciona solo porque son casi ortogonales.** [Capacidad empírica](figuras/hopfield_letters__capacity.png). Número: `capacity_0138` = 3,45. Cuántas letras caben depende de cuán correlacionadas estén, no solo de cuántas sean.
+4. **Las cuatro letras se recuperan sin errores hasta el nivel de ruido 0,12; el conjunto peor queda muy por debajo.** [Recuperación frente al nivel de ruido](figuras/hopfield_letters__recovery_vs_noise.png) y [ejemplos de recuperación](figuras/hopfield_letters__recall_examples.png). Número: `selected_max_level_full_recovery` = 0,12, con el modo asincrónico, que es el que siempre converge.
+5. **Una letra muy ruidosa termina en un estado estable que no es ninguna letra guardada ni su negativo: una mezcla de letras con signo.** [Consulta ruidosa, estado espúreo y letras guardadas](figuras/hopfield_letters__spurious.png). Números: con el nivel que llamamos "muy ruidoso" (criterio nuestro), `spurious_rate` = 0,395 de las consultas termina en un estado espúreo, y las 16 mezclas de tres letras con signo son puntos fijos (`n_stable_mixtures` = 16).
+6. **Los cinco códigos QR comparten la mayor parte de sus módulos: son todo menos ortogonales.** [Matriz de superposiciones entre los códigos](figuras/hopfield_qr__overlaps.png) y [módulos idénticos en los cinco códigos](figuras/hopfield_qr__shared_modules.png). Números: superposición media 0,6701 (`mean_offdiag_overlap`) y fracción de módulos compartidos 0,6976 (`shared_module_frac`). Las letras elegidas estaban en el otro extremo.
+7. **Con la regla de Hebb del curso ninguno de los cinco códigos es un punto fijo y ninguna consulta se recupera: casi todas terminan en el "QR promedio".** [Estado al que llegan todas las consultas con Hebb](figuras/hopfield_qr__hebb_attractor.png). Números: `hebb_n_fixed_points` = 0 de 5 y `hebb_frac_mean_attractor` = 0,9747 de las consultas en ese mismo estado. Es la interferencia que las letras ortogonales evitaban, y no se suaviza: con la regla del curso, Hebb no recupera ningún código.
+8. **Con otra regla, la pseudoinversa, que no es la del curso y está solo para comparar, los cinco códigos pasan a ser puntos fijos y se recupera todo hasta 0,35 de ruido.** [Recuperación exacta frente al tipo de deterioro](figuras/hopfield_qr__recovery_vs_noise.png). Números: `pseudoinverse_n_fixed_points` = 5 y `pseudoinverse_max_level_full_recovery` = 0,35. Sirve para probar que lo que rompe a Hebb es la correlación; no reemplaza el resultado de Hebb.
+9. **La energía no sube en ningún paso y casi todas las consultas convergen en pocos barridos, pero la red baja al mínimo más cercano, que con Hebb es el equivocado.** [Iteraciones hasta converger frente al ruido](figuras/hopfield_qr__iterations.png) y [energía después de cada actualización](figuras/hopfield_qr__energy_per_step.png). Número: `energy_never_increased` = true.
+10. **El lector decodifica los cinco originales y, tras la pseudoinversa, un código recuperado se lee igual de bien que se recupera; tras Hebb no lee ninguno.** [Fracción que el lector decodifica, antes y después de la red](figuras/hopfield_qr__decode_vs_noise.png). Número: `n_originals_decoded` = 5. El "QR promedio" de Hebb no se lee como ningún menú: falla de manera visible.
+11. **El caso de uso queda limitado por la correlación entre códigos, los estados espúreos, la capacidad efectiva y el umbral de ruido.** [Ejemplos de consultas dañadas y su estado final](figuras/hopfield_qr__damage_examples.png). Número: la cota `capacity_0138` = 188,922 patrones está muy por encima de los cinco códigos y aun así Hebb no guarda ninguno. El umbral de ruido es el de la pseudoinversa, y una foto real no es una matriz limpia y alineada.
+
+### Hilo conductor
+
+La ortogonalidad es el hilo: las letras elegidas tienen un producto interno máximo de 1 en valor absoluto, son estables y se recuperan sin errores hasta el nivel de ruido 0,12, aunque con mucho ruido aparecen estados espúreos (`spurious_rate` = 0,395, y las 16 mezclas de tres letras con signo son puntos fijos). Los códigos QR, en cambio, comparten la mayor parte de sus módulos (`mean_offdiag_overlap` = 0,6701 y `shared_module_frac` = 0,6976), y esa correlación ahoga a la memoria de Hebb en interferencia: `hebb_n_fixed_points` es 0 de 5, ningún código es un punto fijo y `hebb_frac_mean_attractor` = 0,9747 de las consultas termina en el mismo "QR promedio". Al sacar la interferencia con otra regla, la pseudoinversa (que no es la del curso), la misma red recuerda los cinco códigos y recupera todo hasta 0,35 de ruido, lo que confirma que la causa es la correlación y no la cantidad de patrones (la cota `capacity_0138` de 188,922 está muy por encima de cinco). Por eso el caso de uso queda limitado por la correlación entre códigos, por los estados espúreos, por una capacidad efectiva mucho menor que la cota y por el umbral de ruido de la pseudoinversa, y con la regla del curso no se recupera ningún código.
+
 ## 2.2 Recomendación: letras 5×5
 
 Todo lo de esta sección sale de `runs/hopfield_letters/`, regenerado con los comandos de "Cómo regenerar (2.2)".
-Hay decisiones que son criterio nuestro y el grupo todavía tiene que aceptar: están marcadas en "Supuestos (2.2)".
+Las decisiones de "Supuestos (2.2)" y de "Supuestos (2.1)" son criterio nuestro y el grupo las aceptó en la revisión de la Fase 4 (el alfabeto y la regla de ortogonalidad, la definición de espúreo, qué es "muy ruidoso", negro = +1, los modelos de deterioro, la pseudoinversa como comparación y zxing-cpp).
 
 ### Red de Hopfield implementada
 
