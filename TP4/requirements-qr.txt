@@ -1,0 +1,11 @@
+# Extra OPCIONAL para decodificar los códigos QR originales y los recuperados (Ej. 2.1, QR-04).
+# No hace falta para ningún test ni para ninguna corrida: sin él, la decodificación se
+# reporta como "decoder unavailable".
+#
+# Instalación (manual, desde el directorio TP4/):
+#   .venv/bin/pip install -r requirements-qr.txt
+#
+# El paquete zxing-cpp (Apache-2.0, github.com/zxing-cpp/zxing-cpp) fue verificado en el
+# checkpoint de legitimidad antes de instalarse.
+-r requirements.txt
+zxing-cpp>=3.1,<4
