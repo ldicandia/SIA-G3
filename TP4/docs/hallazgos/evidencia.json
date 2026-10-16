@@ -76,7 +76,41 @@
         "runs/campaigns/summary.json:n_overlapping_creators"
       ],
       "requires": [],
-      "sections": []
+      "sections": [
+        {
+          "heading": "## Resumen para la presentación",
+          "cites": [
+            "runs/eda/summary.json:n_selected_features",
+            "runs/pca/summary.json:pc1_explained_variance_pct",
+            "runs/pca/summary.json:cumulative_pc2_pct",
+            "runs/pca/summary.json:pc1_top_feature",
+            "runs/som_sweep/summary.json:selected_quantization_error",
+            "runs/som_sweep/summary.json:selected_topographic_error",
+            "runs/som/summary.json:n_regions",
+            "runs/som/summary.json:pc1_region_eta2",
+            "runs/som/summary.json:pc2_region_eta2",
+            "runs/som_pca_control/summary.json:region_ari",
+            "runs/oja/summary.json:cosine_to_pc1",
+            "runs/oja/summary.json:pearson_scores_pc1",
+            "runs/oja/summary.json:top_creator",
+            "runs/oja_sweep/summary.json:selected_eta0",
+            "runs/campaigns/summary.json:oja_top_creator_picked_for",
+            "runs/campaigns/summary.json:dogs_picks",
+            "runs/campaigns/summary.json:football_picks",
+            "runs/campaigns/summary.json:makeup_picks",
+            "runs/campaigns/summary.json:art_picks",
+            "runs/campaigns/summary.json:dogs_mean_argentina_audience_pct",
+            "runs/campaigns/summary.json:football_mean_argentina_audience_pct",
+            "runs/campaigns/summary.json:makeup_mean_argentina_audience_pct",
+            "runs/campaigns/summary.json:art_mean_argentina_audience_pct",
+            "runs/campaigns/summary.json:followers_global_mean_argentina_audience_pct",
+            "runs/campaigns/summary.json:football_cost_per_1000_arg_reach",
+            "runs/campaigns/summary.json:makeup_cost_per_1000_arg_reach",
+            "runs/campaigns/summary.json:art_cost_per_1000_arg_reach",
+            "runs/campaigns/summary.json:followers_global_cost_per_1000_arg_reach"
+          ]
+        }
+      ]
     },
     {
       "md": "docs/hallazgos/ej2.md",

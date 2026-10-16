@@ -5,6 +5,51 @@ está al final, en "Cómo regenerar"). Los valores citados se copian de `runs/*/
 de los CSV de cada corrida, y `python -m tp4.findings` verifica que cada archivo referenciado
 exista y que los números clave aparezcan en el texto. Los decimales van con coma. Los gráficos son copias versionadas en `docs/hallazgos/figuras/`: el título de cada imagen nombra el artefacto de `runs/` que la produce y, por lo tanto, la config que la genera. `python -m tp4.delivery verify` regenera todo desde cero y compara números y gráficos byte a byte; `python -m tp4.delivery figures` actualiza las copias después de una regeneración.
 
+## Resumen para la presentación
+
+Esta sección es el esqueleto de las diapositivas: qué sección responde cada pregunta del enunciado, una diapositiva por hallazgo (afirmación, figura y número) y la historia que une todo. Los números de acá son los mismos valores que ya cita el texto de abajo, y `python -m tp4.delivery check` los verifica contra las corridas; si armás una diapositiva con otro número, buscalo primero en la sección que lo explica.
+
+### Preguntas del enunciado y dónde se responden
+
+| Pregunta del enunciado | Dónde se responde |
+|------------------------|-------------------|
+| **1.1** "seleccionar qué variables serán utilizadas para resolver el problema" | `### Datos y calidad`, `### Conjunto de features seleccionado` |
+| **1.1** "realizar un Exploratory Data Analysis (EDA) y un Análisis de Componentes Principales (PCA)" | `### Distribuciones, outliers y escalas`, `### Correlaciones y columnas redundantes`, `### PCA: varianza explicada`, `### ¿Estandarizar? (barrido)` |
+| **1.1** "justificar si se realiza una reducción de dimensionalidad" | `### Decisión: entrada de Kohonen` |
+| **1.1** "cómo se interpretan las componentes" | `### Interpretación de PC1 y PC2` |
+| **1.2** "variar los hiperparámetros correspondientes a la red y justificar la elección final evaluando la performance del modelo" | `### Qué se implementó`, `### Elección de la configuración (barridos)`, `### Entrenamiento` |
+| **1.2** "analizar la grilla de neuronas y la distribución de los creadores de contenido en la misma y analizar la Matriz U" | `### Distribución de los creadores en la grilla`, `### Matriz U: qué indica una distancia alta` |
+| **1.2** "¿Qué perfiles de creadores reúne cada región de la grilla seleccionada?" | `### Regiones del mapa y perfil de los creadores` |
+| **1.2** "¿Coinciden con los perfiles observados en la PC1 y PC2 (biplot)?" | `### Comparación con PC1 y PC2 (biplot)`, `### Mapa de control sobre 6 componentes principales` |
+| **1.2** "¿Qué indica una distancia alta entre neuronas vecinas en la matriz U?" | `### Matriz U: qué indica una distancia alta` |
+| **1.3** "implementar la regla de Oja sobre los mismos datos para generar un índice de creadores de contenido" | `### Regla de Oja implementada`, `### Convergencia y elección de la tasa de aprendizaje` |
+| **1.3** "¿qué representa este índice? ¿Cómo se puede interpretar?" | `### Qué mide el índice` |
+| **1.3** "¿Sería correcto elegir automáticamente al creador con el valor más alto para cualquier campaña?" | `### ¿Conviene elegir al creador con el índice más alto?` |
+| **1.3** "comparar el resultado con la proyección sobre PC1 obtenida mediante PCA" | `### Comparación con PC1` |
+| **1.4** "en base a la evidencia tomar decisiones para las campañas de marketing de los clientes de la agencia" | `### Método de selección`, `### Refugios de perros`, `### Ropa de entrenamiento de fútbol`, `### Productos de belleza`, `### Materiales de arte` |
+| **1.4** "Para una campaña de fútbol, ¿conviene priorizar alcance masivo, descubrimiento o profundidad educativa?" | `### Ropa de entrenamiento de fútbol` |
+| **1.4** "comparar la selección obtenida con una estrategia basada únicamente en followers. ¿Qué ventajas y/o desventajas tiene cada estrategia?" | `### Comparación con una selección solo por seguidores` |
+| **1.4** "¿Qué implica el mantenimiento del sistema desarrollado?" (campaña nueva, nuevos creadores o variables, actualización a fin de mes) | `### Mantenimiento del sistema` |
+
+### Guion para las diapositivas
+
+1. **Trabajamos con 25 variables independientes: se descartan las columnas que son combinaciones exactas de otras.** [Correlaciones del conjunto seleccionado](figuras/eda__correlation_heatmap_selected.png). Número: 25 variables seleccionadas (`n_selected_features`). El arte no desaparece: se reconstruye como el complemento de los otros tres tópicos.
+2. **Una sola componente concentra más de la mitad de la varianza, pero con dos no alcanza.** [Scree plot y varianza acumulada](figuras/pca__scree.png). Número: PC1 explica 53,2% y PC1 más PC2 llegan a 61,1%; el resto de la varianza queda fuera del biplot.
+3. **PC1 ordena a los creadores desde "audiencia grande y video corto de tendencia" hasta "audiencia chica, epígrafes largos y contenido didáctico"; PC2 mezcla audiencia argentina y tópico.** [Biplot PC1 contra PC2](figuras/pca__biplot.png) y [cargas de las componentes](figuras/pca__loadings_heatmap.png). Número: la variable de mayor carga en PC1 es `average_caption_words`. PC1 separa tamaño y estilo, no tópicos.
+4. **Kohonen se entrena con las variables estandarizadas, no con componentes principales.** [Scree sin estandarizar](figuras/pca_scaling_sweep__standardize-false__scree.png): sin estandarizar la PCA solo mide la escala. Número: con dos componentes solo se explica 61,1% de la varianza, y el enunciado pide agrupar en términos de todas las variables (las 25 estandarizadas).
+5. **El mapa final no se eligió a mano: lo elige una regla fija sobre dos barridos, y es hexagonal con vecindad escalón.** [QE contra preservación de distancias, con el mapa elegido](figuras/som_sweep__sweep_tradeoff.png) y [curvas de entrenamiento](figuras/som__training_curve.png). Número: error de cuantización 2,1214 y error topográfico 0,0. Cuidado: el mapa queda justo en el borde del umbral de neuronas vacías y con otros umbrales la regla podría elegir otro mapa; el grupo aceptó esa elección.
+6. **El mapa se parte en regiones contiguas con perfiles distintos: engagement profundo con audiencia chica (región 1), un grupo intermedio y mezclado (región 2) y alcance masivo con video y entretenimiento (región 3).** [Regiones contiguas del mapa](figuras/som__region_map.png), [perfil de cada región](figuras/som__region_profiles.png) y [matriz U](figuras/som__u_matrix.png) (una distancia alta entre vecinas es una frontera). Número: `n_regions` = 3; la separación es real pero moderada y la mitad del mapa está vacía.
+7. **Las regiones coinciden con PC1 y casi nada con PC2.** [Regiones sobre el plano PC1-PC2](figuras/som__biplot_regions.png). Número: PC1 explica 0,8314 de la diferencia entre regiones (`pc1_region_eta2`) y PC2 solo 0,2066 (`pc2_region_eta2`).
+8. **El mapa de control sobre componentes principales da prácticamente las mismas regiones: la conclusión de 1.1 no cambia.** [Mapa sobre las variables y mapa de control](figuras/som_pca_control__control_region_maps.png). Número: `region_ari` = 0,748, acuerdo alto; no hace falta ponderar los bloques casi colineales.
+9. **La regla de Oja converge al mismo eje que PC1.** [Peso de Oja contra carga de PC1](figuras/oja__weights_vs_pc1.png) y [índice contra puntaje de PC1](figuras/oja__scores_vs_pc1.png). Número: coseno 0,999993 y correlación 0,999999 con PC1; la tasa η0 = 0,0005 salió de una regla registrada que no mira PC1.
+10. **El índice mide tamaño y estilo, no calidad ni encaje con un cliente: el primero del ranking no sirve para cualquier campaña.** [Índice de Oja contra puntaje de PC1 por creador](figuras/oja__scores_vs_pc1.png). Número: el creador de mayor índice es `@mundoanimal.ar` y `oja_top_creator_picked_for` = `[]`: ningún cliente lo eligió. No es un puntaje de calidad.
+11. **Cada cliente tiene su propia regla transparente, con filtro de tópico y puntaje ponderado, y sus tres elegidos.** [Regiones del mapa con los creadores](figuras/som__region_map.png) y [planos de componentes](figuras/som__component_planes.png). Elegidos: perros `@ideasconhuella`, `@huellasyconsejos` y `@consejoscaninos`; fútbol `@futbolcononda`, `@golconmate` y `@lookdecancha`; maquillaje `@reelargentino`, `@brochasymates` y `@maquillajereal`; arte `@colorenmovimiento`, `@galeriacotidiana` y `@rinconcreativo`. Para fútbol los elegidos encarnan descubrimiento con alcance masivo, no profundidad educativa.
+12. **La regla le gana a elegir solo por seguidores en audiencia argentina en los cuatro clientes y en costo por mil en fútbol, maquillaje y arte, pero son proxies: no hay datos de ventas.** [Regla contra seguidores, por cliente](figuras/campaigns__comparison.png). Números: audiencia argentina media de 88,06% (perros), 81,53% (fútbol), 78,98% (maquillaje) y 68,94% (arte) contra 63,48% de los más seguidos; USD por mil de alcance argentino de 19,91 (fútbol), 19,96 (maquillaje) y 27,01 (arte) contra 32,94. La regla llega a menos gente en total y en perros no gana en costo contra los más seguidos del tópico.
+
+### Hilo conductor
+
+Hay un eje dominante: PC1 ordena a los creadores por tamaño y estilo, desde la audiencia grande con video corto de tendencia hasta el engagement profundo con audiencia chica, y concentra 53,2% de la varianza. Las regiones del mapa de Kohonen siguen ese eje y no PC2: `pc1_region_eta2` vale 0,8314 contra 0,2066 de `pc2_region_eta2`, y el mapa de control sobre componentes principales no las cambia (`region_ari` = 0,748). La regla de Oja recupera ese mismo eje (coseno 0,999993 con PC1), así que el índice mide tamaño y estilo y no qué tan bien le calza un creador a un cliente. Por eso ningún índice único decide las campañas: cada cliente tiene su regla transparente, el primero del ranking (`@mundoanimal.ar`) no lo eligió nadie, y las reglas le ganan a elegir solo por seguidores en audiencia argentina para los cuatro clientes (de 68,94 a 88,06 contra 63,48) y en costo por mil de alcance argentino para fútbol, maquillaje y arte (de 19,91 a 27,01 contra 32,94 USD). El límite es que todo se argumenta con proxies, porque no hay datos de ventas ni de conversión, y que las reglas y los umbrales son criterios nuestros que el grupo aceptó en las revisiones de fase.
+
 ## 1.1 Exploración y representación (EDA + PCA)
 
 ### Datos y calidad
@@ -242,7 +287,7 @@ Verificación de la evidencia:
 
 Todo lo de esta sección sale de `runs/som_design_sweep/`, `runs/som_sweep/`, `runs/som/` y `runs/som_pca_control/`,
 regenerados con los comandos de "Cómo regenerar (1.2)". Los valores del `summary.json` se copian con su precisión guardada (4 decimales).
-Hay decisiones que son criterio nuestro y el grupo todavía tiene que aceptar: están marcadas en "Supuestos (1.2)".
+Hay decisiones que son criterio nuestro y que el grupo aceptó en la revisión de la Fase 2 (los umbrales de la regla de selección, el mapa de 8x8, la vecindad escalón y k = 3): están marcadas en "Supuestos (1.2)".
 
 ### Qué se implementó
 
@@ -302,8 +347,8 @@ Etapa 2, hiperparámetros numéricos (`runs/som_sweep/`): 216 mapas = lado de la
 **Configuración final:** `rows-8__eta0-0p5__radius0-5__epochs-500` sobre `topology-hex__neighborhood-step__init-random` (topología hexagonal, vecindad escalón, inicialización aleatoria), con QE 2,1214, TE 0,0 y preservación de distancias 0,776.
 
 - El segundo de la regla es `rows-8__eta0-0p5__radius0-3__epochs-500` (QE 2,1871, preservación 0,755, 0,4531 de neuronas vacías).
-- **Caveat que el grupo tiene que ver:** el mapa elegido tiene exactamente 0,5 de neuronas vacías (32 de 64), o sea que pasa el filtro de ocupación solo porque el umbral es inclusivo.
-  Los tres umbrales (0,5; 0,02; 0,05) son un criterio del plan, no un resultado: con otros valores la regla podría elegir otro mapa.
+- **Caveat que el grupo vio y aceptó en la revisión de la Fase 2:** el mapa elegido tiene exactamente 0,5 de neuronas vacías (32 de 64), o sea que pasa el filtro de ocupación solo porque el umbral es inclusivo.
+  Los tres umbrales (0,5; 0,02; 0,05) son un criterio nuestro, no un resultado, y el grupo los aceptó: con otros valores la regla podría elegir otro mapa.
 
 ### Entrenamiento
 
@@ -442,7 +487,7 @@ Cumplimos lo prometido en 1.1: un mapa entrenado sobre las 6 primeras componente
 
 ### Supuestos (1.2)
 
-- **Umbrales de la regla de selección** (vacías ≤ 0,5; TE a lo sumo 0,02 sobre el mejor; preservación a lo sumo 0,05 bajo la mejor): son un criterio del plan y el grupo todavía tiene que aceptarlos.
+- **Umbrales de la regla de selección** (vacías ≤ 0,5; TE a lo sumo 0,02 sobre el mejor; preservación a lo sumo 0,05 bajo la mejor): son un criterio nuestro que el grupo aceptó en la revisión de la Fase 2.
   El mapa final cae justo en el borde de ocupación (0,5 de vacías).
 - **Geometría y fórmulas:** grilla hexagonal con filas desplazadas (todas las vecinas a distancia 1) y vecindad escalón con borde incluido; los decaimientos son `eta0 → eta_min` y `radio0 → radio_min` exponenciales sobre todas las iteraciones, con el radio nunca por debajo de `radio_min`.
 - **Barrido en dos etapas, coordenada por coordenada:** primero el diseño (topología, vecindad, inicialización) sobre una referencia de 6x6 y después los numéricos con el diseño elegido; no se barre el producto completo de las 7 dimensiones.
@@ -491,7 +536,7 @@ Verificación de la evidencia (los seis valores de 1.1 más los de 1.2):
 
 ## 1.3 Índice (regla de Oja)
 
-Todo lo de esta sección sale de `runs/oja/`, `runs/oja_sweep/` y `runs/campaigns/`, regenerados con los comandos de "Cómo regenerar (1.3)". Los valores de los `summary.json` se copian con su precisión guardada (6 decimales para el coseno y la correlación, 4 para normas y autovalores). Los criterios que son nuestros y que el grupo todavía tiene que aceptar están en "Supuestos (1.3)".
+Todo lo de esta sección sale de `runs/oja/`, `runs/oja_sweep/` y `runs/campaigns/`, regenerados con los comandos de "Cómo regenerar (1.3)". Los valores de los `summary.json` se copian con su precisión guardada (6 decimales para el coseno y la correlación, 4 para normas y autovalores). Los criterios que son nuestros y que el grupo aceptó en la revisión de la Fase 3 (la regla y los umbrales de selección de η0) están en "Supuestos (1.3)".
 
 ### Regla de Oja implementada
 
@@ -599,7 +644,7 @@ Los cinco primeros y los cinco últimos de `runs/oja/ranking.csv` (participació
 - **Inicialización y orden:** pesos uniformes en [0, 1) y una permutación de los creadores por época, con la semilla 42; las otras dos semillas del barrido dan el mismo vector hasta el signo (`runs/oja_sweep/sign_ambiguity.png`).
 - **Banda de la norma:** "converge a 1" significa que la norma queda a menos de `norm_tol` = 0,01 de 1 (con η constante la norma se estabiliza un poco por encima: 1,0015). Es un umbral nuestro.
 - **Escala del índice:** el vector se normaliza a largo 1, así que el índice está en las mismas unidades que PC1 (desvíos z sumados con pesos de largo 1). Un índice de 6,77 no es una probabilidad ni un puntaje de 0 a 100.
-- **Regla de selección de η0 sin PC1:** los umbrales (banda de 0,01 y desplazamiento de ranking cero entre semillas) son del plan y el grupo los tiene que aceptar; con otros valores podría ganar 0,0001 o 0,001.
+- **Regla de selección de η0 sin PC1:** los umbrales (banda de 0,01 y desplazamiento de ranking cero entre semillas) son un criterio nuestro que el grupo aceptó en la revisión de la Fase 3; con otros valores podría ganar 0,0001 o 0,001.
 - **Signo:** coeficiente de mayor valor absoluto positivo, como en 1.1; frágil por la ventaja de 0,006 entre dos variables.
 - **Lectura del índice:** se apoya solo en los signos y magnitudes de los pesos y en las posiciones de los creadores, no afirma nada que esas tablas no muestren.
 - Los gráficos son copias versionadas en `docs/hallazgos/figuras/`; el título de cada imagen nombra la corrida de `runs/` que la produce. `python -m tp4.delivery verify` las compara byte a byte con una regeneración limpia y `python -m tp4.delivery figures` actualiza las copias.
@@ -824,7 +869,7 @@ Se comparan tres selecciones de tres creadores por cliente (`runs/campaigns/comp
 - **Proxies en vez de ventas:** no existen datos de ventas ni de conversión. "Mejor" significa más participación del tópico, más audiencia argentina, más alcance argentino estimado, más engagement y menor costo por mil.
 - **Una publicación por creador:** se asume una publicación patrocinada por creador al precio `price_usd`, que llega a `average_reach` cuentas, de las cuales `argentina_audience_pct` son argentinas (`est_arg_reach`).
 - **Costo agrupado:** USD por mil de alcance argentino = suma de precios dividida por la suma de alcances argentinos estimados, por mil (no el promedio de los cocientes de cada creador).
-- **Pesos y umbrales:** los pesos de cada cliente, el 40% mínimo de tópico (inclusivo) y el filtro de región 1 para perros son elecciones nuestras que el grupo todavía tiene que aceptar; las audiencias y los costos citados salen de los datos, pero cambiar un peso puede cambiar los elegidos.
+- **Pesos y umbrales:** los pesos de cada cliente, el 40% mínimo de tópico (inclusivo) y el filtro de región 1 para perros son elecciones nuestras que el grupo aceptó en la revisión de la Fase 3; las audiencias y los costos citados salen de los datos, pero cambiar un peso puede cambiar los elegidos.
 - **Numeración de regiones:** `regions: [1]` se refiere al mapa actual (`k` = 3); si el mapa cambia, hay que revisar el filtro a mano.
 - **Superposición permitida:** un creador puede ser elegido por dos clientes (se marca); hoy no pasa.
 - **Arte reconstruido:** `topic_art_pct` se reconstruye como 100 menos los otros tres tópicos, igual que en 1.1.
