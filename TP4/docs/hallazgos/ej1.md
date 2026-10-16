@@ -3,7 +3,7 @@
 Los números y gráficos de esta nota salen de corridas de `python -m tp4 run <config>` (la lista
 está al final, en "Cómo regenerar"). Los valores citados se copian de `runs/*/summary.json` y
 de los CSV de cada corrida, y `python -m tp4.findings` verifica que cada archivo referenciado
-exista y que los números clave aparezcan en el texto. Los decimales van con coma.
+exista y que los números clave aparezcan en el texto. Los decimales van con coma. Los gráficos son copias versionadas en `docs/hallazgos/figuras/`: el título de cada imagen nombra el artefacto de `runs/` que la produce y, por lo tanto, la config que la genera. `python -m tp4.delivery verify` regenera todo desde cero y compara números y gráficos byte a byte; `python -m tp4.delivery figures` actualiza las copias después de una regeneración.
 
 ## 1.1 Exploración y representación (EDA + PCA)
 
@@ -19,7 +19,7 @@ exista y que los números clave aparezcan en el texto. Los decimales van con com
 
 **Los outliers son sobre todo creadores especializados, no errores: se reportan y se conservan.**
 
-![Distribuciones con las cercas de Tukey](../../runs/eda/distributions.png)
+![Distribuciones con las cercas de Tukey](figuras/eda__distributions.png "runs/eda/distributions.png")
 
 - Con cercas de Tukey estrictas (k = 1,5) hay 33 celdas atípicas repartidas en 25 creadores
   (`runs/eda/columns.csv` y `runs/eda/outliers.csv`).
@@ -36,7 +36,7 @@ exista y que los números clave aparezcan en el texto. Los decimales van con com
 
 **Las escalas difieren en cinco órdenes de magnitud, por eso hay que estandarizar.**
 
-![Desvío estándar por variable (escala logarítmica)](../../runs/eda/scale_ranges.png)
+![Desvío estándar por variable (escala logarítmica)](figuras/eda__scale_ranges.png "runs/eda/scale_ranges.png")
 
 - Entre las 25 variables seleccionadas, `followers` tiene un desvío de 208330,8098 y
   `comments_per_1000` de 1,4051: una relación de unas 148 mil veces (`runs/eda/columns.csv`).
@@ -45,7 +45,7 @@ exista y que los números clave aparezcan en el texto. Los decimales van con com
 
 **Seis relaciones exactas o casi exactas explican qué columnas sobran.**
 
-![Mapa de calor de correlaciones](../../runs/eda/correlation_heatmap.png)
+![Mapa de calor de correlaciones](figuras/eda__correlation_heatmap.png "runs/eda/correlation_heatmap.png")
 
 Las identidades se comprueban contra los datos, no se suponen (`runs/eda/identities.csv`; las seis se cumplen):
 
@@ -72,7 +72,7 @@ Las identidades se comprueban contra los datos, no se suponen (`runs/eda/identit
 
 **Nos quedamos con 25 variables independientes: se descartan 6 columnas que son combinaciones exactas de otras.**
 
-![Correlaciones del conjunto seleccionado](../../runs/eda/correlation_heatmap_selected.png)
+![Correlaciones del conjunto seleccionado](figuras/eda__correlation_heatmap_selected.png "runs/eda/correlation_heatmap_selected.png")
 
 Las 6 descartadas y su motivo (`configs/feature_set.json`, copiado en `runs/eda/feature_set.json`):
 
@@ -97,7 +97,7 @@ Las 6 descartadas y su motivo (`configs/feature_set.json`, copiado en `runs/eda/
 
 **Una sola componente concentra más de la mitad de la varianza, pero con 2 no alcanza: hacen falta 6 para llegar al 80%.**
 
-![Scree plot y varianza acumulada](../../runs/pca/scree.png)
+![Scree plot y varianza acumulada](figuras/pca__scree.png "runs/pca/scree.png")
 
 PCA sobre las 25 variables estandarizadas (`runs/pca/summary.json`, `runs/pca/explained_variance.csv`):
 
@@ -117,7 +117,7 @@ PCA sobre las 25 variables estandarizadas (`runs/pca/summary.json`, `runs/pca/ex
 
 **PC1 ordena a los creadores desde "audiencia grande y video corto de tendencia" hasta "audiencia chica, epígrafes largos y contenido didáctico".**
 
-![Cargas de las primeras componentes](../../runs/pca/loadings_heatmap.png)
+![Cargas de las primeras componentes](figuras/pca__loadings_heatmap.png "runs/pca/loadings_heatmap.png")
 
 Los signos de una componente son arbitrarios: orientamos cada una para que su coeficiente de mayor
 valor absoluto sea positivo. Lo que importa es qué variables van juntas y cuáles en contra.
@@ -134,7 +134,7 @@ valor absoluto sea positivo. Lo que importa es qué variables van juntas y cuál
 
 **PC2 mezcla la audiencia argentina y el tópico: perros y audiencia local arriba, fútbol y contenido patrocinado abajo.**
 
-![Biplot PC1 vs PC2 coloreado por tópico dominante](../../runs/pca/biplot.png)
+![Biplot PC1 vs PC2 coloreado por tópico dominante](figuras/pca__biplot.png "runs/pca/biplot.png")
 
 - Mayores cargas en PC2 (`pc2_top5`): `argentina_audience_pct` +0,439, `sponsored_posts_pct` −0,374,
   `topic_football_pct` −0,372, `topic_dogs_pct` +0,352, `likes_per_1000` −0,209.
@@ -159,7 +159,7 @@ valor absoluto sea positivo. Lo que importa es qué variables van juntas y cuál
 
 **Sin estandarizar, PCA solo mide la escala: PC1 sube a 96,0% y lo domina `followers`.**
 
-![Scree plot sin estandarizar](../../runs/pca_scaling_sweep/standardize-false/scree.png)
+![Scree plot sin estandarizar](figuras/pca_scaling_sweep__standardize-false__scree.png "runs/pca_scaling_sweep/standardize-false/scree.png")
 
 Barrido paralelo (`runs/pca_scaling_sweep/sweep.csv`), misma semilla y mismos datos, solo cambia `params.standardize`:
 
@@ -176,7 +176,7 @@ Barrido paralelo (`runs/pca_scaling_sweep/sweep.csv`), misma semilla y mismos da
   (`runs/pca_scaling_sweep/standardize-false/summary.json`). El 99,8% con dos componentes es un artefacto de la escala, no estructura.
 - Biplot sin estandarizar (casi todas las flechas colapsan en el origen):
 
-![Biplot sin estandarizar](../../runs/pca_scaling_sweep/standardize-false/biplot.png)
+![Biplot sin estandarizar](figuras/pca_scaling_sweep__standardize-false__biplot.png "runs/pca_scaling_sweep/standardize-false/biplot.png")
 
 - **Conclusión: todo el análisis usa variables estandarizadas** (como PCA, Kohonen y Oja).
 
@@ -265,9 +265,9 @@ Hay decisiones que son criterio nuestro y el grupo todavía tiene que aceptar: e
 
 **La configuración no se eligió a mano: la elige una regla fija sobre dos barridos, y el mapa final es de 8x8 hexagonal con vecindad escalón.**
 
-![Métricas contra cada hiperparámetro en el barrido principal](../../runs/som_sweep/sweep_metrics.png)
+![Métricas contra cada hiperparámetro en el barrido principal](figuras/som_sweep__sweep_metrics.png "runs/som_sweep/sweep_metrics.png")
 
-![QE contra preservación de distancias, con el mapa elegido](../../runs/som_sweep/sweep_tradeoff.png)
+![QE contra preservación de distancias, con el mapa elegido](figuras/som_sweep__sweep_tradeoff.png "runs/som_sweep/sweep_tradeoff.png")
 
 Etapa 1, diseño (`runs/som_design_sweep/selection.csv`): topología x vecindad x inicialización sobre un mapa de referencia de 6x6, eta0 0,5, radio0 3 y 200 épocas.
 Quedó elegido `topology-hex__neighborhood-step__init-random`.
@@ -309,7 +309,7 @@ Etapa 2, hiperparámetros numéricos (`runs/som_sweep/`): 216 mapas = lado de la
 
 **El QE baja de 3,90 en la época 1 a 2,12 y se estabiliza en las últimas 100 épocas; el TE llega a 0 y se queda ahí.**
 
-![Curvas de entrenamiento](../../runs/som/training_curve.png)
+![Curvas de entrenamiento](figuras/som__training_curve.png "runs/som/training_curve.png")
 
 - Según `runs/som/history.csv`: QE 3,9000 en la época 1, 2,5060 en la 300, 2,1195 en la 400 y 2,1214 en la 500; entre las épocas 401 y 500 se mueve en un rango de 2,0901 a 2,1215.
   El TE vale 0 en cada una de las épocas 400 a 500 (llegó a 0,68 en la época 10, cuando el radio todavía era grande).
@@ -319,7 +319,7 @@ Etapa 2, hiperparámetros numéricos (`runs/som_sweep/`): 216 mapas = lado de la
 
 **Los 50 creadores ocupan la mitad de las 64 neuronas: 32 quedan vacías, ninguna neurona junta más de 3 creadores.**
 
-![Mapa de impactos](../../runs/som/hit_map.png)
+![Mapa de impactos](figuras/som__hit_map.png "runs/som/hit_map.png")
 
 - `runs/som/summary.json`: `n_empty_neurons` = 32 (`empty_neuron_frac` = 0,5), `max_hits` = 3, `mean_hits_occupied` = 1,5625 creadores por neurona ocupada.
 - Las neuronas con 3 creadores (`runs/som/neurons.csv`):
@@ -333,7 +333,7 @@ Etapa 2, hiperparámetros numéricos (`runs/som_sweep/`): 216 mapas = lado de la
 
 **Una distancia alta entre neuronas vecinas es una frontera: los creadores de un lado y del otro se parecen poco en las variables. Distancia baja es una zona de creadores intercambiables.**
 
-![Matriz U con las fronteras de las regiones](../../runs/som/u_matrix.png)
+![Matriz U con las fronteras de las regiones](figuras/som__u_matrix.png "runs/som/u_matrix.png")
 
 - Matriz U (distancia media a las vecinas, unidades z): media 2,0213 y máximo 3,2606 (`u_mean`, `u_max`). Las celdas más claras son la de `@tallerurbano` (3,2606) y la de
   `@mateconideas` con `@maquillajereal` (3,0531). Las más oscuras son las neuronas 48 y 50 (U 1,0777 y 1,0667) de la esquina inferior izquierda, donde se juntan `@brochasycolor` con `@reelargentino` y `@canchaaldia` con `@manosalaobra` y `@canvasycafe`: ahí los creadores son los más parecidos entre sí.
@@ -355,7 +355,7 @@ Etapa 2, hiperparámetros numéricos (`runs/som_sweep/`): 216 mapas = lado de la
 
 **Las variables de un mismo bloque casi colineal dibujan el mismo plano, y lo que ordena el mapa es el eje alcance y video contra engagement profundo.**
 
-![Planos de componentes en unidades originales](../../runs/som/component_planes.png)
+![Planos de componentes en unidades originales](figuras/som__component_planes.png "runs/som/component_planes.png")
 
 Los planos se leen en unidades originales (`runs/som/prototypes.csv`). Siguiendo el compromiso de 1.1, cada bloque casi colineal se lee como una sola variable:
 
@@ -372,9 +372,9 @@ Los planos se leen en unidades originales (`runs/som/prototypes.csv`). Siguiendo
 
 **El mapa se parte en 3 regiones contiguas: engagement profundo con audiencia chica (21 creadores), un grupo intermedio y mezclado (18) y alcance masivo con video y entretenimiento (11).**
 
-![Regiones contiguas del mapa](../../runs/som/region_map.png)
+![Regiones contiguas del mapa](figuras/som__region_map.png "runs/som/region_map.png")
 
-![Perfil de cada región (media z)](../../runs/som/region_profiles.png)
+![Perfil de cada región (media z)](figuras/som__region_profiles.png "runs/som/region_profiles.png")
 
 - **Cómo se definieron.** Las regiones son grupos de neuronas contiguas (aglomeración de Ward con restricción de contigüidad sobre los 64 prototipos). `k` lo elige una regla registrada
   (`runs/som/region_scan.csv`): entre los `k` de 2 a 8 cuyas regiones tienen al menos 3 creadores, el que maximiza la razón entre la distancia media a través de las fronteras y dentro de las regiones.
@@ -403,9 +403,9 @@ Los planos se leen en unidades originales (`runs/som/prototypes.csv`). Siguiendo
 
 **Las regiones coinciden con PC1 y casi nada con PC2: PC1 explica el 83% de la diferencia entre regiones, PC2 el 21%.**
 
-![Regiones del mapa sobre el plano PC1-PC2](../../runs/som/biplot_regions.png)
+![Regiones del mapa sobre el plano PC1-PC2](figuras/som__biplot_regions.png "runs/som/biplot_regions.png")
 
-![Planos de PC1 y PC2 en el mapa](../../runs/som/pc_planes.png)
+![Planos de PC1 y PC2 en el mapa](figuras/som__pc_planes.png "runs/som/pc_planes.png")
 
 - `pc1_region_eta2` = 0,8314 y `pc2_region_eta2` = 0,2066 (`runs/som/summary.json`): la fracción de la varianza de cada componente que explican las 3 regiones.
 - En el biplot de 1.1 (`runs/pca/biplot.png`) las regiones se ordenan de derecha a izquierda: región 1 con PC1 medio +3,61 (engagement profundo, epígrafes largos), región 2 en el centro con −1,31 y
@@ -420,7 +420,7 @@ Los planos se leen en unidades originales (`runs/som/prototypes.csv`). Siguiendo
 
 **El mapa de control sobre 6 componentes (83,0% de la varianza) da prácticamente las mismas regiones: la conclusión de 1.1 no cambia.**
 
-![Mapa sobre las variables y mapa de control sobre 6 componentes](../../runs/som_pca_control/control_region_maps.png)
+![Mapa sobre las variables y mapa de control sobre 6 componentes](figuras/som_pca_control__control_region_maps.png "runs/som_pca_control/control_region_maps.png")
 
 Cumplimos lo prometido en 1.1: un mapa entrenado sobre las 6 primeras componentes, con los mismos hiperparámetros y la misma semilla (`runs/som_pca_control/control_comparison.csv`). El mapa sobre las variables de esta corrida es exactamente el de `runs/som` (un test lo verifica).
 
@@ -450,7 +450,7 @@ Cumplimos lo prometido en 1.1: un mapa entrenado sobre las 6 primeras componente
 - **Escala del ARI:** ≥ 0,5 grupos en lo esencial iguales; 0,3 a 0,5 acuerdo parcial; < 0,3 grupos distintos (criterio del plan; por debajo de 0,3 se reabre la ponderación por bloques de 1.1).
 - **Planos de componentes** en unidades originales (`media + w * desvío`), y `topic_art_pct` reconstruido como 100 menos los otros tres tópicos.
 - **Perfil de una región:** media de los valores estandarizados de sus creadores, más la media en unidades originales para leerlo. **Matriz U:** distancia media a las neuronas vecinas; una pared hacia una neurona vacía mide aislamiento, no una frontera entre dos grupos.
-- Los gráficos se enlazan desde `runs/` (se regeneran, no se versionan). Copiarlos a `docs/` queda para la fase de documentación.
+- Los gráficos son copias versionadas en `docs/hallazgos/figuras/`; el título de cada imagen nombra la corrida de `runs/` que la produce. `python -m tp4.delivery verify` las compara byte a byte con una regeneración limpia y `python -m tp4.delivery figures` actualiza las copias.
 
 ### Cómo regenerar (1.2)
 
@@ -506,17 +506,17 @@ Todo lo de esta sección sale de `runs/oja/`, `runs/oja_sweep/` y `runs/campaign
 
 **La norma de `w` baja de 2,20 en la primera época y entra en la banda de 1 ± 0,01 en la época 9; al final vale 1,0015.**
 
-![Norma de w y cambio por época](../../runs/oja/convergence.png)
+![Norma de w y cambio por época](figuras/oja__convergence.png "runs/oja/convergence.png")
 
 - `runs/oja/summary.json`: `final_w_norm` = 1,0015 y `epochs_to_converge` = 9 (la primera época desde la que la norma queda dentro de `norm_tol` = 0,01). La norma de partida era 3,3422 (`initial_w_norm`).
 - Con η constante la regla no se clava en 1,0000 sino un poco arriba (1,0015) y sigue moviéndose un poco por época (`final_delta_w` = 0,004425): es el ruido del paso online, no una falta de convergencia.
 - La dirección también converge: el coseno con PC1 pasa de 0,47 en la época 1 a 0,99 en la 9 (`runs/oja/history.csv`, `runs/oja/cos_to_pc1.png`).
 
-![Coseno con PC1 por época](../../runs/oja/cos_to_pc1.png)
+![Coseno con PC1 por época](figuras/oja__cos_to_pc1.png "runs/oja/cos_to_pc1.png")
 
 **La tasa no se eligió a ojo: un barrido de 9 valores de η0 con 3 semillas (27 corridas) y una regla registrada eligió η0 = 0,0005, sin mirar PC1.**
 
-![Norma de w por época para cada η0 y cada semilla](../../runs/oja_sweep/sweep_convergence.png)
+![Norma de w por época para cada η0 y cada semilla](figuras/oja_sweep__sweep_convergence.png "runs/oja_sweep/sweep_convergence.png")
 
 Tabla de `runs/oja_sweep/selection.csv` (por η0, el peor caso entre las 3 semillas):
 
@@ -543,17 +543,17 @@ Tabla de `runs/oja_sweep/selection.csv` (por η0, el peor caso entre las 3 semil
 
 **El vector de Oja y el primer autovector de la PCA son casi el mismo: coseno de 0,999993 entre los dos y correlación de 0,999999 entre los puntajes de los 50 creadores.**
 
-![Peso de Oja contra carga de PC1, variable por variable](../../runs/oja/weights_vs_pc1.png)
+![Peso de Oja contra carga de PC1, variable por variable](figuras/oja__weights_vs_pc1.png "runs/oja/weights_vs_pc1.png")
 
 - `cosine_to_pc1` = 0,999993 y `pearson_scores_pc1` = 0,999999 (`runs/oja/summary.json`). La diferencia más grande entre un peso de Oja y la carga de PC1 es de 0,003172 (`max_abs_weight_diff`, en `monthly_posts`: −0,0366 de Oja contra −0,0397 de PC1; `runs/oja/weights_vs_pc1.csv`). En las otras 24 variables la diferencia es menor a 0,0007.
 
-![Índice de Oja contra puntaje de PC1 por creador](../../runs/oja/scores_vs_pc1.png)
+![Índice de Oja contra puntaje de PC1 por creador](figuras/oja__scores_vs_pc1.png "runs/oja/scores_vs_pc1.png")
 
 - En el gráfico de dispersión los 50 creadores caen sobre la diagonal (`runs/oja/ranking.csv`: `oja_index` y `pc1_score`; por ejemplo `@mundoanimal.ar` 6,7680 contra 6,7728 y `@futbolsinvueltas` −6,4065 contra −6,4034). Ordenar por el índice o por el puntaje de PC1 da exactamente el mismo ranking de los 50 creadores.
 - **Es lo esperado, no una coincidencia:** la regla de Oja converge al primer autovector de la matriz de covarianza, y PC1 es justamente ese autovector. Lo que cambia es el camino: Oja llega online, un creador por vez, sin descomponer ninguna matriz.
 - **El signo es frágil y por eso se orienta.** La red encuentra el eje, no su sentido: con η0 = 0,0005 las semillas 42 y 7 convergen al opuesto de PC1 (`seeds_flipped`) y la 11 al mismo signo (`seeds_not_flipped`). El `oja_top_feature` de la corrida es `average_caption_words`, igual que `pc1_top_feature`, pero la regla de orientación (coeficiente de mayor |valor| positivo, como en 1.1) se apoya en una ventaja mínima: en PC1, `average_caption_words` (+0,2573) le gana a `average_impressions` (−0,2513) por solo 0,006. Con un η0 de 0,002 o más, la orientación puede quedar al revés en alguna semilla y el índice completo se da vuelta (es lo que muestra el desplazamiento de ranking de 49 en la tabla).
 
-![Pesos antes y después de orientar, por semilla](../../runs/oja_sweep/sign_ambiguity.png)
+![Pesos antes y después de orientar, por semilla](figuras/oja_sweep__sign_ambiguity.png "runs/oja_sweep/sign_ambiguity.png")
 
 ### Qué mide el índice
 
@@ -602,7 +602,7 @@ Los cinco primeros y los cinco últimos de `runs/oja/ranking.csv` (participació
 - **Regla de selección de η0 sin PC1:** los umbrales (banda de 0,01 y desplazamiento de ranking cero entre semillas) son del plan y el grupo los tiene que aceptar; con otros valores podría ganar 0,0001 o 0,001.
 - **Signo:** coeficiente de mayor valor absoluto positivo, como en 1.1; frágil por la ventaja de 0,006 entre dos variables.
 - **Lectura del índice:** se apoya solo en los signos y magnitudes de los pesos y en las posiciones de los creadores, no afirma nada que esas tablas no muestren.
-- Los gráficos se enlazan desde `runs/` (se regeneran, no se versionan). Copiarlos a `docs/` queda para la fase de documentación.
+- Los gráficos son copias versionadas en `docs/hallazgos/figuras/`; el título de cada imagen nombra la corrida de `runs/` que la produce. `python -m tp4.delivery verify` las compara byte a byte con una regeneración limpia y `python -m tp4.delivery figures` actualiza las copias.
 
 ### Cómo regenerar (1.3)
 
@@ -656,11 +656,11 @@ El enunciado pide interpretar los resultados "a lo largo de todo el trabajo" y, 
 
 **Una regla transparente por cliente, no un índice único: un filtro de tópico, opcionalmente una región del mapa, y una suma ponderada de puntajes z, y para cada elegido se muestran sus tres evidencias (PCA, mapa y Oja).**
 
-![Biplot de PC1 y PC2](../../runs/pca/biplot.png)
+![Biplot de PC1 y PC2](figuras/pca__biplot.png "runs/pca/biplot.png")
 
-![Regiones del mapa con los creadores](../../runs/som/region_map.png)
+![Regiones del mapa con los creadores](figuras/som__region_map.png "runs/som/region_map.png")
 
-![Planos de componentes](../../runs/som/component_planes.png)
+![Planos de componentes](figuras/som__component_planes.png "runs/som/component_planes.png")
 
 - **Por qué por cliente.** La conclusión de 1.3 es que el índice de Oja es el eje de tamaño y estilo (el mismo PC1 de 1.1) y no sabe de tópico ni de audiencia argentina, y que el primero del ranking no fue elegido por ningún cliente. Cada cliente tiene un objetivo distinto, así que la regla lo escribe explícito.
 - **Forma de la regla** (`configs/campaigns.json`, un cliente por entrada): (1) candidatos: los creadores cuya columna de tópico (`topic_*_pct`, nunca el nombre de la cuenta: `@crearenreels` y `@makeupconsejos` engañan) llega a al menos 40%; (2) opcional, una región del mapa de Kohonen (`regions`); (3) puntaje = suma de `peso · z(columna)` sobre las columnas elegidas, con z calculado sobre los 50 creadores (desvío poblacional), de modo que el puntaje no depende del filtro; (4) los tres mejores; los empates se resuelven en el orden del catálogo.
@@ -764,7 +764,7 @@ El enunciado pide interpretar los resultados "a lo largo de todo el trabajo" y, 
 
 **La regla le gana a los seguidores en audiencia argentina en los cuatro clientes y en costo por mil en tres (fútbol, maquillaje y arte), pero llega a menos gente en total en todos, y para los refugios el costo por mil de los más seguidos del tópico es más bajo.**
 
-![Regla contra seguidores, por cliente](../../runs/campaigns/comparison.png)
+![Regla contra seguidores, por cliente](figuras/campaigns__comparison.png "runs/campaigns/comparison.png")
 
 Se comparan tres selecciones de tres creadores por cliente (`runs/campaigns/comparison.csv`; participación media del tópico en %, audiencia argentina media en %, alcance argentino estimado total, engagement medio por mil, precio total en USD y USD por mil de alcance argentino):
 
@@ -829,7 +829,7 @@ Se comparan tres selecciones de tres creadores por cliente (`runs/campaigns/comp
 - **Superposición permitida:** un creador puede ser elegido por dos clientes (se marca); hoy no pasa.
 - **Arte reconstruido:** `topic_art_pct` se reconstruye como 100 menos los otros tres tópicos, igual que en 1.1.
 - **Alcance de la interpretación:** las lecturas de región y de celda salen de los planos de componentes y de los perfiles de 1.2; no afirmamos nada que esas figuras y tablas no muestren. Una selección con presupuesto, el reentrenamiento incremental y un refresco mensual automático no están construidos: son extensiones posibles.
-- Los gráficos se enlazan desde `runs/` (se regeneran, no se versionan). Copiarlos a `docs/` queda para la fase de documentación.
+- Los gráficos son copias versionadas en `docs/hallazgos/figuras/`; el título de cada imagen nombra la corrida de `runs/` que la produce. `python -m tp4.delivery verify` las compara byte a byte con una regeneración limpia y `python -m tp4.delivery figures` actualiza las copias.
 
 ### Cómo regenerar (1.4)
 

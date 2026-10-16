@@ -5,7 +5,7 @@ están al final de cada sección, en "Cómo regenerar"). Los valores citados se 
 `runs/hopfield_letters/summary.json`, `runs/hopfield_qr/summary.json` y de los CSV de cada corrida, y
 `python -m tp4.findings` verifica que cada archivo referenciado exista y que los números clave aparezcan
 en el texto. Los decimales van con coma. La red de Hopfield está escrita a mano en numpy
-(`tp4/models/hopfield.py`), sin ninguna librería de redes neuronales.
+(`tp4/models/hopfield.py`), sin ninguna librería de redes neuronales. Los gráficos son copias versionadas en `docs/hallazgos/figuras/`: el título de cada imagen nombra el artefacto de `runs/` que la produce y, por lo tanto, la config que la genera. `python -m tp4.delivery verify` regenera todo desde cero y compara números y gráficos byte a byte; `python -m tp4.delivery figures` actualiza las copias después de una regeneración.
 
 El enunciado recomienda probar primero el caso simple antes de pasar a las imágenes, así que la sección 2.2
 (letras de 5×5) va **antes** que la 2.1 (códigos QR de 37×37). Además el argumento de los QR se apoya en lo que
@@ -42,9 +42,9 @@ Hay decisiones que son criterio nuestro y el grupo todavía tiene que aceptar: e
 
 **De 26 letras dibujadas a mano, las 4 más ortogonales son G, R, T y V: el producto interno más grande entre dos de ellas es 1, contra 21 en el peor conjunto.**
 
-![Alfabeto de 5×5 con el conjunto elegido y el peor](../../runs/hopfield_letters/alphabet.png)
+![Alfabeto de 5×5 con el conjunto elegido y el peor](figuras/hopfield_letters__alphabet.png "runs/hopfield_letters/alphabet.png")
 
-![Matriz de productos internos entre las 26 letras](../../runs/hopfield_letters/dot_products.png)
+![Matriz de productos internos entre las 26 letras](figuras/hopfield_letters__dot_products.png "runs/hopfield_letters/dot_products.png")
 
 - La regla (`selection_rule` en `runs/hopfield_letters/summary.json`, y se fijó antes de mirar los resultados): *menor máximo |producto interno|
   fuera de la diagonal, luego menor promedio |producto interno|, luego orden alfabético.* Se evalúan los **14950** subconjuntos de 4 letras
@@ -72,7 +72,7 @@ Hay decisiones que son criterio nuestro y el grupo todavía tiene que aceptar: e
 
 **Con N = 25 la cota teórica de la red de Hebb es de 3,45 a 3,75 patrones; guardamos 4, por encima de las dos cotas, y funciona solo porque estas 4 letras son casi ortogonales.**
 
-![Capacidad empírica: fracción de letras estables y de conjuntos con todas estables](../../runs/hopfield_letters/capacity.png)
+![Capacidad empírica: fracción de letras estables y de conjuntos con todas estables](figuras/hopfield_letters__capacity.png "runs/hopfield_letters/capacity.png")
 
 - Cotas del curso: `capacity_0138` = 3,45 (0,138·N) y `capacity_015` = 3,75 (0,15·N). `n_store` = 4 queda por encima de las dos.
 - Curva empírica (`runs/hopfield_letters/capacity.csv`): para cada p se toman 200 subconjuntos aleatorios de p letras de nuestro alfabeto y
@@ -101,9 +101,9 @@ Hay decisiones que son criterio nuestro y el grupo todavía tiene que aceptar: e
 
 **Las 4 letras se recuperan sin errores hasta 3 píxeles invertidos de 25 (nivel 0,12) y la recuperación cae a menos de la mitad desde 9 píxeles; el conjunto peor nunca pasa de 0,25.**
 
-![Recuperación frente al nivel de ruido, conjunto elegido y peor, asincrónico y sincrónico](../../runs/hopfield_letters/recovery_vs_noise.png)
+![Recuperación frente al nivel de ruido, conjunto elegido y peor, asincrónico y sincrónico](figuras/hopfield_letters__recovery_vs_noise.png "runs/hopfield_letters/recovery_vs_noise.png")
 
-![Ejemplos de recuperación a nivel 0,2](../../runs/hopfield_letters/recall_examples.png)
+![Ejemplos de recuperación a nivel 0,2](figuras/hopfield_letters__recall_examples.png "runs/hopfield_letters/recall_examples.png")
 
 Conjunto G, R, T, V, 50 consultas por letra y nivel (200 por celda), cada una con ese número de píxeles invertidos al azar
 (`runs/hopfield_letters/recall_rates.csv`; "recuperada" = el estado final es exactamente la letra de origen):
@@ -137,7 +137,7 @@ Conjunto G, R, T, V, 50 consultas por letra y nivel (200 por celda), cada una co
 
 **Una G con 10 de 25 píxeles invertidos termina en un estado estable que no es ninguna letra guardada ni su negativo: una mezcla de tres letras.**
 
-![Consulta ruidosa, estado espúreo y las 4 letras guardadas](../../runs/hopfield_letters/spurious.png)
+![Consulta ruidosa, estado espúreo y las 4 letras guardadas](figuras/hopfield_letters__spurious.png "runs/hopfield_letters/spurious.png")
 
 **Estado espúreo:** partiendo de una G con `spurious_n_flips` = 10 píxeles invertidos (nivel 0,4, "muy ruidoso"), la red converge a un estado cuya letra guardada más cercana es la G (`spurious_nearest_letter` = G; la V empata con la misma superposición y el desempate elige la primera) pero a distancia de Hamming `spurious_hamming_to_nearest` = 6 de ella, con superposiciones con (G, R, T, V) de 0,52; -0,2; -0,44 y 0,52 (`spurious_overlaps`) y energía `spurious_energy` = -7,68, **más alta** que la de cada letra guardada (-10,56 en las cuatro, `stored_energies`).
 
@@ -151,7 +151,7 @@ Conjunto G, R, T, V, 50 consultas por letra y nivel (200 por celda), cada una co
 - **Energía:** el estado espúreo y las letras tienen energías distintas, y la curva de energía por actualización individual no sube nunca
   (`energy_never_increased` = true):
 
-![Energía H por actualización individual de neurona](../../runs/hopfield_letters/energy.png)
+![Energía H por actualización individual de neurona](figuras/hopfield_letters__energy.png "runs/hopfield_letters/energy.png")
 
 ### Supuestos (2.2)
 
@@ -164,7 +164,7 @@ Conjunto G, R, T, V, 50 consultas por letra y nivel (200 por celda), cada una co
 - **Iteraciones:** se cuentan solo los barridos que cambiaron el estado; el último barrido sin cambios es el chequeo de convergencia y no suma.
 - **Capacidad empírica:** 200 subconjuntos aleatorios por p (hasta p = 10) y la misma semilla; depende del alfabeto.
 - **Solo numpy:** ni la red ni el análisis usan librerías de redes neuronales; la regla de Hebb es la del curso.
-- Los gráficos se enlazan desde `runs/` (se regeneran, no se versionan). Copiarlos a `docs/` queda para la fase de documentación.
+- Los gráficos son copias versionadas en `docs/hallazgos/figuras/`; el título de cada imagen nombra la corrida de `runs/` que la produce. `python -m tp4.delivery verify` las compara byte a byte con una regeneración limpia y `python -m tp4.delivery figures` actualiza las copias.
 
 ### Cómo regenerar (2.2)
 
@@ -210,7 +210,7 @@ Los resultados de Hebb van primero y no se esconden detrás de los de la pseudoi
 
 **Cada menú es un QR de versión 5 de 37×37 módulos, es decir, un vector de N = 1369 neuronas con negro = +1 y blanco = −1, sin zona de silencio.**
 
-![Los cinco códigos como matrices de ±1](../../runs/hopfield_qr/patterns.png)
+![Los cinco códigos como matrices de ±1](figuras/hopfield_qr__patterns.png "runs/hopfield_qr/patterns.png")
 
 - `n_neurons` = 1369 (37 × 37). La fracción de módulos negros de cada código va de 0,5142 a 0,5259 (`black_fractions` en `runs/hopfield_qr/summary.json`).
 - Control: cada matriz se vuelve a dibujar como imagen y es **idéntica píxel por píxel** al PNG original (`roundtrip_identical` = true), y el lector de QR decodifica los 5 originales.
@@ -220,9 +220,9 @@ Los resultados de Hebb van primero y no se esconden detrás de los de la pseudoi
 
 **Los cinco códigos comparten 955 de 1369 módulos (0,6976) y su superposición media es de 0,6701: son todo menos ortogonales.**
 
-![Matriz de superposiciones entre los cinco códigos](../../runs/hopfield_qr/overlaps.png)
+![Matriz de superposiciones entre los cinco códigos](figuras/hopfield_qr__overlaps.png "runs/hopfield_qr/overlaps.png")
 
-![Módulos idénticos en los cinco códigos](../../runs/hopfield_qr/shared_modules.png)
+![Módulos idénticos en los cinco códigos](figuras/hopfield_qr__shared_modules.png "runs/hopfield_qr/shared_modules.png")
 
 - Superposición `m = (1/N)·ξ·ξ'` entre pares distintos (`runs/hopfield_qr/overlaps.csv`): media `mean_offdiag_overlap` = 0,6701 y máxima `max_offdiag_overlap` = 0,8598, entre `max_overlap_pair` = food-wine.
   Con m = 0,6701 dos códigos coinciden en alrededor del 83,5% de los módulos (la fracción de acuerdo es (1 + m) / 2). Para comparar: las letras elegidas en 2.2 tenían un producto interno de ±1 sobre 25, es decir una superposición de ±0,04.
@@ -234,7 +234,7 @@ Los resultados de Hebb van primero y no se esconden detrás de los de la pseudoi
 
 **Con la regla de Hebb del curso, ninguno de los cinco códigos es un punto fijo y ninguna consulta se recupera: todas terminan en el mismo "QR promedio".**
 
-![Estado al que llegan todas las consultas con Hebb y módulos inestables de cada código](../../runs/hopfield_qr/hebb_attractor.png)
+![Estado al que llegan todas las consultas con Hebb y módulos inestables de cada código](figuras/hopfield_qr__hebb_attractor.png "runs/hopfield_qr/hebb_attractor.png")
 
 - **Puntos fijos:** `hebb_n_fixed_points` = 0 de 5. La cantidad de módulos inestables (módulos que la red cambiaría estando en el código exacto, `hebb_unstable_bits`) es 71, 91, 225, 225 y 103 para food, wine, beverages, dessert y specials
   (`runs/hopfield_qr/stored.csv`), con márgenes de estabilidad negativos de −1,5310 a −1,8232. En la figura, los módulos inestables caen en la zona de datos y no sobre los patrones de posición.
@@ -260,9 +260,9 @@ Los resultados de Hebb van primero y no se esconden detrás de los de la pseudoi
 
 **La pseudoinversa recupera el 100% de las consultas hasta invertir el 35% de los módulos, y todas las esquinas rotas y manchas hasta tamaños grandes; Hebb no recupera ninguna.**
 
-![Recuperación exacta frente al tipo de deterioro](../../runs/hopfield_qr/recovery_vs_noise.png)
+![Recuperación exacta frente al tipo de deterioro](figuras/hopfield_qr__recovery_vs_noise.png "runs/hopfield_qr/recovery_vs_noise.png")
 
-![Ejemplos de consultas dañadas y su estado final](../../runs/hopfield_qr/damage_examples.png)
+![Ejemplos de consultas dañadas y su estado final](figuras/hopfield_qr__damage_examples.png "runs/hopfield_qr/damage_examples.png")
 
 Ruido aleatorio (módulos invertidos al azar), 100 consultas por nivel y regla (20 por código); "recuperada" = el estado final es exactamente el código de origen (`runs/hopfield_qr/recovery_rates.csv`):
 
@@ -309,9 +309,9 @@ Esquina rota (un triángulo blanco en una de las cuatro esquinas; 20 consultas p
 
 **Con la pseudoinversa casi todas las consultas convergen en un barrido (1,0471 en promedio); con Hebb en 1,2828, pero hacia el estado equivocado; y la energía no sube en ningún paso.**
 
-![Iteraciones hasta converger frente al ruido](../../runs/hopfield_qr/iterations.png)
+![Iteraciones hasta converger frente al ruido](figuras/hopfield_qr__iterations.png "runs/hopfield_qr/iterations.png")
 
-![Energía después de cada actualización de neurona](../../runs/hopfield_qr/energy_per_step.png)
+![Energía después de cada actualización de neurona](figuras/hopfield_qr__energy_per_step.png "runs/hopfield_qr/energy_per_step.png")
 
 - **Iteraciones** (barridos que cambian el estado): `hebb_mean_iterations` = 1,2828 y `pseudoinverse_mean_iterations` = 1,0471; el máximo de las dos reglas es `max_iterations` = 4 (pseudoinversa, nivel 0,5, la zona sin información). Con ruido 0,0 la pseudoinversa no necesita ninguna iteración (el código ya es un punto fijo)
   y Hebb necesita una, porque sale del código. Hebb nunca pasa de 2 barridos; la pseudoinversa sube a 2 desde el nivel 0,35, a 3 desde 0,4 y a 4 en 0,5.
@@ -324,7 +324,7 @@ Esquina rota (un triángulo blanco en una de las cuatro esquinas; 20 consultas p
 
 **Después de recuperar un código hay que leerlo: el lector decodifica los 5 originales y, tras la pseudoinversa, un código recuperado se lee igual de bien que se recupera; tras Hebb no lee ninguno.**
 
-![Fracción que el lector decodifica como el menú original, antes y después de la red](../../runs/hopfield_qr/decode_vs_noise.png)
+![Fracción que el lector decodifica como el menú original, antes y después de la red](figuras/hopfield_qr__decode_vs_noise.png "runs/hopfield_qr/decode_vs_noise.png")
 
 - **Decodificador:** zxing-cpp 3.1.1 (`decoder_name`, `decoder_version`; opcional, ver "Cómo regenerar (2.1)"), con cada matriz dibujada a escala 8 y zona de silencio de 4 módulos. `n_originals_decoded` = 5, y cada uno se lee como su URL (`reference_texts`):
 
@@ -376,7 +376,7 @@ Acá el deterioro está simulado sobre la matriz (módulos invertidos, un trián
 - **Criterio de decodificación:** un código cuenta como decodificado solo si el texto leído es exactamente el del código de origen; leer otro menú no cuenta, y se informa aparte. La decodificación es opcional y se hace con zxing-cpp.
 - **Iteraciones:** se cuentan solo los barridos que cambiaron el estado (ver 2.2).
 - **Solo numpy** para la red y los análisis; la única dependencia extra es el decodificador opcional.
-- Los gráficos se enlazan desde `runs/` (se regeneran, no se versionan).
+- Los gráficos son copias versionadas en `docs/hallazgos/figuras/`; el título de cada imagen nombra la corrida de `runs/` que la produce. `python -m tp4.delivery verify` las compara byte a byte con una regeneración limpia y `python -m tp4.delivery figures` actualiza las copias.
 
 ### Cómo regenerar (2.1)
 

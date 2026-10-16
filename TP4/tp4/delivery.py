@@ -2,6 +2,7 @@
 
     python -m tp4.delivery regenerate [--out-root DIR]   # re-run every config of run_order, then the SOM selection check
     python -m tp4.delivery check [--root DIR]            # check docs/hallazgos notes against DIR/runs (default: TP4/runs)
+    python -m tp4.delivery figures [--root DIR]          # copy the figures the notes embed from DIR/runs into docs/hallazgos/figuras/
     python -m tp4.delivery verify                        # regenerate into a temporary directory, check against it, remove it
 
 Both read docs/hallazgos/evidencia.json (override with `--manifest PATH`): the run order of the
@@ -44,6 +45,14 @@ _SECTION_HEADING_RE = re.compile(r"^#{1,6} \S")
 _HEADING_LINE_RE = re.compile(r"^#{1,6} ")
 _BACKTICK_SPAN_RE = re.compile(r"`([^`\n]+)`")
 _WIN_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+FIGURES_DIR = "docs/hallazgos/figuras"
+_RUN_LINK_PREFIX = "../../runs/"
+_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]*)\)")
+_LINK_INNER_RE = re.compile(r'(\S+)(?:\s+"([^"]*)")?')
+_COPY_TARGET_RE = re.compile(r"^figuras/([A-Za-z0-9_.-]+\.png)$")
+_FIGURE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_FIGURE_MENTION_RE = re.compile(r"figuras/([^\s)\]\"'<>]+\.png)")
 
 
 class ManifestError(Tp4Error):
@@ -339,6 +348,205 @@ def _precondition_problems(note: Note, root: Path) -> int:
     return problems
 
 
+# --------------------------------------------------------------------------- figures
+
+
+def _source_parts(title: str | None) -> list[str] | None:
+    """Segments of a `runs/<path>.png` source, or None when it is not a plain relative PNG path."""
+    if not title or not title.startswith("runs/") or not title.endswith(".png"):
+        return None
+    parts = title.split("/")
+    if len(parts) < 2 or parts[-1] == ".png":
+        return None
+    for part in parts:
+        if part in (".", "..") or not _FIGURE_SEGMENT_RE.match(part):
+            return None
+    return parts
+
+
+def flatten(source: str) -> str:
+    """Copy name of a run artifact: drop the leading `runs/`, join the remaining segments with `__`."""
+    return "__".join(source.split("/")[1:])
+
+
+def _scan_image_links(text: str) -> list[tuple[int, re.Match[str]]]:
+    """(line index, match) of every image link outside fenced blocks."""
+    found: list[tuple[int, re.Match[str]]] = []
+    in_fence = False
+    for index, line in enumerate(text.splitlines(keepends=True)):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence:
+            found.extend((index, match) for match in _IMAGE_RE.finditer(line))
+    return found
+
+
+def _link_parts(match: re.Match[str]) -> tuple[str, str | None] | None:
+    """(target, title) of an image link, or None when its parentheses do not parse."""
+    inner = _LINK_INNER_RE.fullmatch(match.group(2).strip())
+    if inner is None:
+        return None
+    return inner.group(1), inner.group(2)
+
+
+def _declared_copy(match: re.Match[str]) -> tuple[str, str] | None:
+    """(copy name, source title) when the link is in the copy form, else None."""
+    parts = _link_parts(match)
+    if parts is None:
+        return None
+    target, title = parts
+    target_match = _COPY_TARGET_RE.match(target)
+    if target_match is None or _source_parts(title) is None:
+        return None
+    name = target_match.group(1)
+    if name != flatten(title or ""):
+        return None
+    return name, title or ""
+
+
+def _rewrite_run_links(text: str) -> tuple[str, int]:
+    """Turn `![a](../../runs/x/y.png)` links into the copy form; returns (new text, links rewritten)."""
+    count = 0
+    in_fence = False
+    out: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal count
+        parts = _link_parts(match)
+        if parts is None or not parts[0].startswith(_RUN_LINK_PREFIX) or not parts[0].endswith(".png"):
+            return match.group(0)
+        source = parts[0][len("../../") :]
+        if _source_parts(source) is None:
+            return match.group(0)
+        count += 1
+        return f'![{match.group(1)}](figuras/{flatten(source)} "{source}")'
+
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+        elif in_fence:
+            out.append(line)
+        else:
+            out.append(_IMAGE_RE.sub(replace, line))
+    return "".join(out), count
+
+
+def _png_names(figures_dir: Path) -> list[str]:
+    if not figures_dir.is_dir():
+        return []
+    return sorted(p.name for p in figures_dir.iterdir() if p.is_file() and p.name.endswith(".png"))
+
+
+@dataclass
+class _Declared:
+    copies: dict[str, str]  # copy name -> source title
+    bad: list[tuple[str, str]]  # (link text, note md)
+    mentions: list[tuple[str, str]]  # (copy name mentioned, note md)
+
+
+def _collect_figures(manifest: Manifest, texts: dict[str, str]) -> _Declared:
+    declared = _Declared(copies={}, bad=[], mentions=[])
+    for note in manifest.notes:
+        text = texts[note.md]
+        for _, match in _scan_image_links(text):
+            copy = _declared_copy(match)
+            if copy is None or declared.copies.get(copy[0], copy[1]) != copy[1]:
+                declared.bad.append((match.group(0), note.md))
+                continue
+            declared.copies[copy[0]] = copy[1]
+        for line in _outside_fences(text):
+            for name in _FIGURE_MENTION_RE.findall(line):
+                declared.mentions.append((name, note.md))
+    return declared
+
+
+def sync_figures(manifest: Manifest, root: Path | str, project_root: Path = PROJECT_ROOT) -> int:
+    """Rewrite run links to the copy form, copy each declared source into docs/hallazgos/figuras/.
+
+    Sources are read only under `root`; writes happen only directly inside FIGURES_DIR (and in
+    the notes' image links); only *.png files of FIGURES_DIR that no note declares are deleted.
+    """
+    root = Path(root)
+    rewritten = 0
+    texts: dict[str, str] = {}
+    for note in manifest.notes:
+        note_path = project_root / note.md
+        with note_path.open(encoding="utf-8", newline="") as handle:
+            text = handle.read()
+        new_text, count = _rewrite_run_links(text)
+        if new_text != text:
+            with note_path.open("w", encoding="utf-8", newline="") as handle:
+                handle.write(new_text)
+        rewritten += count
+        texts[note.md] = new_text
+
+    declared = _collect_figures(manifest, texts)
+    problems = 0
+    for link, md in declared.bad:
+        print(f"BAD figure link: {link} ({md})")
+        problems += 1
+
+    figures_dir = project_root / FIGURES_DIR
+    copied = 0
+    for name, title in sorted(declared.copies.items()):
+        source = root / title
+        if not source.is_file():
+            print(f"MISSING figure source: {title}")
+            problems += 1
+            continue
+        target = figures_dir / name
+        data = source.read_bytes()
+        if target.is_file() and target.read_bytes() == data:
+            continue
+        figures_dir.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        copied += 1
+
+    removed = 0
+    if not declared.bad:  # an unparsable link makes the declared set unreliable: delete nothing
+        for name in _png_names(figures_dir):
+            if name not in declared.copies:
+                (figures_dir / name).unlink()
+                removed += 1
+    print(f"figures: {len(declared.copies)} declared, {copied} copied, {rewritten} links rewritten, {removed} removed")
+    return 1 if problems else 0
+
+
+def _figure_problems(manifest: Manifest, root: Path, project_root: Path, texts: dict[str, str]) -> tuple[int, int]:
+    """Print one line per figure problem; returns (problems, declared copies)."""
+    declared = _collect_figures(manifest, texts)
+    problems = 0
+    for link, md in declared.bad:
+        print(f"BAD figure link: {link} ({md})")
+        problems += 1
+    figures_dir = project_root / FIGURES_DIR
+    for name, title in sorted(declared.copies.items()):
+        copy = figures_dir / name
+        source = root / title
+        if not source.is_file():
+            print(f"MISSING figure source: {title}")
+            problems += 1
+        if not copy.is_file():
+            print(f"MISSING figure copy: {name}")
+            problems += 1
+        elif source.is_file() and copy.read_bytes() != source.read_bytes():
+            print(f"STALE figure: {name} differs from {title}")
+            problems += 1
+    for name in _png_names(figures_dir):
+        if name not in declared.copies:
+            print(f"ORPHAN figure copy: {name}")
+            problems += 1
+    for name, md in declared.mentions:
+        if name not in declared.copies:
+            print(f"UNKNOWN figure reference: {name} ({md})")
+            problems += 1
+    return problems, len(declared.copies)
+
+
+# --------------------------------------------------------------------------- check
+
+
 def check(manifest: Manifest, root: Path | str, project_root: Path = PROJECT_ROOT) -> int:
     """Check every note against `root`/runs; prints one line per problem, returns 0 or 1."""
     root = Path(root)
@@ -354,8 +562,10 @@ def check(manifest: Manifest, root: Path | str, project_root: Path = PROJECT_ROO
                 problems += 1
 
     experiments = set(manifest.experiments.values())
+    texts: dict[str, str] = {}
     for note in manifest.notes:
         text = (project_root / note.md).read_text(encoding="utf-8")
+        texts[note.md] = text
         named: list[tuple[str, str]] = [(a, note.md) for a in findings.referenced_artifacts(text)]
         named += [(c.rpartition(":")[0], f"{note.md} cite") for c in note.cites]
         named += [(r.cite.rpartition(":")[0], f"{note.md} requires") for r in note.requires]
@@ -370,6 +580,9 @@ def check(manifest: Manifest, root: Path | str, project_root: Path = PROJECT_ROO
             print(f"BROKEN section reference: {span} ({note.md})")
             problems += 1
         problems += _precondition_problems(note, root)
+
+    figure_problems, n_figures = _figure_problems(manifest, root, project_root, texts)
+    problems += figure_problems
 
     for note in manifest.notes:
         print(f"== {note.md}")
@@ -391,7 +604,7 @@ def check(manifest: Manifest, root: Path | str, project_root: Path = PROJECT_ROO
         return 1
     print(
         f"delivery ok: {len(manifest.notes)} notes, {len(manifest.run_order)} configs, "
-        f"{manifest.total_cites} cites"
+        f"{manifest.total_cites} cites, {n_figures} figures"
     )
     return 0
 
@@ -428,8 +641,10 @@ def build_parser() -> argparse.ArgumentParser:
     regen.add_argument("--out-root", type=Path, default=DEFAULT_RUNS_ROOT, help="receives <experiment>/ dirs (default: TP4/runs)")
     chk = sub.add_parser("check", help="check the notes against DIR/runs")
     chk.add_argument("--root", type=Path, default=PROJECT_ROOT, help="runs are read from DIR/runs (default: TP4/)")
+    fig = sub.add_parser("figures", help="rewrite run links of the notes and copy each declared figure into docs/hallazgos/figuras/")
+    fig.add_argument("--root", type=Path, default=PROJECT_ROOT, help="figures are read from DIR/runs (default: TP4/)")
     ver = sub.add_parser("verify", help="clean regeneration into a temporary directory, then check against it")
-    for command in (regen, chk, ver):
+    for command in (regen, chk, fig, ver):
         command.add_argument("--manifest", type=Path, default=MANIFEST_PATH, help="delivery manifest (default: docs/hallazgos/evidencia.json)")
         command.add_argument("--project-root", type=Path, default=PROJECT_ROOT, help="tree holding configs/ and docs/hallazgos/ (default: TP4/; used by tests)")
     return parser
@@ -448,6 +663,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return regenerate(manifest, args.out_root, project_root)
         if args.command == "verify":
             return verify(manifest, project_root)
+        if args.command == "figures":
+            return sync_figures(manifest, args.root, project_root)
         return check(manifest, args.root, project_root)
     except Tp4Error as exc:
         print(f"error: {exc}", file=sys.stderr)

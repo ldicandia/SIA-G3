@@ -55,7 +55,7 @@ def test_satisfied_tree_exits_0(tmp_path, capsys):
     assert _check(tmp_path, manifest) == 0
     out = capsys.readouterr().out.strip().splitlines()
     assert "== docs/hallazgos/ej.md" in out
-    assert out[-1] == "delivery ok: 1 notes, 2 configs, 1 cites"
+    assert out[-1] == "delivery ok: 1 notes, 2 configs, 1 cites, 0 figures"
 
 
 def test_unlisted_config_is_unclassified(tmp_path, capsys):
@@ -270,7 +270,7 @@ def test_sections_are_checked_and_counted(tmp_path, capsys):
     out = capsys.readouterr().out.strip().splitlines()
     assert "== docs/hallazgos/ej.md :: ## A" in out
     assert "== docs/hallazgos/ej.md :: ## B" in out
-    assert out[-1] == "delivery ok: 1 notes, 2 configs, 3 cites"
+    assert out[-1] == "delivery ok: 1 notes, 2 configs, 3 cites, 0 figures"
 
 
 def test_section_cite_outside_its_section_fails(tmp_path, capsys):
@@ -428,3 +428,190 @@ def test_real_notes_have_no_broken_section_reference():
     for note in manifest.notes:
         text = (PROJECT_ROOT / note.md).read_text(encoding="utf-8")
         assert delivery.broken_section_references(text) == [], note.md
+
+
+# ----- Task 1 (05-02): committed figures, `figures` subcommand and the figure rules of check
+
+FIG_FIGURES = "docs/hallazgos/figuras"
+RUN_LINK_NOTE = "El valor es 53,2 y runs/a/summary.json.\n\n![Curva](../../runs/a/curve.png)\n"
+COPY_NOTE = 'El valor es 53,2 y runs/a/summary.json.\n\n![Curva](figuras/a__curve.png "runs/a/curve.png")\n'
+
+
+def _figure_tree(tmp_path, note=COPY_NOTE, *, copy=b"PNG-A", source=b"PNG-A"):
+    manifest = _tree(tmp_path, note=note)
+    if source is not None:
+        (tmp_path / "runs/a/curve.png").write_bytes(source)
+    if copy is not None:
+        target = tmp_path / FIG_FIGURES / "a__curve.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(copy)
+    return manifest
+
+
+def _files(tmp_path):
+    return {
+        str(p.relative_to(tmp_path)): p.read_bytes() for p in sorted(tmp_path.rglob("*")) if p.is_file()
+    }
+
+
+def test_clean_figure_tree_passes_and_counts_figures(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path)
+    assert _check(tmp_path, manifest) == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "delivery ok: 1 notes, 2 configs, 1 cites, 1 figures"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "extra", "expected"),
+    [
+        ({"note": RUN_LINK_NOTE}, None, "BAD figure link: ![Curva](../../runs/a/curve.png) (docs/hallazgos/ej.md)"),
+        (
+            {"note": COPY_NOTE.replace('a__curve.png "', 'other.png "')},
+            None,
+            'BAD figure link: ![Curva](figuras/other.png "runs/a/curve.png") (docs/hallazgos/ej.md)',
+        ),
+        ({"note": COPY_NOTE.replace("![Curva](figuras", "![Curva](docs/figuras")}, None, "BAD figure link:"),
+        ({"copy": None}, None, "MISSING figure copy: a__curve.png"),
+        ({"source": None}, None, "MISSING figure source: runs/a/curve.png"),
+        ({"copy": b"OLD"}, None, "STALE figure: a__curve.png differs from runs/a/curve.png"),
+        ({}, "orphan.png", "ORPHAN figure copy: orphan.png"),
+        (
+            {"note": COPY_NOTE + "\nVer [la otra](figuras/ghost.png).\n"},
+            None,
+            "UNKNOWN figure reference: ghost.png (docs/hallazgos/ej.md)",
+        ),
+    ],
+)
+def test_each_figure_rule_fires(tmp_path, capsys, kwargs, extra, expected):
+    manifest = _figure_tree(tmp_path, **kwargs)
+    if extra:
+        (tmp_path / FIG_FIGURES / extra).write_bytes(b"x")
+    assert _check(tmp_path, manifest) == 1
+    out = capsys.readouterr().out
+    assert expected in out
+    assert out.strip().splitlines()[-1].startswith("delivery FAILED:")
+
+
+def test_sync_rewrites_a_run_link_and_copies_its_source(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path, RUN_LINK_NOTE, copy=None)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "figures: 1 declared, 1 copied, 1 links rewritten, 0 removed"
+    assert (tmp_path / "docs/hallazgos/ej.md").read_text(encoding="utf-8") == COPY_NOTE
+    assert (tmp_path / FIG_FIGURES / "a__curve.png").read_bytes() == b"PNG-A"
+    assert _check(tmp_path, manifest) == 0
+
+
+def test_sync_keeps_crlf_line_endings(tmp_path):
+    manifest = _figure_tree(tmp_path, copy=None)
+    note = tmp_path / "docs/hallazgos/ej.md"
+    note.write_bytes(RUN_LINK_NOTE.replace("\n", "\r\n").encode("utf-8"))
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert note.read_bytes() == COPY_NOTE.replace("\n", "\r\n").encode("utf-8")
+
+
+def test_sync_flattens_nested_sources_and_ignores_fenced_blocks(tmp_path, capsys):
+    note = (
+        "El valor es 53,2 y runs/a/summary.json.\n"
+        "![Anidada](../../runs/a/sweep/standardize-false/scree.png)\n"
+        "```\n![ejemplo](../../runs/a/curve.png)\n```\n"
+    )
+    manifest = _figure_tree(tmp_path, note, copy=None)
+    nested = tmp_path / "runs/a/sweep/standardize-false/scree.png"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"PNG-N")
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    text = (tmp_path / "docs/hallazgos/ej.md").read_text(encoding="utf-8")
+    assert '![Anidada](figuras/a__sweep__standardize-false__scree.png "runs/a/sweep/standardize-false/scree.png")' in text
+    assert "![ejemplo](../../runs/a/curve.png)" in text
+    assert (tmp_path / FIG_FIGURES / "a__sweep__standardize-false__scree.png").read_bytes() == b"PNG-N"
+    assert "1 declared, 1 copied, 1 links rewritten" in capsys.readouterr().out
+
+
+def test_sync_deletes_an_orphan_png_but_not_other_files(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path)
+    (tmp_path / FIG_FIGURES / "orphan.png").write_bytes(b"x")
+    (tmp_path / FIG_FIGURES / "notes.txt").write_text("keep", encoding="utf-8")
+    (tmp_path / FIG_FIGURES / "sub").mkdir()
+    (tmp_path / FIG_FIGURES / "sub/inner.png").write_bytes(b"x")
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "figures: 1 declared, 0 copied, 0 links rewritten, 1 removed"
+    assert not (tmp_path / FIG_FIGURES / "orphan.png").exists()
+    assert (tmp_path / FIG_FIGURES / "notes.txt").read_text(encoding="utf-8") == "keep"
+    assert (tmp_path / FIG_FIGURES / "sub/inner.png").exists()
+    assert (tmp_path / FIG_FIGURES / "a__curve.png").exists()
+
+
+def test_sync_overwrites_a_stale_copy(tmp_path):
+    manifest = _figure_tree(tmp_path, copy=b"OLD")
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert (tmp_path / FIG_FIGURES / "a__curve.png").read_bytes() == b"PNG-A"
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        '![x](figuras/a__curve.png "runs/../../secret.png")',
+        '![x](figuras/../evil.png "runs/a/curve.png")',
+        '![x](figuras/sub/evil.png "runs/a/curve.png")',
+        "![x](../../runs/../../secret.png)",
+        "![x](../../runs/a/../../secret.png)",
+        '![x](figuras/evil.png "/etc/passwd")',
+        '![x](figuras/..__evil.png "runs/../evil.png")',
+    ],
+)
+def test_traversal_is_rejected_and_writes_nothing_outside_figures(tmp_path, capsys, link):
+    note = "El valor es 53,2 y runs/a/summary.json.\n" + link + "\n"
+    manifest = _figure_tree(tmp_path, note, copy=None)
+    (tmp_path / "secret.png").write_bytes(b"SECRET")
+    (tmp_path / "docs/hallazgos/ej.md").write_text(note, encoding="utf-8")
+    before = _files(tmp_path)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 1
+    out = capsys.readouterr().out
+    assert "BAD figure link:" in out
+    assert _files(tmp_path) == before
+    assert not (tmp_path / FIG_FIGURES).exists()
+
+
+def test_a_bad_link_stops_orphan_deletion(tmp_path):
+    note = COPY_NOTE + '![x](figuras/sub/evil.png "runs/a/curve.png")\n'
+    manifest = _figure_tree(tmp_path, note)
+    (tmp_path / FIG_FIGURES / "keepme.png").write_bytes(b"x")
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 1
+    assert (tmp_path / FIG_FIGURES / "keepme.png").exists()
+
+
+def test_a_second_sync_copies_and_rewrites_nothing(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path, RUN_LINK_NOTE, copy=None)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    capsys.readouterr()
+    snapshot = _files(tmp_path)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "figures: 1 declared, 0 copied, 0 links rewritten, 0 removed"
+    assert _files(tmp_path) == snapshot
+
+
+def test_sync_reports_a_missing_source(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path, RUN_LINK_NOTE, copy=None, source=None)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 1
+    assert "MISSING figure source: runs/a/curve.png" in capsys.readouterr().out
+
+
+def test_flatten_joins_the_segments_after_runs():
+    assert delivery.flatten("runs/pca/biplot.png") == "pca__biplot.png"
+    assert (
+        delivery.flatten("runs/pca_scaling_sweep/standardize-false/scree.png")
+        == "pca_scaling_sweep__standardize-false__scree.png"
+    )
+
+
+def test_real_notes_embed_only_committed_copies():
+    """Static: a fresh clone fails here if the figure copies were not committed."""
+    manifest = load_manifest(MANIFEST_PATH)
+    texts = {n.md: (PROJECT_ROOT / n.md).read_text(encoding="utf-8") for n in manifest.notes}
+    declared = delivery._collect_figures(manifest, texts)
+    assert declared.bad == []
+    figures_dir = PROJECT_ROOT / delivery.FIGURES_DIR
+    assert len(declared.copies) == 43
+    for name in declared.copies:
+        assert (figures_dir / name).is_file(), name
+    assert delivery._png_names(figures_dir) == sorted(declared.copies)
+    assert [name for name, _ in declared.mentions if name not in declared.copies] == []
