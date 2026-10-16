@@ -265,6 +265,43 @@ def test_best_matching_unit_ties_go_to_the_lowest_index_whatever_the_array_type(
     assert type(best_matching_unit(dev, x)) is int
 
 
+class _ReversedSumDevice:
+    """Duck-typed device array whose row sums add the columns in reverse order, like a GPU
+    reduction tree that associates differently from numpy's."""
+
+    def __init__(self, arr):
+        self.arr = np.asarray(arr, dtype=float)
+
+    def __sub__(self, other):
+        return _ReversedSumDevice(self.arr - np.asarray(other))
+
+    def __pow__(self, p):
+        return _ReversedSumDevice(self.arr**p)
+
+    def sum(self, axis):
+        assert axis == 1
+        out = np.zeros(self.arr.shape[0])
+        for k in range(self.arr.shape[1] - 1, -1, -1):
+            out = out + self.arr[:, k]
+        return _ReversedSumDevice(out)
+
+    def get(self):
+        return self.arr
+
+
+def test_best_matching_unit_near_ties_follow_the_numpy_decision_on_a_device_array():
+    from tp4.models.som import best_matching_unit
+
+    # Row 0: squares 1e16, 1, 1. Row 1: 1e16, 0, 0. In numpy's order both sums are exactly 1e16
+    # (a tie, so index 0); added in reverse the first becomes 1e16 + 2 and a device argmin picks 1.
+    W = np.array([[1e8, 1.0, 1.0], [1e8, 0.0, 0.0]])
+    x = np.zeros(3)
+    assert best_matching_unit(W, x) == 0
+    dev = _ReversedSumDevice(W)
+    assert int(np.argmin(((dev - x) ** 2).sum(axis=1).get())) == 1  # the raw device decision differs
+    assert best_matching_unit(dev, x) == 0  # the near-tie is re-decided with numpy's own sum
+
+
 def test_train_som_duplicate_initial_prototypes_match_under_fake_xp():
     from tp4.models.som import SomConfig, train_som
 

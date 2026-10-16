@@ -9,5 +9,9 @@
 #
 # Ante cualquier falla (cupy ausente, sin dispositivo CUDA, driver incompatible) tp4 vuelve a
 # numpy, emite un RuntimeWarning y deja el motivo en run.json (backend.fallback_reason).
+#
+# El extra [ctk] trae las librerías de runtime de CUDA (cuBLAS, NVRTC, cuSOLVER...) como wheels
+# oficiales de NVIDIA (nvidia-*-cu12) desde PyPI. Sin él, cupy importa y ve la GPU pero falla en
+# la primera operación (por ejemplo `@`) si no hay un CUDA Toolkit 12.x instalado en el sistema.
 -r requirements.txt
-cupy-cuda12x>=13.4
+cupy-cuda12x[ctk]>=13.4

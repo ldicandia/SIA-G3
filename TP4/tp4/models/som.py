@@ -23,6 +23,7 @@ NEIGHBORHOODS = ("gaussian", "step")
 DECAYS = ("exponential", "linear", "inverse", "constant")
 INITS = ("sample", "random")
 ADJACENCY_TOL = 1e-9
+DEVICE_TIE_RTOL = 1e-12  # relative gap under which two device distances count as a tie
 
 
 # --------------------------------------------------------------------------- grid
@@ -156,10 +157,22 @@ def best_matching_unit(W, x) -> int:
 
     The distances use whatever array type arrives; the argmin runs on the host copy so the tie
     rule is numpy's on every backend (duplicate prototypes exist with init="sample" and
-    more neurons than samples).
+    more neurons than samples). A device reduction adds in a different order than numpy, so two
+    prototypes that are tied (or nearly) can come out in the opposite order; when the two best
+    device distances are within DEVICE_TIE_RTOL of each other the distances are recomputed with
+    numpy's own sum on host copies, which gives the decision a numpy run would have made.
+    Host (numpy) input never takes that branch.
     """
     d2 = ((W - x) ** 2).sum(axis=1)
-    return int(to_numpy(d2).argmin())
+    host = to_numpy(d2)
+    best = int(host.argmin())
+    if isinstance(W, np.ndarray) or host.size < 2:
+        return best
+    second = float(np.partition(host, 1)[1])
+    if second - float(host[best]) <= DEVICE_TIE_RTOL * float(host[best]):
+        d2 = ((to_numpy(W) - to_numpy(x)) ** 2).sum(axis=1)
+        best = int(d2.argmin())
+    return best
 
 
 def best_two_units(X: np.ndarray, W: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

@@ -495,7 +495,7 @@ ranking de los C(26, 4) subconjuntos), mide la capacidad, la recuperación con r
 | `capacity_subsets` | subconjuntos aleatorios por p en la curva de capacidad | entero entre 1 y 5000 |
 
 Una config o un alfabeto inválidos salen con `error: ...` y código 2 antes de crear `runs/hopfield_letters/`. Con la misma semilla
-los CSV y `summary.json` salen idénticos byte a byte. La red corre siempre en numpy (`backend` queda registrado en `run.json`).
+los CSV y `summary.json` salen idénticos byte a byte. La red corre en numpy por defecto; con `"backend": "cupy"` los barridos de recuperación corren en la GPU (ver "Backend CUDA opcional") y el backend queda registrado en `run.json`.
 
 | Artefacto en `runs/hopfield_letters/` | Contenido |
 |---------------------------------------|-----------|
@@ -581,18 +581,76 @@ Un `error: ...` con código 2 indica una imagen ilegible o de tamaño incorrecto
 
 ## Backend CUDA opcional
 
-Con `"backend": "cupy"` en la config, los cálculos de arrays que usan `ctx.backend.xp` (por ahora
-la verificación por autovalores de la PCA) corren en la GPU. Es **opcional**: nada de este
-repo ni ningún test necesita CUDA, y `numpy` es el backend por defecto. Para habilitarlo:
+Con `"backend": "cupy"` en la config, los cálculos de arrays que usan `ctx.backend.xp` corren en la
+GPU. Es **opcional**: nada de este repo ni ningún test necesita CUDA, y `numpy` es el backend por
+defecto (con él, los CSV y `summary.json` salen idénticos byte a byte a los de antes del backend).
+
+**Qué corre en la GPU:** la verificación por autovalores de la PCA, el bucle de entrenamiento de
+Kohonen (`som`, `som_control` y la evidencia de `oja` y `campaigns`), el entrenamiento de Oja
+(`oja`, `campaigns`) y los barridos de recuperación de Hopfield con sus energías por barrido
+(`hopfield_letters`, `hopfield_qr`).
+
+**Qué se queda en el host, y por qué:** todos los sorteos (la `Generator` de numpy, siempre en el
+mismo orden), la construcción y validación de los pesos de Hopfield (una sola vez, chicos, y
+necesitan chequeos exactos de simetría y diagonal cero), las métricas, el estado de cada consulta
+(conjunto activo, iteraciones, estado de corte), los CSV y los gráficos. Cada época (Oja, Kohonen)
+o cada barrido (Hopfield) trae los datos de vuelta al host una sola vez.
+
+**Qué se garantiza:** con la misma semilla salen los mismos sorteos y las mismas permutaciones en
+los dos backends. Los resultados discretos (índices, etiquetas, estados de Hopfield, regiones,
+conteos) son idénticos; los de punto flotante coinciden hasta cerca de 1e-9 pero **no** son
+idénticos bit a bit, porque las reducciones de la GPU suman en otro orden. En Kohonen, dos
+prototipos casi empatados (la vecindad `step` con radio grande los colapsa en las primeras
+épocas) pueden salir en orden distinto por ese redondeo; por eso, si las dos mejores distancias de
+la GPU difieren menos de `DEVICE_TIE_RTOL` (1e-12 relativo), la neurona ganadora se decide de nuevo
+con la suma de numpy sobre copias del host y coincide con la de una corrida en numpy.
+
+**Instalación** (desde `TP4/`, en WSL):
 
 ```bash
 .venv/bin/pip install -r requirements-cuda.txt
 ```
 
-La RTX 5070 (Blackwell) necesita un driver de NVIDIA que exponga CUDA 12.8 o superior en WSL.
-Si `cupy` no está instalado, no hay dispositivo CUDA o algo falla, tp4 emite un `RuntimeWarning`,
-sigue con `numpy` y deja el motivo en `run.json` (`backend.requested`, `backend.resolved`,
-`backend.fallback_reason`); la corrida termina con código 0.
+`requirements-cuda.txt` pide `cupy-cuda12x[ctk]`: el extra `[ctk]` trae las librerías de runtime de
+CUDA (cuBLAS, NVRTC, cuSOLVER...) como wheels oficiales de NVIDIA desde PyPI. Sin él, `cupy` importa
+y ve la GPU, pero falla en la primera operación (`libcublasLt.so.12 not found`) si el sistema no
+tiene un CUDA Toolkit 12.x. La RTX 5070 (Blackwell, capacidad 12.0) necesita un driver de NVIDIA que
+exponga CUDA 12.8 o superior en WSL (`nvidia-smi`). Si `cupy` no está instalado, no hay dispositivo CUDA
+o el driver falla al arrancar, tp4 emite un `RuntimeWarning`, sigue con `numpy` y deja el motivo en
+`run.json` (`backend.requested`, `backend.resolved`, `backend.fallback_reason`); la corrida termina con
+código 0.
+
+**Barridos:** cada worker de un barrido es un proceso aparte y abriría su propio contexto CUDA. Con
+`cupy` dejá `workers: 1`, y mantené las configs commiteadas en `numpy`.
+
+**Comparar numpy contra cupy** (corre las configs dos veces, una por backend y sin gráficos, compara
+`summary.json` y todos los CSV, mide los tiempos y corre dos pruebas sintéticas: el desempate de
+`argmin` y Kohonen desde prototipos duplicados):
+
+```bash
+.venv/bin/python -m tp4.analysis.backend_compare [--configs PATH ...] [--out-root DIR] [--json PATH] [--rtol R] [--atol A]
+```
+
+Por defecto compara `som`, `oja`, `hopfield_letters` y `hopfield_qr` con `rtol` 1e-6 y `atol` 1e-9
+(los barridos no se admiten). Códigos de salida: 0 todo equivalente; 1 cupy no disponible (imprime
+`backend unavailable: <motivo>` y no corre nada); 2 error de uso o de config (`error: ...`); 3 alguna
+diferencia, prueba fallida o corrida de cupy rota.
+
+Medido en la RTX 5070 bajo WSL (driver 610.88, `cupy` 14.2.0, runtime CUDA 12.9, `cupy-cuda12x[ctk]`; los
+núcleos ya compilados, una corrida por backend):
+
+| Config | numpy (s) | cupy (s) | cupy / numpy | Diferencia absoluta máxima | Veredicto |
+|--------|-----------|----------|--------------|----------------------------|-----------|
+| `som` | 0,53 | 7,53 | 0,07x | 0 | equivalente |
+| `oja` | 0,48 | 7,09 | 0,07x | 0 | equivalente |
+| `hopfield_letters` | 0,35 | 1,31 | 0,27x | 2,2e-16 | equivalente |
+| `hopfield_qr` | 15,25 | 109,00 | 0,14x | 0 | equivalente |
+
+Las dos pruebas sintéticas pasan (desempate de `argmin` y Kohonen desde prototipos duplicados, diferencia
+máxima de pesos 2,2e-16). **La GPU es más lenta que numpy en todas las configs:** estos bucles son
+secuenciales (una muestra o una neurona por vez) y chicos, así que el costo de lanzar núcleos y de
+sincronizar con el host domina. El valor del backend es la equivalencia validada y el margen para
+problemas más grandes, no una aceleración prometida; para estos datos conviene `numpy`.
 
 ## Regenerar y verificar todo
 
