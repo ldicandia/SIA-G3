@@ -7,8 +7,10 @@ Course conventions (clases/4.2 - Modelo de Hopfield.pdf):
 - Hebbian weights w_ij = (1 / N) * sum_{mu=1}^p xi_i^mu xi_j^mu for i != j and w_ii = 0,
   w_ji = w_ij (slides 18, 20). Slide 28 writes (1/N) K K^T - I, which zeroes the diagonal
   only when p = N; the explicit zero diagonal of slide 20 is used here.
+- Synchronous updates S(t+1) = sign(W S(t)) (slide 22, worked example slides 25-30) with
+  period-2 cycle detection (slide 38).
 - Energy H(S) = -1/2 * sum_{i,j} w_ij S_i S_j (slides 34-36), non-increasing under
-  asynchronous updates.
+  asynchronous updates (flipping S_i with local field h_i changes H by 2 * S_i_old * h_i < 0).
 - Asynchronous updates draw one random permutation of the N neurons per sweep from the
   seeded Generator and share it across every active row of a batch (INFRA-04), so a row's
   trajectory is identical whether recalled alone or in a batch.
@@ -24,8 +26,8 @@ import numpy as np
 
 FIELD_TOL = 1e-9
 MAX_ITER = 1000
-RULES = ("hebb",)
-UPDATES = ("async",)
+RULES = ("hebb", "pseudoinverse")
+UPDATES = ("async", "sync")
 STATUSES = ("converged", "cycle", "max_iter")
 
 
@@ -74,11 +76,34 @@ def hebbian_weights(patterns) -> np.ndarray:
     return W
 
 
+def pseudoinverse_weights(patterns) -> np.ndarray:
+    """Projection (pseudoinverse) weight matrix W = K (K^T K)^{-1} K^T with zero diagonal.
+
+    Every stored pattern satisfies W' xi = xi before the diagonal is removed. With the
+    diagonal removed, h_i = (1 - d_i) xi_i with d_i = W'_ii < 1, so stored patterns stay
+    fixed points even when correlated. This is a different learning rule from the course's
+    Hebb rule, used in plan 04-03 to show that correlation, not pattern count, breaks Hebb
+    on the QR codes.
+    """
+    P = check_patterns(patterns).astype(np.float64)
+    p = P.shape[0]
+    K = P.T
+    C = K.T @ K
+    if int(np.linalg.matrix_rank(C)) < p:
+        raise ValueError("patterns are linearly dependent; pseudoinverse_weights requires full row rank")
+    W = K @ np.linalg.solve(C, K.T)
+    W = 0.5 * (W + W.T)
+    np.fill_diagonal(W, 0.0)
+    return W
+
+
 def train(patterns, rule: str = "hebb") -> np.ndarray:
     """Build the synaptic weight matrix W for `patterns` using `rule`."""
     if rule not in RULES:
         raise ValueError(f"unknown rule {rule!r}; allowed: {list(RULES)}")
-    return hebbian_weights(patterns)
+    if rule == "hebb":
+        return hebbian_weights(patterns)
+    return pseudoinverse_weights(patterns)
 
 
 def sign_keep(h, s) -> np.ndarray:
@@ -146,52 +171,107 @@ def recall(
     if S.shape[1] != n:
         raise ValueError(f"queries width {S.shape[1]} does not match W size {n}")
 
+    if config.rule not in RULES:
+        raise ValueError(f"unknown rule {config.rule!r}; allowed: {list(RULES)}")
     if config.update not in UPDATES:
         raise ValueError(f"unknown update {config.update!r}; allowed: {list(UPDATES)}")
     if not (_is_int(config.max_iter) and 1 <= config.max_iter <= MAX_ITER):
         raise ValueError(f"max_iter must be an integer in [1, {MAX_ITER}], got {config.max_iter!r}")
     if config.update == "async" and not isinstance(rng, np.random.Generator):
         raise ValueError("async update requires a numpy.random.Generator rng")
+    if trace and config.update != "async":
+        raise ValueError("trace=True is only supported for async update")
 
     b = S.shape[0]
     iterations = np.zeros(b, dtype=int)
     status = np.full(b, "max_iter", dtype=object)
     init_e = np.asarray(energy(W_arr, S), dtype=np.float64)
     energies: list[list[float]] = [[float(init_e[row])] for row in range(b)]
+    update_traces: list[list[float]] | None = [[float(init_e[row])] for row in range(b)] if trace else None
+    cur_e = init_e.copy()
     active = np.ones(b, dtype=bool)
 
-    for t in range(1, int(config.max_iter) + 1):
-        if not np.any(active):
-            break
-        act_idx = np.flatnonzero(active)
-        S_prev = S[act_idx].copy()
-        perm = rng.permutation(n)  # type: ignore[union-attr]
-        S_act = S[act_idx].astype(np.float64)
-        for i in perm:
-            h = S_act @ W_arr[i]
-            new_val = np.where(h > FIELD_TOL, 1.0, np.where(h < -FIELD_TOL, -1.0, S_act[:, i]))
-            S_act[:, i] = new_val
-        S_new = S_act.astype(np.int8)
-        S[act_idx] = S_new
+    if config.update == "async":
+        for t in range(1, int(config.max_iter) + 1):
+            if not np.any(active):
+                break
+            act_idx = np.flatnonzero(active)
+            S_prev = S[act_idx].copy()
+            perm = rng.permutation(n)  # type: ignore[union-attr]
+            S_act = S[act_idx].astype(np.float64)
+            e_act = cur_e[act_idx].copy()
+            if update_traces is not None:
+                step_e = np.empty((act_idx.size, n), dtype=np.float64)
+            for step_pos, i in enumerate(perm):
+                h = S_act @ W_arr[i]
+                old_s = S_act[:, i]
+                new_s = np.where(h > FIELD_TOL, 1.0, np.where(h < -FIELD_TOL, -1.0, old_s))
+                flipped = new_s != old_s
+                if np.any(flipped):
+                    e_act[flipped] += 2.0 * old_s[flipped] * h[flipped]
+                    S_act[:, i] = new_s
+                if update_traces is not None:
+                    step_e[:, step_pos] = e_act
+            S_new = S_act.astype(np.int8)
+            S[act_idx] = S_new
+            cur_e[act_idx] = e_act
+            if update_traces is not None:
+                for local_pos, row in enumerate(act_idx):
+                    update_traces[int(row)].extend(step_e[local_pos].tolist())
 
-        changed = np.any(S_new != S_prev, axis=1)
-        converged_rows = act_idx[~changed]
-        for row in converged_rows:
-            status[row] = "converged"
-            iterations[row] = t - 1
-            active[row] = False
+            changed = np.any(S_new != S_prev, axis=1)
+            for row in act_idx[~changed]:
+                status[int(row)] = "converged"
+                iterations[int(row)] = t - 1
+                active[int(row)] = False
 
-        changed_rows = act_idx[changed]
-        if changed_rows.size > 0:
-            row_energies = np.asarray(energy(W_arr, S[changed_rows]), dtype=np.float64)
-            for row, e_val in zip(changed_rows, row_energies, strict=True):
-                energies[int(row)].append(float(e_val))
-                iterations[int(row)] = t
+            changed_rows = act_idx[changed]
+            if changed_rows.size > 0:
+                row_energies = np.asarray(energy(W_arr, S[changed_rows]), dtype=np.float64)
+                cur_e[changed_rows] = row_energies
+                for row, e_val in zip(changed_rows, row_energies, strict=True):
+                    energies[int(row)].append(float(e_val))
+                    iterations[int(row)] = t
+    else:
+        S_prev2 = S.copy()
+        for t in range(1, int(config.max_iter) + 1):
+            if not np.any(active):
+                break
+            act_idx = np.flatnonzero(active)
+            S_cur = S[act_idx]
+            h = S_cur.astype(np.float64) @ W_arr
+            S_new = sign_keep(h, S_cur)
+            same_as_cur = np.all(S_new == S_cur, axis=1)
+            same_as_prev2 = (t >= 2) & (~same_as_cur) & np.all(S_new == S_prev2[act_idx], axis=1)
+
+            S_prev2[act_idx] = S_cur
+            S[act_idx] = S_new
+
+            for row in act_idx[same_as_cur]:
+                status[int(row)] = "converged"
+                iterations[int(row)] = t - 1
+                active[int(row)] = False
+
+            changed_mask = ~same_as_cur
+            changed_rows = act_idx[changed_mask]
+            if changed_rows.size > 0:
+                row_energies = np.asarray(energy(W_arr, S[changed_rows]), dtype=np.float64)
+                for row, e_val in zip(changed_rows, row_energies, strict=True):
+                    energies[int(row)].append(float(e_val))
+                    iterations[int(row)] = t
+
+            for row in act_idx[same_as_prev2]:
+                status[int(row)] = "cycle"
+                active[int(row)] = False
 
     return RecallResult(
         states=S,
         iterations=iterations,
         status=np.asarray(status, dtype=str),
         energies=[np.asarray(e_list, dtype=np.float64) for e_list in energies],
-        update_energies=None,
+        update_energies=(
+            [np.asarray(u_list, dtype=np.float64) for u_list in update_traces]
+            if update_traces is not None
+            else None
+        ),
     )
