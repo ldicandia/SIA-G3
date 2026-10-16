@@ -413,6 +413,74 @@ los CSV y `summary.json` salen idénticos byte a byte. La red corre siempre en n
 | `energy.csv`, `energy_trace.csv`, `energy.png` | energía por iteración y por actualización de neurona (ejemplos y el caso espúreo) |
 | `summary.json`, `run.json` | letras elegidas y peores, productos internos máximos, cotas de capacidad (0,138·N y 0,15·N), tasas de recuperación, el caso espúreo (letra, píxeles, superposiciones, energía, mezcla) y el registro de la corrida |
 
+## Códigos QR (`kind: "hopfield_qr"`)
+
+```bash
+.venv/bin/python -m tp4 run configs/hopfield_qr.json
+```
+
+Ejercicio 2.1 del enunciado: los cinco códigos QR de menú de `datos/hopfield/*.png` (37×37, negro = +1, N = 1369 neuronas, sin zona de silencio) se guardan en la red
+de Hopfield con **dos reglas** (la de Hebb del curso y, solo para comparar, la pseudoinversa), se deterioran con ruido, esquina rota y manchas, y se miden la recuperación
+exacta, las iteraciones y la energía en cada paso; además se mide qué lee un decodificador de QR (opcional, ver la sección siguiente) antes y después de la red. Clave propia:
+`images` (de 2 a 10 rutas `.png` distintas, en el orden en que se guardan; cada imagen tiene que medir exactamente `side` × `side`). `params`:
+
+| Parámetro | Significado | Valores permitidos |
+|-----------|-------------|--------------------|
+| `side` | lado de cada código en módulos | entero entre 5 y 64 (37 para estos códigos) |
+| `rules` | reglas de aprendizaje a comparar | lista no vacía sin repetidos de `"hebb"` y `"pseudoinverse"` (`["hebb"]` saca la comparación) |
+| `update` | modo de actualización | `"async"` o `"sync"` (`trace_levels` no vacío exige `"async"`) |
+| `max_iter` | tope de barridos | entero entre 1 y 1000 |
+| `noise_levels` | fracciones de módulos invertidos | lista no vacía, estrictamente creciente, números en [0, 1], hasta 21 niveles |
+| `trials` | consultas con ruido por código y nivel, y manchas por código y tamaño | entero entre 1 y 200 |
+| `corners` | esquinas que se rompen | lista sin repetidos de `"top_left"`, `"top_right"`, `"bottom_left"`, `"bottom_right"` |
+| `torn_corner_sizes` | tamaños del triángulo blanco de la esquina rota (`fila + columna < tamaño`) | lista estrictamente creciente de enteros entre 1 y `side` (puede ser `[]`) |
+| `occlusion_sizes` | lados de la mancha negra cuadrada | lista estrictamente creciente de enteros entre 1 y `side` (puede ser `[]`) |
+| `trace_levels` | niveles de ruido para los que se guarda la energía por actualización de neurona | subconjunto sin repetidos de `noise_levels` (puede ser `[]`) |
+| `decode` | usar el decodificador de QR | `true` o `false` (con `false` ni siquiera se prueba que esté instalado) |
+| `decode_scale` | factor de escala con el que se dibuja cada matriz para el decodificador | entero entre 1 y 16 |
+| `decode_quiet_zone` | módulos blancos de margen que se agregan al dibujarla | entero entre 0 y 10 |
+
+Tipos de deterioro (`damage` en `queries.csv`): `flip` (módulos invertidos al azar, `round(nivel·N)` distintos), `torn_corner` (un triángulo blanco en una esquina, sin azar) y `occlusion` (una
+mancha negra cuadrada en una posición al azar con semilla fija). Las dos reglas ven exactamente las mismas consultas. Una consulta se cuenta como **recuperada** solo si el estado final es
+**igual** al código de origen. Una config inválida, una imagen que no mide `side` × `side` o un grid de más de 50000 recuperaciones sale con `error: ...` y código 2 antes de crear `runs/hopfield_qr/`.
+Con la misma semilla los CSV y `summary.json` salen idénticos byte a byte.
+
+| Artefacto en `runs/hopfield_qr/` | Contenido |
+|----------------------------------|-----------|
+| `patterns.png` | los cinco códigos como matrices de ±1 |
+| `overlaps.csv`, `overlaps.png` | superposición `m` entre cada par de códigos |
+| `shared_modules.png` | módulos idénticos en los cinco códigos y módulos que difieren |
+| `stored.csv` | por regla y código: si es punto fijo, módulos inestables, margen de estabilidad y energía |
+| `hebb_attractor.png` | el "QR promedio" `signo(Σ ξ)` al que caen las consultas con Hebb y los módulos inestables de cada código |
+| `queries.csv` | una fila por consulta y regla (columnas abajo) |
+| `recovery_rates.csv` | por deterioro, nivel o tamaño y regla: tasas de recuperada, otro código, invertida, espúrea y del "QR promedio", iteraciones, superposición con el objetivo y tasas de decodificación |
+| `damage_examples.png`, `recovery_vs_noise.png` | consultas dañadas y su estado final, y la recuperación exacta por tipo de deterioro |
+| `iterations.png`, `energy.csv`, `energy_trace.csv`, `energy_per_step.png` | iteraciones frente al ruido, energía por iteración de cada consulta y energía por actualización de neurona (`trace_levels`) |
+| `decode_vs_noise.png` | solo con decodificador: fracción que se lee como el menú original antes y después de la red |
+| `summary.json`, `run.json` | `hebb_*` y `pseudoinverse_*` (puntos fijos, módulos inestables, recuperación por nivel, esquina y mancha, iteraciones), superposiciones, módulos compartidos, `capacity_0138`, `energy_never_increased` y las claves de decodificación (`decoder_available`, `decoder_name`, `decoder_version`, `decoder_reason`, `n_originals_decoded`, `reference_texts`, `*_decode_rates`, `mean_attractor_decoded_as`) |
+
+Columnas de `queries.csv`: `query_id`, `damage`, `level`, `size`, `corner`, `top`, `left`, `pattern`, `trial`, `n_changed`, `damaged_frac`, `rule`, `iterations`, `status`, `final_class`
+(`stored`, `inverted` o `spurious`), `final_pattern`, `recovered`, `overlap_target`, `hamming_target`, `nearest_pattern`, `is_mean_attractor`, `final_energy`, `query_decode_ok`,
+`final_decode_ok` y `final_decoded_as`.
+
+## Decodificador QR opcional
+
+La decodificación (¿un lector de QR lee el código recuperado?) usa `zxing-cpp`, que es un **extra opcional**: ningún test ni ninguna corrida lo necesita. Para habilitarlo:
+
+```bash
+.venv/bin/pip install -r requirements-qr.txt
+```
+
+Para comprobar que los cinco códigos originales se cargan, se dibujan de nuevo píxel por píxel y se decodifican (cada uno imprime su URL):
+
+```bash
+.venv/bin/python -m tp4.analysis.qr datos/hopfield/*.png
+```
+
+Sin el paquete instalado, el comando imprime `decoder unavailable: ...` una vez y sale con código 1, y `python -m tp4 run configs/hopfield_qr.json` termina igual con código 0: en `summary.json`
+quedan `decoder_available` = `false` y `decoder_reason` con el motivo, sin números de decodificación (con `params.decode` en `false` no se prueba el decodificador y `decoder_available` queda en `null`).
+Un `error: ...` con código 2 indica una imagen ilegible o de tamaño incorrecto.
+
 ## Backend CUDA opcional
 
 Con `"backend": "cupy"` en la config, los cálculos de arrays que usan `ctx.backend.xp` (por ahora
@@ -634,4 +702,62 @@ verificarla (los 21 valores de 2.2):
   --cite runs/hopfield_letters/summary.json:spurious_overlaps \
   --cite runs/hopfield_letters/summary.json:spurious_energy \
   --cite runs/hopfield_letters/summary.json:n_stable_mixtures
+```
+
+La sección `## 2.1 Recuperación de códigos QR deteriorados` de la misma nota muestra los cinco códigos como matrices de 37×37, por qué se parecen tanto, que la regla de Hebb
+del curso no recupera ninguno, la comparación con la regla de la pseudoinversa (que no es la del curso), la recuperación con ruido, esquina rota y manchas, las iteraciones y la energía
+en cada paso, lo que lee un decodificador de QR y las limitaciones del caso de uso. Para regenerar su evidencia (las dos corridas, con el decodificador instalado) y verificarla
+(los 21 valores de 2.2, los 20 de 2.1 y los 5 del decodificador; sin decodificador serían 21 + 20 + 1, con `decoder_reason`):
+
+```bash
+.venv/bin/pip install -r requirements-qr.txt
+.venv/bin/python -m tp4 run configs/hopfield_letters.json
+.venv/bin/python -m tp4 run configs/hopfield_qr.json
+.venv/bin/python -m tp4.findings docs/hallazgos/ej2.md \
+  --cite runs/hopfield_letters/summary.json:selected_letters \
+  --cite runs/hopfield_letters/summary.json:selected_max_abs_dot \
+  --cite runs/hopfield_letters/summary.json:selected_mean_abs_dot \
+  --cite runs/hopfield_letters/summary.json:worst_letters \
+  --cite runs/hopfield_letters/summary.json:worst_max_abs_dot \
+  --cite runs/hopfield_letters/summary.json:n_subsets \
+  --cite runs/hopfield_letters/summary.json:capacity_0138 \
+  --cite runs/hopfield_letters/summary.json:capacity_015 \
+  --cite runs/hopfield_letters/summary.json:selected_n_fixed_points \
+  --cite runs/hopfield_letters/summary.json:worst_n_fixed_points \
+  --cite runs/hopfield_letters/summary.json:selected_stability_margins \
+  --cite runs/hopfield_letters/summary.json:selected_max_level_full_recovery \
+  --cite runs/hopfield_letters/summary.json:n_sync_cycles \
+  --cite runs/hopfield_letters/summary.json:spurious_n_flips \
+  --cite runs/hopfield_letters/summary.json:spurious_rate \
+  --cite runs/hopfield_letters/summary.json:spurious_letter \
+  --cite runs/hopfield_letters/summary.json:spurious_nearest_letter \
+  --cite runs/hopfield_letters/summary.json:spurious_hamming_to_nearest \
+  --cite runs/hopfield_letters/summary.json:spurious_overlaps \
+  --cite runs/hopfield_letters/summary.json:spurious_energy \
+  --cite runs/hopfield_letters/summary.json:n_stable_mixtures \
+  --cite runs/hopfield_qr/summary.json:n_neurons \
+  --cite runs/hopfield_qr/summary.json:capacity_0138 \
+  --cite runs/hopfield_qr/summary.json:mean_offdiag_overlap \
+  --cite runs/hopfield_qr/summary.json:max_offdiag_overlap \
+  --cite runs/hopfield_qr/summary.json:max_overlap_pair \
+  --cite runs/hopfield_qr/summary.json:n_shared_modules \
+  --cite runs/hopfield_qr/summary.json:shared_module_frac \
+  --cite runs/hopfield_qr/summary.json:hebb_n_fixed_points \
+  --cite runs/hopfield_qr/summary.json:hebb_unstable_bits \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_n_fixed_points \
+  --cite runs/hopfield_qr/summary.json:hebb_frac_mean_attractor \
+  --cite runs/hopfield_qr/summary.json:hebb_mean_attractor_overlaps \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_flip_recovery \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_max_level_full_recovery \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_corner_recovery \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_occlusion_recovery \
+  --cite runs/hopfield_qr/summary.json:hebb_mean_iterations \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_mean_iterations \
+  --cite runs/hopfield_qr/summary.json:max_iterations \
+  --cite runs/hopfield_qr/summary.json:energy_never_increased \
+  --cite runs/hopfield_qr/summary.json:n_originals_decoded \
+  --cite runs/hopfield_qr/summary.json:reference_texts \
+  --cite runs/hopfield_qr/summary.json:query_flip_decode_rates \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_final_flip_decode_rates \
+  --cite runs/hopfield_qr/summary.json:mean_attractor_decoded_as
 ```

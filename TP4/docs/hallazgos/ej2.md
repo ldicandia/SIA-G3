@@ -198,3 +198,247 @@ Verificación de la evidencia (los 21 valores de 2.2):
   --cite runs/hopfield_letters/summary.json:spurious_energy \
   --cite runs/hopfield_letters/summary.json:n_stable_mixtures
 ```
+
+## 2.1 Recuperación de códigos QR deteriorados
+
+Todo lo de esta sección sale de `runs/hopfield_qr/`, regenerado con los comandos de "Cómo regenerar (2.1)". La historia del enunciado es un código de un menú
+de restaurante "desgastado, rayado, manchado con comida o rasgado" que hay que recuperar y mandar "a un lector de QR para que pueda decodificarlo". Probamos
+**dos reglas de aprendizaje** sobre la misma red: la de Hebb, que es la del curso, y la de la pseudoinversa, que **no es la del curso** y está solo para comparar.
+Los resultados de Hebb van primero y no se esconden detrás de los de la pseudoinversa. Las decisiones que son criterio nuestro están en "Supuestos (2.1)".
+
+### Los cinco códigos como matrices de 37×37
+
+**Cada menú es un QR de versión 5 de 37×37 módulos, es decir, un vector de N = 1369 neuronas con negro = +1 y blanco = −1, sin zona de silencio.**
+
+![Los cinco códigos como matrices de ±1](../../runs/hopfield_qr/patterns.png)
+
+- `n_neurons` = 1369 (37 × 37). La fracción de módulos negros de cada código va de 0,5142 a 0,5259 (`black_fractions` en `runs/hopfield_qr/summary.json`).
+- Control: cada matriz se vuelve a dibujar como imagen y es **idéntica píxel por píxel** al PNG original (`roundtrip_identical` = true), y el lector de QR decodifica los 5 originales.
+- Los cinco archivos son `datos/hopfield/{food,wine,beverages,dessert,specials}_menu_qr.png`.
+
+### Por qué los cinco códigos se parecen tanto
+
+**Los cinco códigos comparten 955 de 1369 módulos (0,6976) y su superposición media es de 0,6701: son todo menos ortogonales.**
+
+![Matriz de superposiciones entre los cinco códigos](../../runs/hopfield_qr/overlaps.png)
+
+![Módulos idénticos en los cinco códigos](../../runs/hopfield_qr/shared_modules.png)
+
+- Superposición `m = (1/N)·ξ·ξ'` entre pares distintos (`runs/hopfield_qr/overlaps.csv`): media `mean_offdiag_overlap` = 0,6701 y máxima `max_offdiag_overlap` = 0,8598, entre `max_overlap_pair` = food-wine.
+  Con m = 0,6701 dos códigos coinciden en alrededor del 83,5% de los módulos (la fracción de acuerdo es (1 + m) / 2). Para comparar: las letras elegidas en 2.2 tenían un producto interno de ±1 sobre 25, es decir una superposición de ±0,04.
+- Módulos idénticos en los cinco códigos: `n_shared_modules` = 955, `shared_module_frac` = 0,6976; los otros 414 difieren en al menos un código y están concentrados en una franja a la izquierda de la zona de datos (figura de arriba).
+- **Por qué:** todos son QR de la misma versión, así que comparten los tres patrones de posición, los patrones de alineación y sincronismo y los módulos de formato; además las cinco URL son iguales salvo el nombre del menú
+  (`.../TPs/TP4/food_menu.png`, `wine_menu.png`, ...), de modo que buena parte de los datos también coincide.
+
+### Regla de Hebb: ningún código se recupera
+
+**Con la regla de Hebb del curso, ninguno de los cinco códigos es un punto fijo y ninguna consulta se recupera: todas terminan en el mismo "QR promedio".**
+
+![Estado al que llegan todas las consultas con Hebb y módulos inestables de cada código](../../runs/hopfield_qr/hebb_attractor.png)
+
+- **Puntos fijos:** `hebb_n_fixed_points` = 0 de 5. La cantidad de módulos inestables (módulos que la red cambiaría estando en el código exacto, `hebb_unstable_bits`) es 71, 91, 225, 225 y 103 para food, wine, beverages, dessert y specials
+  (`runs/hopfield_qr/stored.csv`), con márgenes de estabilidad negativos de −1,5310 a −1,8232. En la figura, los módulos inestables caen en la zona de datos y no sobre los patrones de posición.
+- **Recuperación:** 0,0 en los 11 niveles de ruido, en los 7 tamaños de esquina rota y en los 5 tamaños de mancha (`runs/hopfield_qr/recovery_rates.csv`). Incluso con ruido 0,0, o sea con el código exacto como entrada, la red lo abandona.
+- **A dónde llegan:** al estado `signo(Σ ξ)`, que llamamos "QR promedio" (la figura de arriba, a la izquierda). `hebb_frac_mean_attractor` = 0,9747: el 97,47% de todas las consultas de Hebb terminan exactamente en ese estado,
+  y el resto en otros estados espúreos. Su superposición con cada código es `hebb_mean_attractor_overlaps` = 0,8963; 0,8671; 0,6713; 0,6713 y 0,8495 (food, wine, beverages, dessert, specials): se parece a todos y no es ninguno.
+- **El "QR promedio" es un mínimo de energía más profundo que los propios códigos:** su energía es -2172,88, contra -2077,4492 (food) a -1789,7064 (beverages) de los códigos guardados (`runs/hopfield_qr/stored.csv`). La red está haciendo bien su trabajo
+  (bajar la energía) y por eso se aleja de los códigos.
+- **Conexión con 2.2:** esta es la interferencia (*crosstalk*) que las letras casi ortogonales evitaban. Y no es un problema de cantidad de patrones: la cota `capacity_0138` = 188,922 patrones (0,138·N) está muy por encima de los 5 códigos, y aun así
+  no entra ninguno. Con patrones tan correlacionados la capacidad efectiva de Hebb es menor que 5, no 189.
+
+### Regla de la pseudoinversa: la misma red sin la interferencia
+
+**Con una regla de aprendizaje distinta (la pseudoinversa, que no es la del curso) los cinco códigos pasan a ser puntos fijos, y eso confirma que lo que rompe a Hebb es la correlación.**
+
+- **Regla:** `W = K·(KᵀK)⁻¹·Kᵀ` con la diagonal en cero, donde `K` tiene los cinco códigos como columnas. Es la proyección sobre el espacio que generan los códigos. Es **otra regla de aprendizaje** que la de Hebb; la red es la misma:
+  mismas neuronas, mismas actualizaciones asincrónicas, misma energía. Necesita que los códigos sean linealmente independientes (lo son).
+- **Resultado:** `pseudoinverse_n_fixed_points` = 5 de 5 (0 módulos inestables en cada uno, margen de estabilidad 0,9808 y energía -682 para los cinco).
+- **Para qué está acá:** para probar la explicación. Si la causa del fracaso de Hebb es la correlación entre códigos, al sacar la interferencia la misma red tiene que recordarlos, y lo hace.
+  No se presenta como la red de Hopfield del curso ni sus números reemplazan a los de Hebb de arriba.
+
+### Deterioro: ruido, esquina rota y manchas
+
+**La pseudoinversa recupera el 100% de las consultas hasta invertir el 35% de los módulos, y todas las esquinas rotas y manchas hasta tamaños grandes; Hebb no recupera ninguna.**
+
+![Recuperación exacta frente al tipo de deterioro](../../runs/hopfield_qr/recovery_vs_noise.png)
+
+![Ejemplos de consultas dañadas y su estado final](../../runs/hopfield_qr/damage_examples.png)
+
+Ruido aleatorio (módulos invertidos al azar), 100 consultas por nivel y regla (20 por código); "recuperada" = el estado final es exactamente el código de origen (`runs/hopfield_qr/recovery_rates.csv`):
+
+| Nivel | Módulos invertidos | Hebb: recuperada | Pseudoinversa: recuperada |
+|-------|--------------------|------------------|----------------------------|
+| 0,0 | 0 | 0,0 | 1,0 |
+| 0,05 | 68 | 0,0 | 1,0 |
+| 0,1 | 137 | 0,0 | 1,0 |
+| 0,15 | 205 | 0,0 | 1,0 |
+| 0,2 | 274 | 0,0 | 1,0 |
+| 0,25 | 342 | 0,0 | 1,0 |
+| 0,3 | 411 | 0,0 | 1,0 |
+| 0,35 | 479 | 0,0 | 1,0 |
+| 0,4 | 548 | 0,0 | 0,96 |
+| 0,45 | 616 | 0,0 | 0,72 |
+| 0,5 | 684 | 0,0 | 0,0 |
+
+**Umbral de ruido:** la pseudoinversa recupera todo hasta el nivel `pseudoinverse_max_level_full_recovery` = 0,35 (479 de 1369 módulos invertidos, 35%); en 0,4 cae a 0,96, en 0,45 a 0,72 y en 0,5 a 0,0, porque invertir la mitad de los módulos no deja información sobre el código: con una fracción invertida de 0,4996 la consulta tiene una superposición casi nula con el original.
+
+- En 0,4 y 0,45 los fracasos son otro código guardado (0,02 y 0,14) o un estado espúreo (0,02 y 0,14); en 0,5 el 36% termina en otro código guardado, el 36% en un código invertido y el 28% en un estado espúreo (`recovery_rates.csv`).
+
+Esquina rota (un triángulo blanco en una de las cuatro esquinas; 20 consultas por tamaño: 5 códigos × 4 esquinas) y mancha (un bloque negro cuadrado en una posición al azar; 100 consultas por tamaño). La fracción de módulos que cambian es el promedio por tamaño:
+
+| Deterioro | Tamaño | Módulos dañados (fracción) | Hebb | Pseudoinversa |
+|-----------|--------|----------------------------|------|----------------|
+| Esquina rota | 8 | 0,0161 | 0,0 | 1,0 |
+| Esquina rota | 12 | 0,0311 | 0,0 | 1,0 |
+| Esquina rota | 16 | 0,0533 | 0,0 | 1,0 |
+| Esquina rota | 20 | 0,0808 | 0,0 | 1,0 |
+| Esquina rota | 24 | 0,113 | 0,0 | 1,0 |
+| Esquina rota | 28 | 0,1527 | 0,0 | 1,0 |
+| Esquina rota | 32 | 0,1984 | 0,0 | 0,95 |
+| Mancha | 8 | 0,0229 | 0,0 | 1,0 |
+| Mancha | 12 | 0,0515 | 0,0 | 1,0 |
+| Mancha | 16 | 0,0916 | 0,0 | 1,0 |
+| Mancha | 20 | 0,1442 | 0,0 | 1,0 |
+| Mancha | 24 | 0,207 | 0,0 | 0,99 |
+
+- `pseudoinverse_corner_recovery` va de 1,0 a 0,95 y `pseudoinverse_occlusion_recovery` de 1,0 a 0,99: con la esquina de tamaño 32 (casi 20% de los módulos) se pierde un código de las 20 consultas (food con la esquina inferior izquierda rota termina en wine), y con una mancha de 24
+  (más del 20%) se pierde una de 100 (wine termina en food). Son estados estables de otro código, no espúreos.
+- Las manchas y las esquinas son mucho más fáciles que el ruido aleatorio con la misma fracción de módulos: el daño está concentrado en una zona y el resto del código sigue intacto, mientras que el ruido distribuido toca todo el código.
+
+### Iteraciones y energía en cada paso
+
+**Con la pseudoinversa casi todas las consultas convergen en un barrido (1,0471 en promedio); con Hebb en 1,2828, pero hacia el estado equivocado; y la energía no sube en ningún paso.**
+
+![Iteraciones hasta converger frente al ruido](../../runs/hopfield_qr/iterations.png)
+
+![Energía después de cada actualización de neurona](../../runs/hopfield_qr/energy_per_step.png)
+
+- **Iteraciones** (barridos que cambian el estado): `hebb_mean_iterations` = 1,2828 y `pseudoinverse_mean_iterations` = 1,0471; el máximo de las dos reglas es `max_iterations` = 4 (pseudoinversa, nivel 0,5, la zona sin información). Con ruido 0,0 la pseudoinversa no necesita ninguna iteración (el código ya es un punto fijo)
+  y Hebb necesita una, porque sale del código. Hebb nunca pasa de 2 barridos; la pseudoinversa sube a 2 desde el nivel 0,35, a 3 desde 0,4 y a 4 en 0,5.
+- **Energía:** `energy_never_increased` = true. Se verificó por iteración en todas las consultas y por cada actualización de neurona en los casos de `runs/hopfield_qr/energy_trace.csv` (el código food, intento 0, con ruido 0,1, 0,3 y 0,45, para cada regla).
+- **Cómo se lee la curva por actualización** (panel izquierdo): casi toda la caída ocurre en el **primer barrido** de las 1369 neuronas (más del 99,9% de la caída total en todos los casos medidos) y el segundo barrido confirma, sin cambios (con Hebb y ruido 0,3 hay además un tercero de confirmación).
+  Las curvas terminan en un valor distinto por regla: la pseudoinversa en -682, que es la energía de cada código guardado, y Hebb en -2172,88, la del "QR promedio". Partiendo de una consulta con ruido 0,1 la energía inicial es -435,8 (pseudoinversa) y -1324,86 (Hebb), y con ruido 0,45 es -4,83 y -19,08.
+  A mayor ruido, más alta la energía inicial y más larga la bajada.
+
+### Lectura con un decodificador QR
+
+**Después de recuperar un código hay que leerlo: el lector decodifica los 5 originales y, tras la pseudoinversa, un código recuperado se lee igual de bien que se recupera; tras Hebb no lee ninguno.**
+
+![Fracción que el lector decodifica como el menú original, antes y después de la red](../../runs/hopfield_qr/decode_vs_noise.png)
+
+- **Decodificador:** zxing-cpp 3.1.1 (`decoder_name`, `decoder_version`; opcional, ver "Cómo regenerar (2.1)"), con cada matriz dibujada a escala 8 y zona de silencio de 4 módulos. `n_originals_decoded` = 5, y cada uno se lee como su URL (`reference_texts`):
+
+| Código | Texto decodificado |
+|--------|--------------------|
+| food | https://github.com/eugepineiro/sia-tips/blob/feature/tp4-images/TPs/TP4/food_menu.png |
+| wine | https://github.com/eugepineiro/sia-tips/blob/feature/tp4-images/TPs/TP4/wine_menu.png |
+| beverages | https://github.com/eugepineiro/sia-tips/blob/feature/tp4-images/TPs/TP4/beverages_menu.png |
+| dessert | https://github.com/eugepineiro/sia-tips/blob/feature/tp4-images/TPs/TP4/dessert_menu.png |
+| specials | https://github.com/eugepineiro/sia-tips/blob/feature/tp4-images/TPs/TP4/specials_menu.png |
+
+- **Sin la red** (solo la corrección de errores propia del QR, `query_flip_decode_rates`): con ruido 0,0 el lector decodifica 1,0 y con **cualquier** nivel desde 0,05 (68 módulos invertidos) decodifica 0,0 de las consultas. La esquina rota se lee en 0,25 de los casos con tamaños 8 y 12 (solo si le tocó la esquina inferior derecha, que no tiene patrón de posición)
+  y 0,0 desde 16; la mancha de 8 se lee en 0,7 y 0,0 desde 12 (`runs/hopfield_qr/summary.json`, `query_corner_decode_rates`, `query_occlusion_decode_rates`).
+- **Con la red:** la tasa de decodificación después de la pseudoinversa, `pseudoinverse_final_flip_decode_rates`, es 1,0 hasta 0,35, 0,96 en 0,4, 0,72 en 0,45 y 0,0 en 0,5; después de Hebb, `hebb_final_flip_decode_rates`, es 0,0 en todos los niveles.
+  En este run las tasas de decodificación y de recuperación exacta coinciden, pero son medidas distintas: la recuperación compara los 1369 módulos y la decodificación compara el texto leído con el del código de origen (un código recuperado en otro menú se lee, pero como otro texto).
+- **El "QR promedio" de Hebb no se lee como ningún menú** (`mean_attractor_decoded_as` = "none"): Hebb falla de manera visible, no devuelve un menú equivocado con seguridad.
+
+**Decodificación:** el lector decodifica los 5 originales (`n_originals_decoded` = 5); tras la pseudoinversa decodifica el 100% de los códigos recuperados hasta 35% de ruido y tras Hebb el 0%, mientras que sin la red ya no decodifica nada con un 5% de módulos invertidos.
+
+### Limitaciones del caso de uso
+
+**(a) Los códigos están muy correlacionados, y eso rompe la memoria de Hebb.** `shared_module_frac` = 0,6976 y `max_offdiag_overlap` = 0,8598: la interferencia entre códigos es más grande que la señal de cada uno (0 de 5 puntos fijos, 71 a 225 módulos inestables).
+Una memoria asociativa de este tipo necesita patrones casi ortogonales (2.2); los QR de un mismo menú no lo son por construcción.
+
+**(b) Aparecen estados espúreos, y con Hebb todos son el mismo.** Con la regla del curso el 97,47% de las consultas termina en el "QR promedio" (`hebb_frac_mean_attractor` = 0,9747), que no se lee como ningún menú.
+Con la pseudoinversa el ruido de 0,5 lleva a códigos invertidos (36%) y espúreos (28%), y en 2.2 vimos que las 16 mezclas de tres letras son puntos fijos espúreos y que en un 39,5% de las consultas muy ruidosas la red cae en uno.
+
+**(c) La capacidad real es menor que la cuenta.** Por cantidad, 0,138·N = 188,922 patrones (`capacity_0138`) sobre 5 códigos parece holgado, pero con códigos así de parecidos la capacidad efectiva de Hebb queda por debajo de 5: no entra ninguno.
+La curva de 2.2 lo anticipaba: con patrones sin elegir por ortogonalidad, ya con 5 letras al azar solo el 14% de los conjuntos tiene todas las letras estables.
+
+**(d) El umbral de ruido es 0,35, y es de la pseudoinversa.** Se recupera todo hasta 479 de 1369 módulos invertidos (`pseudoinverse_max_level_full_recovery` = 0,35) y desde 0,4 empiezan los errores (0,96, 0,72 y 0,0 en 0,5, donde el 36% termina en otro menú y otro 36% en un código invertido).
+Para comparar, el lector de QR solo, sin la red, ya falla con el 5% de módulos invertidos al azar (68 módulos): la red le agrega mucho margen a ese tipo de deterioro. Una explicación consistente con esto, que no medimos por separado, es que la corrección de errores del QR trabaja por palabras de código de 8 módulos
+y 68 módulos invertidos al azar caen en muchas palabras distintas. En cambio, con una mancha de 8×8 el lector solo funciona en 0,7 de los casos.
+
+**(e) La memoria solo conoce los 5 menús guardados.** Un menú nuevo obliga a reentrenar la red, y un código que no guardó se lo asigna al más parecido: con ruido 0,5 el 36% de las consultas termina en otro de los cinco códigos, y una esquina de tamaño 32 o una mancha de 24 puede terminar en otro menú
+(1 de 20 y 1 de 100). Un código recuperado en otro menú se lee como otro texto, sin aviso. Además el espacio de consulta es siempre una matriz de 37×37 con el mismo tamaño que los guardados.
+
+**(f) Una foto real no es una matriz de 37×37 limpia.** Antes de esta red habría que detectar el código en la imagen, corregir la perspectiva y binarizarlo a 37×37 módulos alineados con los guardados; un desplazamiento de un módulo ya es un ruido enorme para una memoria que compara módulo a módulo.
+Acá el deterioro está simulado sobre la matriz (módulos invertidos, un triángulo blanco, un bloque negro), no sobre imágenes reales.
+
+### Supuestos (2.1)
+
+- **Signo:** negro = +1, blanco = −1, con el umbral de 128 en la imagen en escala de grises; la matriz guardada no tiene zona de silencio. La red es simétrica ante un cambio global de signo, así que la convención no cambia los resultados.
+- **Modelos de deterioro:** ruido = módulos invertidos al azar (cantidad exacta por nivel, sin repetir); esquina rota = triángulo blanco `fila + columna < tamaño` en una de las cuatro esquinas (un intento determinístico por código y esquina); mancha = bloque negro cuadrado en una posición al azar con semilla fija (20 por código y tamaño).
+  No modelamos rayones por separado: son un caso intermedio entre mancha y ruido.
+- **Consultas pareadas:** las dos reglas ven exactamente las mismas consultas dañadas, así que la diferencia entre ellas no depende del azar de la consulta. Las tasas de 100 consultas por celda (20 en las esquinas) tienen una resolución de 0,01 (0,05).
+- **Pseudoinversa como comparación:** no es la regla del curso; sirve para aislar la correlación como causa. Se puede sacar con `"rules": ["hebb"]` en la config.
+- **Energía:** la energía por iteración se mide en todas las consultas; la curva por actualización de neurona solo en los casos de ejemplo (food, intento 0, ruido 0,1, 0,3 y 0,45), con las dos reglas.
+- **Criterio de decodificación:** un código cuenta como decodificado solo si el texto leído es exactamente el del código de origen; leer otro menú no cuenta, y se informa aparte. La decodificación es opcional y se hace con zxing-cpp.
+- **Iteraciones:** se cuentan solo los barridos que cambiaron el estado (ver 2.2).
+- **Solo numpy** para la red y los análisis; la única dependencia extra es el decodificador opcional.
+- Los gráficos se enlazan desde `runs/` (se regeneran, no se versionan).
+
+### Cómo regenerar (2.1)
+
+```bash
+.venv/bin/python -m tp4 run configs/hopfield_letters.json
+.venv/bin/python -m tp4 run configs/hopfield_qr.json
+```
+
+El decodificador de QR es opcional (si falta, la corrida informa `decoder_available` = false y `decoder_reason`, y las cifras de decodificación de esta nota no se pueden regenerar):
+
+```bash
+.venv/bin/pip install -r requirements-qr.txt
+```
+
+Verificación de la evidencia (los 21 valores de 2.2, los 20 de 2.1 y los 5 del decodificador):
+
+```bash
+.venv/bin/python -m tp4.findings docs/hallazgos/ej2.md \
+  --cite runs/hopfield_letters/summary.json:selected_letters \
+  --cite runs/hopfield_letters/summary.json:selected_max_abs_dot \
+  --cite runs/hopfield_letters/summary.json:selected_mean_abs_dot \
+  --cite runs/hopfield_letters/summary.json:worst_letters \
+  --cite runs/hopfield_letters/summary.json:worst_max_abs_dot \
+  --cite runs/hopfield_letters/summary.json:n_subsets \
+  --cite runs/hopfield_letters/summary.json:capacity_0138 \
+  --cite runs/hopfield_letters/summary.json:capacity_015 \
+  --cite runs/hopfield_letters/summary.json:selected_n_fixed_points \
+  --cite runs/hopfield_letters/summary.json:worst_n_fixed_points \
+  --cite runs/hopfield_letters/summary.json:selected_stability_margins \
+  --cite runs/hopfield_letters/summary.json:selected_max_level_full_recovery \
+  --cite runs/hopfield_letters/summary.json:n_sync_cycles \
+  --cite runs/hopfield_letters/summary.json:spurious_n_flips \
+  --cite runs/hopfield_letters/summary.json:spurious_rate \
+  --cite runs/hopfield_letters/summary.json:spurious_letter \
+  --cite runs/hopfield_letters/summary.json:spurious_nearest_letter \
+  --cite runs/hopfield_letters/summary.json:spurious_hamming_to_nearest \
+  --cite runs/hopfield_letters/summary.json:spurious_overlaps \
+  --cite runs/hopfield_letters/summary.json:spurious_energy \
+  --cite runs/hopfield_letters/summary.json:n_stable_mixtures \
+  --cite runs/hopfield_qr/summary.json:n_neurons \
+  --cite runs/hopfield_qr/summary.json:capacity_0138 \
+  --cite runs/hopfield_qr/summary.json:mean_offdiag_overlap \
+  --cite runs/hopfield_qr/summary.json:max_offdiag_overlap \
+  --cite runs/hopfield_qr/summary.json:max_overlap_pair \
+  --cite runs/hopfield_qr/summary.json:n_shared_modules \
+  --cite runs/hopfield_qr/summary.json:shared_module_frac \
+  --cite runs/hopfield_qr/summary.json:hebb_n_fixed_points \
+  --cite runs/hopfield_qr/summary.json:hebb_unstable_bits \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_n_fixed_points \
+  --cite runs/hopfield_qr/summary.json:hebb_frac_mean_attractor \
+  --cite runs/hopfield_qr/summary.json:hebb_mean_attractor_overlaps \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_flip_recovery \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_max_level_full_recovery \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_corner_recovery \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_occlusion_recovery \
+  --cite runs/hopfield_qr/summary.json:hebb_mean_iterations \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_mean_iterations \
+  --cite runs/hopfield_qr/summary.json:max_iterations \
+  --cite runs/hopfield_qr/summary.json:energy_never_increased \
+  --cite runs/hopfield_qr/summary.json:n_originals_decoded \
+  --cite runs/hopfield_qr/summary.json:reference_texts \
+  --cite runs/hopfield_qr/summary.json:query_flip_decode_rates \
+  --cite runs/hopfield_qr/summary.json:pseudoinverse_final_flip_decode_rates \
+  --cite runs/hopfield_qr/summary.json:mean_attractor_decoded_as
+```
