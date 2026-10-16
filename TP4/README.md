@@ -351,6 +351,68 @@ métricas (una publicación por creador al precio `price_usd`, costo agrupado po
 argentino estimado) y qué cambiar si cambian los datos están en la sección "Mantenimiento del
 sistema" de [`docs/hallazgos/ej1.md`](docs/hallazgos/ej1.md).
 
+## Red de Hopfield (`tp4/models/hopfield.py`)
+
+Una red de Hopfield discreta escrita **a mano en numpy** (sin librerías de redes; un test mira los imports y las
+llamadas de todo `tp4/`). Los estados son vectores de N neuronas en {−1, +1}. La usan los experimentos
+`hopfield_letters` y `hopfield_qr` (más abajo), y sirve para cualquier otro conjunto de patrones.
+
+- **Reglas de aprendizaje** (`train(patrones, rule)`): `"hebb"` es la del curso, `W = (1/N)·Σ ξξᵀ` con **diagonal cero**; `"pseudoinverse"`
+  es la proyección `W = K·(KᵀK)⁻¹·Kᵀ`, también con diagonal cero, que **no es la del curso**: existe para comparar cuando los patrones
+  están muy correlacionados (necesita patrones linealmente independientes).
+- **Actualizaciones** (`recall`): `"async"` visita las N neuronas en un orden aleatorio por barrido (una permutación por barrido de la semilla, compartida por
+  todas las consultas de un lote) y `"sync"` actualiza todas a la vez, `S(t+1) = signo(W·S(t))`.
+- **Regla de signo:** `h_i = Σ_j w_ij S_j`; si `h_i = 0` (en rigor `|h_i| ≤ 1e-9`) la neurona **conserva su estado**.
+- **Energía:** `H(S) = −½·Σ w_ij S_i S_j` (`energy`), por iteración y, opcionalmente (`trace`), por cada actualización individual de neurona;
+  en modo asincrónico nunca sube.
+- **Criterios de corte:** un barrido sin cambios (`converged`), un ciclo de período 2 en modo sincrónico (`cycle`) o `max_iter` barridos
+  (`max_iter`, hasta 1000). `iterations` cuenta solo los barridos que cambiaron el estado.
+- **Consultas en lote:** `recall` recibe una matriz de consultas (B × N) y devuelve estados finales, iteraciones, estado de corte y la energía de cada paso;
+  el resultado de una fila no depende de qué otras consultas la acompañen.
+
+## Letras 5×5 (`kind: "hopfield_letters"`)
+
+```bash
+.venv/bin/python -m tp4 run configs/hopfield_letters.json
+```
+
+Ejercicio 2.2 del enunciado: guarda 4 letras de 5×5 en la red, elige cuáles por **ortogonalidad** (matriz de productos internos de las 26 letras y un
+ranking de los C(26, 4) subconjuntos), mide la capacidad, la recuperación con ruido y muestra un estado espúreo. Clave propia:
+`alphabet` (ruta a un JSON que mapea una letra mayúscula ASCII a una lista de strings de la misma longitud, con `#` = píxel negro = +1 y
+`.` = píxel blanco = −1; todas las letras con la misma forma y sin repetir; el archivo `datos/letras_5x5.json` tiene las 26 letras, dibujadas a mano).
+`params`:
+
+| Parámetro | Significado | Valores permitidos |
+|-----------|-------------|--------------------|
+| `n_store` | cuántas letras se guardan | entero entre 2 y 6 (y como máximo la cantidad de letras; C(letras, `n_store`) ≤ 300000) |
+| `letters` | letras a guardar a mano; `[]` = elegir las más ortogonales | `[]` o `n_store` letras distintas del alfabeto |
+| `rule` | regla de aprendizaje | `"hebb"` o `"pseudoinverse"` |
+| `updates` | modos de actualización a medir | lista no vacía sin repetidos de `"async"` y `"sync"` |
+| `max_iter` | tope de barridos | entero entre 1 y 1000 |
+| `noise_levels` | fracciones de píxeles invertidos | lista no vacía, estrictamente creciente, números en [0, 1] |
+| `example_level` | nivel de los ejemplos de `recall_examples.png` | uno de los `noise_levels` |
+| `trials` | consultas por letra y nivel | entero entre 1 y 1000 |
+| `spurious_noise` | nivel de la consulta "muy ruidosa" del estado espúreo | número en (0, 1] |
+| `capacity_max_p` | mayor cantidad de letras de la curva de capacidad | entero entre 1 y la cantidad de letras |
+| `capacity_subsets` | subconjuntos aleatorios por p en la curva de capacidad | entero entre 1 y 5000 |
+
+Una config o un alfabeto inválidos salen con `error: ...` y código 2 antes de crear `runs/hopfield_letters/`. Con la misma semilla
+los CSV y `summary.json` salen idénticos byte a byte. La red corre siempre en numpy (`backend` queda registrado en `run.json`).
+
+| Artefacto en `runs/hopfield_letters/` | Contenido |
+|---------------------------------------|-----------|
+| `dot_products.csv`, `dot_products.png` | matriz de productos internos de las 26 letras |
+| `orthogonality.csv` | ranking de los subconjuntos por (mayor valor absoluto del producto interno, promedio, orden alfabético) |
+| `alphabet.png` | las 26 letras con el conjunto elegido y el peor marcados |
+| `stored.csv` | por letra guardada (conjunto elegido y peor): punto fijo, margen de estabilidad y energía |
+| `capacity.csv`, `capacity.png` | fracción de letras estables y de conjuntos con todas estables, por p, y para el conjunto elegido y el peor |
+| `recall.csv` | una fila por consulta: conjunto, modo, letra, nivel, píxeles invertidos, iteraciones, estado de corte, clase final y distancia de Hamming |
+| `recall_rates.csv`, `recovery_vs_noise.png`, `recall_examples.png` | tasas de recuperación, espúrea, invertida y de ciclo por conjunto, modo y nivel, y ejemplos |
+| `mixtures.csv` | las mezclas de tres letras con signo y si son puntos fijos |
+| `spurious.png` | la consulta muy ruidosa, el estado espúreo y las letras guardadas, con superposiciones y energías |
+| `energy.csv`, `energy_trace.csv`, `energy.png` | energía por iteración y por actualización de neurona (ejemplos y el caso espúreo) |
+| `summary.json`, `run.json` | letras elegidas y peores, productos internos máximos, cotas de capacidad (0,138·N y 0,15·N), tasas de recuperación, el caso espúreo (letra, píxeles, superposiciones, energía, mezcla) y el registro de la corrida |
+
 ## Backend CUDA opcional
 
 Con `"backend": "cupy"` en la config, los cálculos de arrays que usan `ctx.backend.xp` (por ahora
@@ -539,4 +601,37 @@ evidencia, en este orden (barrido de η, Oja y campañas), y verificarla (los 53
   --cite runs/campaigns/summary.json:makeup_global_mean_topic_share \
   --cite runs/campaigns/summary.json:art_global_mean_topic_share \
   --cite runs/campaigns/summary.json:n_overlapping_creators
+```
+
+### Ejercicio 2: memoria asociativa (Hopfield)
+
+Las conclusiones del Ejercicio 2 están en [`docs/hallazgos/ej2.md`](docs/hallazgos/ej2.md). La sección `## 2.2 Recomendación: letras 5×5`
+(va primero, porque el enunciado recomienda probar el caso simple) explica la red implementada, por qué se guardan G, R, T y V
+(ortogonalidad), la capacidad frente a 0,138·N y 0,15·N, la recuperación con ruido y un estado espúreo. Para regenerar su evidencia y
+verificarla (los 21 valores de 2.2):
+
+```bash
+.venv/bin/python -m tp4 run configs/hopfield_letters.json
+.venv/bin/python -m tp4.findings docs/hallazgos/ej2.md \
+  --cite runs/hopfield_letters/summary.json:selected_letters \
+  --cite runs/hopfield_letters/summary.json:selected_max_abs_dot \
+  --cite runs/hopfield_letters/summary.json:selected_mean_abs_dot \
+  --cite runs/hopfield_letters/summary.json:worst_letters \
+  --cite runs/hopfield_letters/summary.json:worst_max_abs_dot \
+  --cite runs/hopfield_letters/summary.json:n_subsets \
+  --cite runs/hopfield_letters/summary.json:capacity_0138 \
+  --cite runs/hopfield_letters/summary.json:capacity_015 \
+  --cite runs/hopfield_letters/summary.json:selected_n_fixed_points \
+  --cite runs/hopfield_letters/summary.json:worst_n_fixed_points \
+  --cite runs/hopfield_letters/summary.json:selected_stability_margins \
+  --cite runs/hopfield_letters/summary.json:selected_max_level_full_recovery \
+  --cite runs/hopfield_letters/summary.json:n_sync_cycles \
+  --cite runs/hopfield_letters/summary.json:spurious_n_flips \
+  --cite runs/hopfield_letters/summary.json:spurious_rate \
+  --cite runs/hopfield_letters/summary.json:spurious_letter \
+  --cite runs/hopfield_letters/summary.json:spurious_nearest_letter \
+  --cite runs/hopfield_letters/summary.json:spurious_hamming_to_nearest \
+  --cite runs/hopfield_letters/summary.json:spurious_overlaps \
+  --cite runs/hopfield_letters/summary.json:spurious_energy \
+  --cite runs/hopfield_letters/summary.json:n_stable_mixtures
 ```
