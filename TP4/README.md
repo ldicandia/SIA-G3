@@ -5,8 +5,18 @@ exploratorio y PCA de `datos/creadores.csv`, un mapa de Kohonen escrito a mano, 
 y una red de Hopfield. Cada análisis se corre con **un solo comando** a partir de un archivo de
 configuración con semilla fija, y deja sus resultados y gráficos en `runs/<experimento>/`.
 
-Esta primera etapa deja lista la infraestructura (CLI, configs, directorios de corrida, tests)
-y el **análisis exploratorio (EDA)** del dataset.
+Qué se entrega:
+
+- **Ejercicio 1** (campañas de marketing): EDA, PCA, mapa de Kohonen, regla de Oja y la
+  elección de creadores por campaña. **Ejercicio 2** (memoria asociativa): red de Hopfield sobre
+  letras de 5×5 y sobre los códigos QR de menú. Kohonen, Oja y Hopfield están escritos a mano en
+  numpy; solo la PCA usa sklearn.
+- **Una nota de hallazgos por ejercicio** en `docs/hallazgos/` ([`ej1.md`](docs/hallazgos/ej1.md) y
+  [`ej2.md`](docs/hallazgos/ej2.md)), con las figuras commiteadas en `docs/hallazgos/figuras/` y un
+  *Resumen para la presentación* al principio de cada una.
+- **Regeneración y verificación con un comando**: ver
+  [Regenerar y verificar todo](#regenerar-y-verificar-todo). Las pruebas de TEST-01 y la prueba en
+  una máquina limpia están en [Tests](#tests).
 
 ## Instalación
 
@@ -44,13 +54,16 @@ Las configs son JSON (o TOML, por extensión `.toml`) con estas claves comunes:
 | Clave | Significado |
 |-------|-------------|
 | `experiment` | nombre de la corrida; define el directorio `runs/<experiment>/` (`[a-z0-9_-]`, hasta 64 caracteres) |
-| `kind` | tipo de experimento (por ahora `eda`) |
+| `kind` | tipo de experimento, uno de los 9 registrados: `eda` (abajo), `pca` ([PCA](#pca-kind-pca)), `sweep` ([Barridos en paralelo](#barridos-en-paralelo)), `som` y `som_control` ([Mapa de Kohonen](#mapa-de-kohonen-kind-som); el control es el mapa sobre las componentes principales), `oja` ([Regla de Oja](#regla-de-oja-kind-oja)), `campaigns` ([Campañas](#campañas-kind-campaigns)), `hopfield_letters` ([Letras 5×5](#letras-55-kind-hopfield_letters)) y `hopfield_qr` ([Códigos QR](#códigos-qr-kind-hopfield_qr)) |
 | `seed` | semilla entera obligatoria; misma semilla, mismos números |
 | `backend` | `numpy` (por defecto) o `cupy` (opcional, ver "Backend CUDA opcional") |
 | `plots` | `true`/`false`: escribir o no los PNG |
 
-Para `kind: "eda"` además: `data` (ruta al CSV, relativa a `TP4/`) y `params.outlier_iqr_k`
-(multiplicador de las cercas de Tukey, 1.5 por defecto).
+Para `kind: "eda"` además: `data` (ruta al CSV, relativa a `TP4/`), `feature_set` (ruta al JSON
+que declara las variables que se descartan y cuáles se reconstruyen, `configs/feature_set.json`),
+`params.outlier_iqr_k` (multiplicador de las cercas de Tukey, 1.5 por defecto) y
+`params.near_redundant_abs_r` (umbral de |r| desde el que un par de variables es casi redundante,
+en `(0, 1]`, 0.95 por defecto).
 
 Una corrida reemplaza por completo a otra con el mismo `experiment`, pero solo si esa carpeta
 contiene un `run.json` de tp4; una carpeta ajena se rechaza sin tocarla.
@@ -122,11 +135,47 @@ y 1 de CuPy (`tests/test_backend.py`).
 | `distributions.png` | histograma de cada variable con las cercas de Tukey punteadas |
 | `boxplots_standardized.png` | boxplots de las variables estandarizadas (los outliers coinciden con `outliers.csv`) |
 | `scale_ranges.png` | desvío estándar de cada variable en escala logarítmica: muestra la brecha de escalas que motiva estandarizar |
-| `correlation_heatmap.png` | mapa de calor de la correlación entre variables |
+| `correlation_heatmap.png` | mapa de calor de la correlación entre todas las variables numéricas |
+| `correlation_heatmap_selected.png` | el mismo mapa de calor, solo con las variables seleccionadas por `feature_set` |
+| `identities.csv` | las identidades documentadas entre columnas (por ejemplo precio en ARS = precio en USD × 1500): si se cumplen en los datos (`holds`), el residuo máximo, la tolerancia y qué columna descartada (`broken_by`) las rompe |
+| `near_redundant.csv` | los pares de variables numéricas con \|r\| >= `near_redundant_abs_r`, con la marca `both_selected` si las dos quedaron en el conjunto seleccionado |
+| `feature_set.json` | el conjunto resuelto: variables seleccionadas, descartadas con su motivo, reconstruidas con su fórmula y si el conjunto es válido (`valid`) |
 
 Los outliers solo se **marcan y reportan**: ningún creador se elimina ni se modifica.
 
 `runs/` se regenera a partir de las configs y no se commitea (está en `.gitignore`).
+
+## PCA (`kind: "pca"`)
+
+```bash
+.venv/bin/python -m tp4 run configs/pca.json
+```
+
+PCA de sklearn sobre las variables seleccionadas (`configs/feature_set.json`). Claves propias:
+`data` (ruta al CSV) y `feature_set` (ruta al JSON de variables). `params`:
+
+| Parámetro | Significado | Valores permitidos |
+|-----------|-------------|--------------------|
+| `standardize` | estandarizar (media 0, desvío 1) o solo centrar | `true` (por defecto) o `false` |
+| `n_components` | cantidad de componentes que se calculan | `null` (todas) o entero >= 1 (no puede superar `min(creadores, variables)`) |
+| `variance_thresholds` | umbrales de varianza acumulada para contar componentes (`k_cum_80`, `k_cum_90`) | lista no vacía de números en `(0, 1]`, `[0.8, 0.9]` por defecto |
+| `loadings_pcs` | componentes que muestra el mapa de calor de cargas | entero >= 1, 6 por defecto |
+| `biplot_max_arrows` | cantidad máxima de flechas de variables en el biplot (las de mayor norma) | `null` (todas) o entero >= 1 |
+| `top_n` | variables que se listan por componente en `summary.json` (`pc1_top5`, `pc2_top5`) | entero >= 1, 5 por defecto |
+
+| Artefacto en `runs/pca/` | Contenido |
+|--------------------------|-----------|
+| `explained_variance.csv` | una fila por componente: autovalor, varianza explicada y varianza acumulada |
+| `loadings.csv` | coeficientes de cada componente (autovectores unitarios), una fila por variable |
+| `scores.csv` | una fila por creador (en el orden del CSV): identificación, tópico dominante y PC1..PCk |
+| `scree.png` | varianza explicada por componente y acumulada, con las líneas de los umbrales |
+| `loadings_heatmap.png` | variables contra las primeras `loadings_pcs` componentes |
+| `biplot.png` | PC1 contra PC2 con cada creador rotulado, coloreado por tópico dominante, y las flechas de las cargas |
+| `summary.json`, `run.json` | varianza de PC1 y PC2 y acumulada, `k_cum_*`, `kaiser_k`, variable principal de PC1 y PC2 con su carga, la verificación por autovalores y el registro de la corrida |
+
+Convención de signo: cada componente se orienta de modo que su coeficiente de mayor valor
+absoluto sea positivo, así el signo no cambia de una corrida a otra (Oja y `runs/som` usan la misma
+convención).
 
 ## Barridos en paralelo
 
@@ -545,268 +594,102 @@ Si `cupy` no está instalado, no hay dispositivo CUDA o algo falla, tp4 emite un
 sigue con `numpy` y deja el motivo en `run.json` (`backend.requested`, `backend.resolved`,
 `backend.fallback_reason`); la corrida termina con código 0.
 
+## Regenerar y verificar todo
+
+Todo lo que citan las notas de hallazgos se regenera y se verifica con `python -m tp4.delivery`
+(código en `tp4/delivery.py`). Lee `docs/hallazgos/evidencia.json`, el manifiesto de la entrega:
+el orden de las corridas (`run_order`), las configs que no son corridas (`not_run`, con el motivo)
+y, por nota, los valores que se citan (`cites`), las precondiciones (`requires`) y las secciones
+con citas propias (`sections`). El manifiesto solo tiene datos: lo único que se ejecuta son
+procesos `python -m tp4 run <config>`.
+
+**Requisito previo:** los números del decodificador de QR de la sección 2.1 necesitan el extra
+opcional (`.venv/bin/pip install -r requirements-qr.txt`, ver "Decodificador QR opcional"). Sin él
+todo se regenera igual, pero `check` imprime una línea `PRECONDITION ...` que nombra la causa y
+sale con código 1.
+
+| Comando | Qué hace |
+|---------|----------|
+| `.venv/bin/python -m tp4.delivery regenerate [--out-root DIR]` | corre las 12 configs de `run_order`, en ese orden y cada una en su propio proceso `python -m tp4 run` (por defecto escribe en `runs/`, que reemplaza), y después verifica que `configs/som.json` coincide con lo que eligieron los barridos de Kohonen. Imprime `[i/12] configs/...` y termina con `regenerate ok: 12 configs, som selection ok`; si una config falla, imprime `FAILED: <config> (exit N)` y se detiene |
+| `.venv/bin/python -m tp4.delivery figures [--root DIR]` | copia a `docs/hallazgos/figuras/` cada figura que las notas embeben desde `DIR/runs` (por defecto `runs/`) y reescribe los links `../../runs/...png` de las notas a la forma de copia. Imprime `figures: N declared, C copied, R links rewritten, D removed` |
+| `.venv/bin/python -m tp4.delivery check [--root DIR]` | revisa las notas contra `DIR/runs`: que cada config esté clasificada, que cada `runs/<experimento>` que nombran tenga su config, las precondiciones, los números citados (en toda la nota y en cada sección), que cada referencia a un título (`` `### Título` ``) exista, y que las figuras commiteadas sean idénticas byte a byte a las de las corridas. Termina con `delivery ok: <n> notes, <n> configs, <n> cites, <n> figures` o con `delivery FAILED: N problem(s)` |
+| `.venv/bin/python -m tp4.delivery verify` | todo desde cero: regenera las 12 configs en un directorio temporal, corre `check` contra ellas y borra el directorio (no toca `runs/`). Termina con `verify ok: clean regeneration matches the notes`. **Es el comando que hay que correr antes de armar las diapositivas** |
+| `.venv/bin/python -m tp4.delivery fresh-venv` | corre la suite completa desde una exportación limpia del HEAD en un venv nuevo; ver [Tests](#tests) |
+
+Para agregar algo nuevo:
+
+- **Una config:** clasificala en `docs/hallazgos/evidencia.json`. Si produce una corrida, va en
+  `run_order` (después de las que lee); si es una definición o la base de un barrido, va en
+  `not_run` con el motivo escrito. Sin eso, `check` imprime `UNCLASSIFIED`.
+- **Una figura:** escribí el link de la imagen en la nota apuntando al PNG de la corrida, dos
+  niveles arriba (`![texto](../../runs/<experimento>/<archivo>.png)`), y corré `figures`: reescribe
+  el link y copia el archivo. Los PNG de `docs/hallazgos/figuras/` que ninguna nota usa se borran.
+- **Un número citado:** agregá `runs/<experimento>/<archivo>.json:<clave>` a `cites` de la nota
+  (o de una de sus `sections`, si tiene que aparecer en esa sección) en `evidencia.json`. El valor
+  de esa clave tiene que estar escrito en el texto, con coma decimal.
+
+Qué significa cada línea de error:
+
+| Línea | Causa |
+|-------|-------|
+| `UNCLASSIFIED config: configs/x.json` | la config no está ni en `run_order` ni en `not_run` |
+| `NO CONFIG for runs/x (nota)` | la nota (o una cita o precondición) nombra `runs/x`, que ninguna config de `run_order` produce |
+| `PRECONDITION archivo:clave = valor, expected esperado: pista` | no se cumple una precondición de la nota (por ejemplo el decodificador de QR no está instalado); la pista dice cómo arreglarlo |
+| `MISSING artifact: ...` / `MISSING cite: archivo:clave=valor` | la nota nombra un archivo que no existe, o un número citado no aparece escrito en el texto (o la clave no existe) |
+| `MISSING section: ...` | el título de la sección que declara el manifiesto no está en la nota |
+| `MISSING figure source` / `MISSING figure copy` | falta el PNG de la corrida o su copia en `docs/hallazgos/figuras/` (correr `figures`) |
+| `STALE figure: copia differs from fuente` | la copia commiteada ya no es idéntica a la de la corrida (correr `figures`) |
+| `ORPHAN figure copy: archivo` | hay un PNG en `docs/hallazgos/figuras/` que ninguna nota embebe (correr `figures` lo borra) |
+| `BAD figure link: ...` | un link de imagen no tiene la forma de copia ni apunta a `../../runs/...png` (por ejemplo tiene `..` o un nombre raro) |
+| `UNKNOWN figure reference: archivo` | el texto menciona una figura `figuras/...png` que ninguna imagen declara |
+| `BROKEN section reference: ### Título` | el texto remite a un título entre comillas invertidas que no existe en la nota |
+
 ## Hallazgos
 
-Las conclusiones del Ejercicio 1 (EDA, conjunto de variables, PCA y la decisión sobre la entrada
-de Kohonen) están en [`docs/hallazgos/ej1.md`](docs/hallazgos/ej1.md). Para verificar que cada
-gráfico y número que cita viene de una corrida regenerada:
+Las conclusiones de cada ejercicio están en una nota con un *Resumen para la presentación* al
+principio (el esqueleto de las diapositivas: qué sección responde cada pregunta del enunciado,
+una diapositiva por hallazgo con su afirmación, figura y número, y la historia que las une).
+Las listas de valores citados no se repiten acá: están en
+[`docs/hallazgos/evidencia.json`](docs/hallazgos/evidencia.json), y
+`python -m tp4.delivery check` (o `verify`, desde cero) las corre contra las corridas. La opción
+`--cite` de `python -m tp4.findings` sigue disponible para revisar a mano un valor puntual de una nota.
 
-```bash
-.venv/bin/python -m tp4 run configs/eda.json
-.venv/bin/python -m tp4 run configs/pca.json
-.venv/bin/python -m tp4 run configs/pca_scaling_sweep.json
-.venv/bin/python -m tp4.findings docs/hallazgos/ej1.md \
-  --cite runs/pca/summary.json:pc1_explained_variance_pct \
-  --cite runs/pca/summary.json:pc2_explained_variance_pct \
-  --cite runs/pca/summary.json:cumulative_pc2_pct \
-  --cite runs/pca/summary.json:pc1_top_feature \
-  --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
-  --cite runs/eda/summary.json:n_selected_features
-```
+### Ejercicio 1: campañas de marketing
 
-El comando imprime `MISSING artifact:` o `MISSING cite:` por cada archivo o valor que falte y
-sale con código 1; si todo está, imprime `ok: ...` y sale con 0.
+[`docs/hallazgos/ej1.md`](docs/hallazgos/ej1.md) tiene cuatro secciones:
 
-### Sección 1.2: mapa de Kohonen
-
-La sección `## 1.2 Implementación: mapa de Kohonen` de la misma nota justifica la configuración del mapa, describe la
-distribución de los creadores, la matriz U, los planos de componentes, el perfil de cada región, la comparación con el
-biplot de PC1 y PC2 y un mapa de control sobre las 6 primeras componentes (`kind: "som_control"`, `configs/som_pca_control.json`,
-que reusa los hiperparámetros y la semilla de `configs/som.json`). Para regenerar la evidencia de la 1.2, en este orden
-(barrido de diseño, barrido, mapa, control), y verificarla:
-
-```bash
-.venv/bin/python -m tp4 run configs/som_design_sweep.json
-.venv/bin/python -m tp4 run configs/som_sweep.json
-.venv/bin/python -m tp4 run configs/som.json
-.venv/bin/python -m tp4 run configs/som_pca_control.json
-.venv/bin/python -m tp4.experiments.som_sweep_report check configs/som.json runs/som_design_sweep runs/som_sweep --run runs/som
-.venv/bin/python -m tp4.findings docs/hallazgos/ej1.md \
-  --cite runs/pca/summary.json:pc1_explained_variance_pct \
-  --cite runs/pca/summary.json:pc2_explained_variance_pct \
-  --cite runs/pca/summary.json:cumulative_pc2_pct \
-  --cite runs/pca/summary.json:pc1_top_feature \
-  --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
-  --cite runs/eda/summary.json:n_selected_features \
-  --cite runs/som_sweep/summary.json:selected_child \
-  --cite runs/som_sweep/summary.json:selected_quantization_error \
-  --cite runs/som_sweep/summary.json:selected_topographic_error \
-  --cite runs/som_sweep/summary.json:selected_distance_preservation \
-  --cite runs/som_design_sweep/summary.json:selected_child \
-  --cite runs/som/summary.json:n_regions \
-  --cite runs/som/summary.json:u_border_ratio \
-  --cite runs/som/summary.json:pc1_region_eta2 \
-  --cite runs/som/summary.json:pc2_region_eta2 \
-  --cite runs/som/summary.json:empty_neuron_frac \
-  --cite runs/som_pca_control/summary.json:region_ari \
-  --cite runs/som_pca_control/summary.json:bmu_distance_agreement
-```
-
-El mapa de control escribe `runs/som_pca_control/{control_comparison.csv, creator_regions.csv, region_contingency.csv,
-control_region_maps.png}`. La semilla del control tiene que ser igual a la de la config base (si no, sale con código 2),
-así su mapa sobre las variables es exactamente el de `runs/som`. El QE de los dos mapas no es comparable (distinto espacio);
-la nota compara TE, preservación de distancias y el índice de Rand ajustado de las regiones (`region_ari`).
-
-### Sección 1.3: índice de Oja
-
-La sección `## 1.3 Índice (regla de Oja)` de la misma nota explica la regla implementada, la convergencia de la norma
-y la elección de la tasa de aprendizaje con el barrido, la comparación con PC1 (pesos y puntajes), qué mide el índice y
-por qué no conviene elegir siempre al creador con el índice más alto. Para regenerar su evidencia, en este orden
-(barrido de η, corrida final y campañas, que aportan el cite sobre el primero del ranking), y verificarla (los 18 valores de
-1.1 y 1.2 más los de 1.3):
-
-```bash
-.venv/bin/python -m tp4 run configs/oja_sweep.json
-.venv/bin/python -m tp4 run configs/oja.json
-.venv/bin/python -m tp4 run configs/campaigns.json
-.venv/bin/python -m tp4.findings docs/hallazgos/ej1.md \
-  --cite runs/pca/summary.json:pc1_explained_variance_pct \
-  --cite runs/pca/summary.json:pc2_explained_variance_pct \
-  --cite runs/pca/summary.json:cumulative_pc2_pct \
-  --cite runs/pca/summary.json:pc1_top_feature \
-  --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
-  --cite runs/eda/summary.json:n_selected_features \
-  --cite runs/som_sweep/summary.json:selected_child \
-  --cite runs/som_sweep/summary.json:selected_quantization_error \
-  --cite runs/som_sweep/summary.json:selected_topographic_error \
-  --cite runs/som_sweep/summary.json:selected_distance_preservation \
-  --cite runs/som_design_sweep/summary.json:selected_child \
-  --cite runs/som/summary.json:n_regions \
-  --cite runs/som/summary.json:u_border_ratio \
-  --cite runs/som/summary.json:pc1_region_eta2 \
-  --cite runs/som/summary.json:pc2_region_eta2 \
-  --cite runs/som/summary.json:empty_neuron_frac \
-  --cite runs/som_pca_control/summary.json:region_ari \
-  --cite runs/som_pca_control/summary.json:bmu_distance_agreement \
-  --cite runs/oja/summary.json:cosine_to_pc1 \
-  --cite runs/oja/summary.json:pearson_scores_pc1 \
-  --cite runs/oja/summary.json:final_w_norm \
-  --cite runs/oja/summary.json:epochs_to_converge \
-  --cite runs/oja/summary.json:top_creator \
-  --cite runs/oja/summary.json:bottom_creator \
-  --cite runs/oja/summary.json:oja_top_feature \
-  --cite runs/oja/summary.json:lambda1 \
-  --cite runs/oja/summary.json:course_eta_bound \
-  --cite runs/oja_sweep/summary.json:selected_eta0 \
-  --cite runs/oja_sweep/summary.json:selected_child \
-  --cite runs/campaigns/summary.json:oja_top_creator_picked_for
-```
-
-### Sección 1.4: campañas
-
-La sección `## 1.4 Decisión para las campañas` de la misma nota explica el método de selección, da tres elegidos por cliente
-con su posición en el biplot, su región y celda del mapa y su índice de Oja, responde la pregunta de fútbol (alcance masivo,
-descubrimiento o profundidad educativa) con los perfiles por región, compara con la selección solo por seguidores y describe
-el mantenimiento del sistema (campaña nueva, creadores o variables nuevas y actualización mensual). Para regenerar su
-evidencia, en este orden (barrido de η, Oja y campañas), y verificarla (los 53 valores de 1.1 a 1.4):
-
-```bash
-.venv/bin/python -m tp4 run configs/oja_sweep.json
-.venv/bin/python -m tp4 run configs/oja.json
-.venv/bin/python -m tp4 run configs/campaigns.json
-.venv/bin/python -m tp4.findings docs/hallazgos/ej1.md \
-  --cite runs/pca/summary.json:pc1_explained_variance_pct \
-  --cite runs/pca/summary.json:pc2_explained_variance_pct \
-  --cite runs/pca/summary.json:cumulative_pc2_pct \
-  --cite runs/pca/summary.json:pc1_top_feature \
-  --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
-  --cite runs/eda/summary.json:n_selected_features \
-  --cite runs/som_sweep/summary.json:selected_child \
-  --cite runs/som_sweep/summary.json:selected_quantization_error \
-  --cite runs/som_sweep/summary.json:selected_topographic_error \
-  --cite runs/som_sweep/summary.json:selected_distance_preservation \
-  --cite runs/som_design_sweep/summary.json:selected_child \
-  --cite runs/som/summary.json:n_regions \
-  --cite runs/som/summary.json:u_border_ratio \
-  --cite runs/som/summary.json:pc1_region_eta2 \
-  --cite runs/som/summary.json:pc2_region_eta2 \
-  --cite runs/som/summary.json:empty_neuron_frac \
-  --cite runs/som_pca_control/summary.json:region_ari \
-  --cite runs/som_pca_control/summary.json:bmu_distance_agreement \
-  --cite runs/oja/summary.json:cosine_to_pc1 \
-  --cite runs/oja/summary.json:pearson_scores_pc1 \
-  --cite runs/oja/summary.json:final_w_norm \
-  --cite runs/oja/summary.json:epochs_to_converge \
-  --cite runs/oja/summary.json:top_creator \
-  --cite runs/oja/summary.json:bottom_creator \
-  --cite runs/oja/summary.json:oja_top_feature \
-  --cite runs/oja/summary.json:lambda1 \
-  --cite runs/oja/summary.json:course_eta_bound \
-  --cite runs/oja_sweep/summary.json:selected_eta0 \
-  --cite runs/oja_sweep/summary.json:selected_child \
-  --cite runs/campaigns/summary.json:oja_top_creator_picked_for \
-  --cite runs/campaigns/summary.json:dogs_picks \
-  --cite runs/campaigns/summary.json:football_picks \
-  --cite runs/campaigns/summary.json:makeup_picks \
-  --cite runs/campaigns/summary.json:art_picks \
-  --cite runs/campaigns/summary.json:followers_global_picks \
-  --cite runs/campaigns/summary.json:dogs_baseline_topic \
-  --cite runs/campaigns/summary.json:football_baseline_topic \
-  --cite runs/campaigns/summary.json:makeup_baseline_topic \
-  --cite runs/campaigns/summary.json:art_baseline_topic \
-  --cite runs/campaigns/summary.json:dogs_cost_per_1000_arg_reach \
-  --cite runs/campaigns/summary.json:football_cost_per_1000_arg_reach \
-  --cite runs/campaigns/summary.json:makeup_cost_per_1000_arg_reach \
-  --cite runs/campaigns/summary.json:art_cost_per_1000_arg_reach \
-  --cite runs/campaigns/summary.json:followers_global_cost_per_1000_arg_reach \
-  --cite runs/campaigns/summary.json:dogs_mean_topic_share \
-  --cite runs/campaigns/summary.json:football_mean_topic_share \
-  --cite runs/campaigns/summary.json:makeup_mean_topic_share \
-  --cite runs/campaigns/summary.json:art_mean_topic_share \
-  --cite runs/campaigns/summary.json:dogs_global_mean_topic_share \
-  --cite runs/campaigns/summary.json:football_global_mean_topic_share \
-  --cite runs/campaigns/summary.json:makeup_global_mean_topic_share \
-  --cite runs/campaigns/summary.json:art_global_mean_topic_share \
-  --cite runs/campaigns/summary.json:n_overlapping_creators
-```
+- **1.1 Exploración y representación (EDA + PCA):** los datos y su calidad, el conjunto de 25
+  variables seleccionado, distribuciones, outliers, escalas y correlaciones, la varianza explicada
+  por la PCA, si conviene estandarizar (barrido), la interpretación de PC1 y PC2 y la decisión sobre
+  la entrada de Kohonen.
+- **1.2 Implementación: mapa de Kohonen:** justifica la configuración del mapa (los dos barridos),
+  describe la distribución de los creadores, la matriz U, los planos de componentes, el perfil de
+  cada región y la comparación con el biplot de PC1 y PC2. Incluye un mapa de control sobre las 6
+  primeras componentes (`kind: "som_control"`, `configs/som_pca_control.json`, que reusa los
+  hiperparámetros y la semilla de `configs/som.json`; la semilla tiene que ser igual, si no sale con
+  código 2). Su QE no es comparable con el del mapa final (distinto espacio): la nota compara el
+  error topográfico, la preservación de distancias y el índice de Rand ajustado de las regiones
+  (`region_ari`). Escribe `runs/som_pca_control/{control_comparison.csv, creator_regions.csv,
+  region_contingency.csv, control_region_maps.png}`.
+- **1.3 Índice (regla de Oja):** la regla implementada, la convergencia de la norma, la elección de
+  la tasa de aprendizaje con el barrido, la comparación con PC1 (pesos y puntajes), qué mide el
+  índice y por qué no conviene elegir siempre al creador con el índice más alto.
+- **1.4 Decisión para las campañas:** el método de selección, tres elegidos por cliente con su
+  posición en el biplot, su región y celda del mapa y su índice de Oja, la respuesta a la pregunta de
+  fútbol (alcance masivo, descubrimiento o profundidad educativa) con los perfiles por región, la
+  comparación con la selección solo por seguidores y el mantenimiento del sistema (campaña nueva,
+  creadores o variables nuevas y actualización mensual).
 
 ### Ejercicio 2: memoria asociativa (Hopfield)
 
-Las conclusiones del Ejercicio 2 están en [`docs/hallazgos/ej2.md`](docs/hallazgos/ej2.md). La sección `## 2.2 Recomendación: letras 5×5`
-(va primero, porque el enunciado recomienda probar el caso simple) explica la red implementada, por qué se guardan G, R, T y V
-(ortogonalidad), la capacidad frente a 0,138·N y 0,15·N, la recuperación con ruido y un estado espúreo. Para regenerar su evidencia y
-verificarla (los 21 valores de 2.2):
+[`docs/hallazgos/ej2.md`](docs/hallazgos/ej2.md) va primero con la sección **2.2 Recomendación:
+letras 5×5** (el enunciado recomienda probar el caso simple) y después **2.1 Recuperación de
+códigos QR deteriorados**:
 
-```bash
-.venv/bin/python -m tp4 run configs/hopfield_letters.json
-.venv/bin/python -m tp4.findings docs/hallazgos/ej2.md \
-  --cite runs/hopfield_letters/summary.json:selected_letters \
-  --cite runs/hopfield_letters/summary.json:selected_max_abs_dot \
-  --cite runs/hopfield_letters/summary.json:selected_mean_abs_dot \
-  --cite runs/hopfield_letters/summary.json:worst_letters \
-  --cite runs/hopfield_letters/summary.json:worst_max_abs_dot \
-  --cite runs/hopfield_letters/summary.json:n_subsets \
-  --cite runs/hopfield_letters/summary.json:capacity_0138 \
-  --cite runs/hopfield_letters/summary.json:capacity_015 \
-  --cite runs/hopfield_letters/summary.json:selected_n_fixed_points \
-  --cite runs/hopfield_letters/summary.json:worst_n_fixed_points \
-  --cite runs/hopfield_letters/summary.json:selected_stability_margins \
-  --cite runs/hopfield_letters/summary.json:selected_max_level_full_recovery \
-  --cite runs/hopfield_letters/summary.json:n_sync_cycles \
-  --cite runs/hopfield_letters/summary.json:spurious_n_flips \
-  --cite runs/hopfield_letters/summary.json:spurious_rate \
-  --cite runs/hopfield_letters/summary.json:spurious_letter \
-  --cite runs/hopfield_letters/summary.json:spurious_nearest_letter \
-  --cite runs/hopfield_letters/summary.json:spurious_hamming_to_nearest \
-  --cite runs/hopfield_letters/summary.json:spurious_overlaps \
-  --cite runs/hopfield_letters/summary.json:spurious_energy \
-  --cite runs/hopfield_letters/summary.json:n_stable_mixtures
-```
-
-La sección `## 2.1 Recuperación de códigos QR deteriorados` de la misma nota muestra los cinco códigos como matrices de 37×37, por qué se parecen tanto, que la regla de Hebb
-del curso no recupera ninguno, la comparación con la regla de la pseudoinversa (que no es la del curso), la recuperación con ruido, esquina rota y manchas, las iteraciones y la energía
-en cada paso, lo que lee un decodificador de QR y las limitaciones del caso de uso. Para regenerar su evidencia (las dos corridas, con el decodificador instalado) y verificarla
-(los 21 valores de 2.2, los 20 de 2.1 y los 5 del decodificador; sin decodificador serían 21 + 20 + 1, con `decoder_reason`):
-
-```bash
-.venv/bin/pip install -r requirements-qr.txt
-.venv/bin/python -m tp4 run configs/hopfield_letters.json
-.venv/bin/python -m tp4 run configs/hopfield_qr.json
-.venv/bin/python -m tp4.findings docs/hallazgos/ej2.md \
-  --cite runs/hopfield_letters/summary.json:selected_letters \
-  --cite runs/hopfield_letters/summary.json:selected_max_abs_dot \
-  --cite runs/hopfield_letters/summary.json:selected_mean_abs_dot \
-  --cite runs/hopfield_letters/summary.json:worst_letters \
-  --cite runs/hopfield_letters/summary.json:worst_max_abs_dot \
-  --cite runs/hopfield_letters/summary.json:n_subsets \
-  --cite runs/hopfield_letters/summary.json:capacity_0138 \
-  --cite runs/hopfield_letters/summary.json:capacity_015 \
-  --cite runs/hopfield_letters/summary.json:selected_n_fixed_points \
-  --cite runs/hopfield_letters/summary.json:worst_n_fixed_points \
-  --cite runs/hopfield_letters/summary.json:selected_stability_margins \
-  --cite runs/hopfield_letters/summary.json:selected_max_level_full_recovery \
-  --cite runs/hopfield_letters/summary.json:n_sync_cycles \
-  --cite runs/hopfield_letters/summary.json:spurious_n_flips \
-  --cite runs/hopfield_letters/summary.json:spurious_rate \
-  --cite runs/hopfield_letters/summary.json:spurious_letter \
-  --cite runs/hopfield_letters/summary.json:spurious_nearest_letter \
-  --cite runs/hopfield_letters/summary.json:spurious_hamming_to_nearest \
-  --cite runs/hopfield_letters/summary.json:spurious_overlaps \
-  --cite runs/hopfield_letters/summary.json:spurious_energy \
-  --cite runs/hopfield_letters/summary.json:n_stable_mixtures \
-  --cite runs/hopfield_qr/summary.json:n_neurons \
-  --cite runs/hopfield_qr/summary.json:capacity_0138 \
-  --cite runs/hopfield_qr/summary.json:mean_offdiag_overlap \
-  --cite runs/hopfield_qr/summary.json:max_offdiag_overlap \
-  --cite runs/hopfield_qr/summary.json:max_overlap_pair \
-  --cite runs/hopfield_qr/summary.json:n_shared_modules \
-  --cite runs/hopfield_qr/summary.json:shared_module_frac \
-  --cite runs/hopfield_qr/summary.json:hebb_n_fixed_points \
-  --cite runs/hopfield_qr/summary.json:hebb_unstable_bits \
-  --cite runs/hopfield_qr/summary.json:pseudoinverse_n_fixed_points \
-  --cite runs/hopfield_qr/summary.json:hebb_frac_mean_attractor \
-  --cite runs/hopfield_qr/summary.json:hebb_mean_attractor_overlaps \
-  --cite runs/hopfield_qr/summary.json:pseudoinverse_flip_recovery \
-  --cite runs/hopfield_qr/summary.json:pseudoinverse_max_level_full_recovery \
-  --cite runs/hopfield_qr/summary.json:pseudoinverse_corner_recovery \
-  --cite runs/hopfield_qr/summary.json:pseudoinverse_occlusion_recovery \
-  --cite runs/hopfield_qr/summary.json:hebb_mean_iterations \
-  --cite runs/hopfield_qr/summary.json:pseudoinverse_mean_iterations \
-  --cite runs/hopfield_qr/summary.json:max_iterations \
-  --cite runs/hopfield_qr/summary.json:energy_never_increased \
-  --cite runs/hopfield_qr/summary.json:n_originals_decoded \
-  --cite runs/hopfield_qr/summary.json:reference_texts \
-  --cite runs/hopfield_qr/summary.json:query_flip_decode_rates \
-  --cite runs/hopfield_qr/summary.json:pseudoinverse_final_flip_decode_rates \
-  --cite runs/hopfield_qr/summary.json:mean_attractor_decoded_as
-```
+- **2.2:** la red implementada, por qué se guardan G, R, T y V (ortogonalidad), la capacidad frente
+  a 0,138·N y 0,15·N, la recuperación con ruido y un estado espúreo.
+- **2.1:** los cinco códigos como matrices de 37×37, por qué se parecen tanto, que la regla de Hebb
+  del curso no recupera ninguno, la comparación con la regla de la pseudoinversa (que no es la del
+  curso), la recuperación con ruido, esquina rota y manchas, las iteraciones y la energía en cada
+  paso, lo que lee un decodificador de QR y las limitaciones del caso de uso. Los números del
+  decodificador necesitan `requirements-qr.txt` (ver "Regenerar y verificar todo").
