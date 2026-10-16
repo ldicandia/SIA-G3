@@ -196,14 +196,17 @@ def _plot_scores(index, pc1_scores, names, topics, order, path: Path) -> None:
                        label=TOPIC_LABELS[topic], zorder=3)
     lim = max(float(np.abs(pc1_scores).max()), float(np.abs(index).max())) * 1.05
     ax.plot([-lim, lim], [-lim, lim], color="#444444", linewidth=1.0, linestyle="--", label="identidad")
-    for j, i in enumerate(order[:5]):  # best creators: labels stacked above-right
-        ax.annotate(str(names[i]), (pc1_scores[i], index[i]), xytext=(6, 4 - 3 * j), textcoords="offset points", fontsize=7)
-    for j, i in enumerate(order[-5:][::-1]):  # worst creators: labels stacked below-right, one line each
-        ax.annotate(str(names[i]), (pc1_scores[i], index[i]), xytext=(8, -4 - 9 * j), textcoords="offset points", fontsize=7)
+    # Labels sit in two fixed columns over the empty corners (the data hug the diagonal) and join
+    # their point with a thin leader line, so they cannot collide however close the points are.
+    for group, x_label, ha, y_start, y_step in ((order[:5][::-1], 0.78, "left", 0.66, -0.05), (order[-5:][::-1], 0.22, "right", 0.54, -0.05)):
+        for j, i in enumerate(group):
+            ax.annotate(str(names[i]), (pc1_scores[i], index[i]), xytext=(x_label, y_start + y_step * j),
+                        textcoords="axes fraction", ha=ha, va="center", fontsize=8,
+                        arrowprops={"arrowstyle": "-", "color": "#888888", "linewidth": 0.6, "shrinkA": 2, "shrinkB": 3})
     ax.set_xlabel("puntaje en PC1")
     ax.set_ylabel("índice de Oja")
     ax.set_title("Índice de Oja frente al puntaje de PC1 (con los 5 mejores y los 5 peores)")
-    ax.legend(title="tópico dominante", fontsize=8)
+    ax.legend(title="tópico dominante", fontsize=8, loc="upper left")
     ax.grid(alpha=0.3)
     save_figure(fig, path)
 
