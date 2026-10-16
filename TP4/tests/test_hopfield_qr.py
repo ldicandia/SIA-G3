@@ -260,7 +260,7 @@ def test_recovery_rates_table_matches_queries(reduced_run: Path):
     assert list(rates[0].keys()) == [
         "damage", "level", "size", "rule", "n_queries", "mean_damaged_frac", "recovery_rate", "other_rate",
         "inverted_rate", "spurious_rate", "mean_attractor_rate", "max_iter_rate", "mean_iterations",
-        "max_iterations", "mean_overlap_target",
+        "max_iterations", "mean_overlap_target", "query_decode_rate", "final_decode_rate",
     ]  # fmt: skip
     queries = _read_csv(reduced_run / "queries.csv")
     for r in rates:

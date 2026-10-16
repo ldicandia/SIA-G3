@@ -17,6 +17,13 @@
     "update": "async",
     "max_iter": 100,
     "noise_levels": [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5],
-    "trials": 20
+    "trials": 20,
+    "corners": ["top_left", "top_right", "bottom_left", "bottom_right"],
+    "torn_corner_sizes": [8, 12, 16, 20, 24, 28, 32],
+    "occlusion_sizes": [8, 12, 16, 20, 24],
+    "trace_levels": [0.1, 0.3, 0.45],
+    "decode": true,
+    "decode_scale": 8,
+    "decode_quiet_zone": 4
   }
 }

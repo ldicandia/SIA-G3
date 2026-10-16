@@ -51,7 +51,16 @@ from ..analysis.hopfield_eval import (
     overlaps,
     stability_margins,
 )
-from ..analysis.qr import load_qr_image, matrix_to_image, qr_name
+from ..analysis import qr as qrmod
+from ..analysis.qr import (
+    DEFAULT_QUIET_ZONE,
+    DEFAULT_SCALE,
+    MAX_QUIET_ZONE,
+    MAX_SCALE,
+    load_qr_image,
+    matrix_to_image,
+    qr_name,
+)
 from ..analysis.qr_damage import CORNERS, random_occlusions, torn_corner
 from ..errors import ConfigError, DataError
 from ..models.hopfield import (
@@ -81,6 +90,9 @@ PARAM_DEFAULTS: dict[str, Any] = {
     "torn_corner_sizes": [8, 12, 16, 20, 24, 28, 32],
     "occlusion_sizes": [8, 12, 16, 20, 24],
     "trace_levels": [0.1, 0.3, 0.45],
+    "decode": True,
+    "decode_scale": DEFAULT_SCALE,
+    "decode_quiet_zone": DEFAULT_QUIET_ZONE,
 }
 MAX_IMAGES = 10
 MAX_RECALLS = 50000
@@ -193,6 +205,15 @@ def validate(config: dict) -> None:
         raise _err(f"params.trace_levels must not repeat a level, got {trace_levels!r}")
     if trace_levels and p["update"] != "async":
         raise _err("params.trace_levels needs params.update = 'async' (the per-update trace is asynchronous)")
+
+    if type(p["decode"]) is not bool:
+        raise _err(f"params.decode must be a boolean, got {p['decode']!r}")
+    scale = p["decode_scale"]
+    if not (_is_int(scale) and 1 <= scale <= MAX_SCALE):
+        raise _err(f"params.decode_scale must be an integer in [1, {MAX_SCALE}], got {scale!r}")
+    quiet = p["decode_quiet_zone"]
+    if not (_is_int(quiet) and 0 <= quiet <= MAX_QUIET_ZONE):
+        raise _err(f"params.decode_quiet_zone must be an integer in [0, {MAX_QUIET_ZONE}], got {quiet!r}")
 
     n_corner = len(corners) * len(p["torn_corner_sizes"])
     n_per_image = len(levels) * trials + n_corner + len(p["occlusion_sizes"]) * trials
@@ -470,6 +491,41 @@ def _plot_recovery(rates: list[dict[str, Any]], rules: list[str], path: Path) ->
     save_figure(fig, path)
 
 
+def _plot_decode(rates: list[dict[str, Any]], rules: list[str], path: Path) -> None:
+    fig, axes = plt.subplots(1, 3, figsize=(16.0, 4.9), sharey=True)
+    panels = (
+        ("flip", "Ruido aleatorio (módulos invertidos)", "Nivel de ruido (fracción de módulos invertidos)"),
+        ("torn_corner", "Esquina rota", "Fracción de módulos dañados (promedio por tamaño)"),
+        ("occlusion", "Manchas oscuras", "Fracción de módulos dañados (promedio por tamaño)"),
+    )
+    for ax, (damage, title, xlabel) in zip(axes, panels, strict=True):
+        ax.set_title(title, fontsize=10)
+        base = _damage_curve(rates, damage, rules[0])
+        if not base:
+            _note(ax, "sin consultas")
+            continue
+        x = [r["level"] if damage == "flip" else r["mean_damaged_frac"] for r in base]
+        ax.plot(
+            x, [r["query_decode_rate"] for r in base], linestyle="--", marker="s", linewidth=1.8, color="#555555",
+            label="Consulta dañada: solo la corrección de errores del QR",
+        )  # fmt: skip
+        for rule in rules:
+            sub = _damage_curve(rates, damage, rule)
+            ax.plot(
+                x, [r["final_decode_rate"] for r in sub], marker="o", linewidth=2.0, color=RULE_COLORS[rule],
+                label=f"Estado recuperado: {RULE_LABELS[rule]}",
+            )  # fmt: skip
+        ax.set_xlabel(xlabel)
+        ax.set_ylim(-0.04, 1.08)
+        ax.grid(alpha=0.3)
+    axes[0].set_ylabel("Fracción que el lector decodifica como el menú original")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=8.5, bbox_to_anchor=(0.5, -0.05))
+    fig.suptitle("Lectura con zxing-cpp: consulta dañada frente a estado recuperado por la red de Hopfield", fontsize=11)
+    fig.tight_layout()
+    save_figure(fig, path)
+
+
 def _plot_iterations(rates: list[dict[str, Any]], rules: list[str], path: Path) -> None:
     fig, ax = plt.subplots(figsize=(8.0, 5.0))
     for rule in rules:
@@ -558,6 +614,37 @@ def run(ctx: RunContext) -> dict[str, Any]:
         raise DataError("hopfield_qr: two of the images hold the same code")
 
     mean_attractor = np.where(P.sum(axis=0) >= 0, 1, -1).astype(np.int8)
+
+    # QR reader (optional zxing-cpp). It is only reached through the module object, so tests can
+    # replace it. A decode is correct only when the text equals the target original's text.
+    decode_enabled = bool(p["decode"])
+    decode_scale = int(p["decode_scale"])
+    decode_quiet_zone = int(p["decode_quiet_zone"])
+    status = qrmod.decoder_status() if decode_enabled else None
+    decoding = bool(status is not None and status.available)
+    decode_cache: dict[bytes, str | None] = {}
+
+    def decode_state(vector: np.ndarray) -> str | None:
+        key = np.ascontiguousarray(vector, dtype=np.int8).tobytes()
+        if key not in decode_cache:
+            decode_cache[key] = qrmod.decode_matrix(
+                np.asarray(vector, dtype=np.int8).reshape(side, side), scale=decode_scale, quiet_zone=decode_quiet_zone
+            )
+        return decode_cache[key]
+
+    reference_texts: list[str | None] = [decode_state(P[k]) for k in range(n_patterns)] if decoding else []
+
+    def decoded_as(text: str | None) -> str:
+        if text is None:
+            return "none"
+        for k, ref in enumerate(reference_texts):
+            if ref is not None and ref == text:
+                return names[k]
+        return "other"
+
+    def decode_ok(text: str | None, target: int) -> bool | None:
+        ref = reference_texts[target] if decoding else None
+        return None if ref is None else bool(text == ref)
 
     weights: dict[str, np.ndarray] = {}
     stored_rows: list[dict[str, Any]] = []
@@ -653,6 +740,7 @@ def run(ctx: RunContext) -> dict[str, Any]:
             is_example = target == 0 and cell["trial"][i] == 0 and example_key in example_specs
             if is_example:
                 example_data[example_key] = {"query": queries[i].copy(), "n_changed": n_changed, "results": {}}
+            query_ok = decode_ok(decode_state(queries[i]), target) if decoding else None
             for rule in rules:
                 info = per_rule[rule]
                 res = info["res"]
@@ -686,6 +774,9 @@ def run(ctx: RunContext) -> dict[str, Any]:
                     "nearest_pattern": names[int(info["near"][i])],
                     "is_mean_attractor": bool(np.array_equal(final, mean_attractor)),
                     "final_energy": float(e_seq[-1]),
+                    "query_decode_ok": query_ok,
+                    "final_decode_ok": decode_ok(decode_state(final), target) if decoding else None,
+                    "final_decoded_as": decoded_as(decode_state(final)) if decoding else None,
                 }
                 query_rows.append(row)
                 groups.setdefault((cell["damage"], key_value, rule), []).append(row)
@@ -745,6 +836,8 @@ def run(ctx: RunContext) -> dict[str, Any]:
     queries_df = pd.DataFrame(query_rows)
     for col in ("size", "top", "left"):
         queries_df[col] = queries_df[col].astype("Int64")
+    for col in ("query_decode_ok", "final_decode_ok"):
+        queries_df[col] = queries_df[col].astype("boolean")
     write_csv(ctx.artifact("queries.csv"), queries_df)
     write_csv(ctx.artifact("energy.csv"), pd.DataFrame(energy_rows))
 
@@ -756,6 +849,11 @@ def run(ctx: RunContext) -> dict[str, Any]:
             return round(sum(1 for r in rows if pred(r)) / count, 4)
 
         iters = [r["iterations"] for r in rows]
+
+        def decode_rate(field: str, rows=rows) -> float | None:
+            known = [r[field] for r in rows if r[field] is not None]
+            return round(sum(known) / len(known), 4) if known else None
+
         rate_rows.append(
             {
                 "damage": damage,
@@ -773,6 +871,8 @@ def run(ctx: RunContext) -> dict[str, Any]:
                 "mean_iterations": round(float(np.mean(iters)), 4),
                 "max_iterations": int(max(iters)),
                 "mean_overlap_target": round(float(np.mean([r["overlap_target"] for r in rows])), 4),
+                "query_decode_rate": decode_rate("query_decode_ok"),
+                "final_decode_rate": decode_rate("final_decode_ok"),
             }
         )
     rates_df = pd.DataFrame(rate_rows)
@@ -782,9 +882,10 @@ def run(ctx: RunContext) -> dict[str, Any]:
     def curve(rule: str, damage: str, field: str = "recovery_rate") -> list[float]:
         return [r[field] for r in rate_rows if r["damage"] == damage and r["rule"] == rule]
 
-    def max_full_level(rule: str) -> float | None:
+    def max_full_level(rule: str, field: str = "recovery_rate") -> float | None:
+        """Highest flip level L such that every level <= L has rate 1.0 (None when level 0 fails)."""
         best: float | None = None
-        for lv, rate in zip(levels, curve(rule, "flip"), strict=True):
+        for lv, rate in zip(levels, curve(rule, "flip", field), strict=True):
             if rate != 1.0:
                 break
             best = lv
@@ -815,6 +916,8 @@ def run(ctx: RunContext) -> dict[str, Any]:
             examples.append({**data, "title": title, "pattern": names[0]})
         _plot_examples(examples, rules, side, ctx.artifact("damage_examples.png"))
         _plot_recovery(rate_rows, rules, ctx.artifact("recovery_vs_noise.png"))
+        if decoding:
+            _plot_decode(rate_rows, rules, ctx.artifact("decode_vs_noise.png"))
         _plot_iterations(rate_rows, rules, ctx.artifact("iterations.png"))
         _plot_energy(trace_df, energy_seqs, rules, levels, n_neurons, ctx.artifact("energy_per_step.png"))
 
@@ -855,6 +958,29 @@ def run(ctx: RunContext) -> dict[str, Any]:
         summary[f"{rule}_occlusion_mean_damaged_frac"] = curve(rule, "occlusion", "mean_damaged_frac")
         summary[f"{rule}_mean_iterations"] = round(float(np.mean([r["iterations"] for r in rule_rows])), 4)
         summary[f"{rule}_max_level_full_recovery"] = max_full_level(rule)
+        summary[f"{rule}_final_flip_decode_rates"] = curve(rule, "flip", "final_decode_rate") if decoding else []
+        summary[f"{rule}_final_corner_decode_rates"] = (
+            curve(rule, "torn_corner", "final_decode_rate") if decoding else []
+        )
+        summary[f"{rule}_final_occlusion_decode_rates"] = (
+            curve(rule, "occlusion", "final_decode_rate") if decoding else []
+        )
+        summary[f"{rule}_max_level_full_decode"] = max_full_level(rule, "final_decode_rate") if decoding else None
+    first_rule = rules[0]
+    summary["decode_enabled"] = decode_enabled
+    summary["decoder_available"] = status.available if status is not None else None
+    summary["decoder_name"] = status.name if status is not None else None
+    summary["decoder_version"] = status.version if status is not None else None
+    summary["decoder_reason"] = status.reason if status is not None else "params.decode is false"
+    summary["decode_scale"] = decode_scale if decoding else None
+    summary["decode_quiet_zone"] = decode_quiet_zone if decoding else None
+    summary["reference_texts"] = reference_texts
+    summary["n_originals_decoded"] = sum(1 for t in reference_texts if t is not None) if decoding else None
+    summary["query_flip_decode_rates"] = curve(first_rule, "flip", "query_decode_rate") if decoding else []
+    summary["query_corner_decode_rates"] = curve(first_rule, "torn_corner", "query_decode_rate") if decoding else []
+    summary["query_occlusion_decode_rates"] = curve(first_rule, "occlusion", "query_decode_rate") if decoding else []
+    summary["query_max_level_full_decode"] = max_full_level(first_rule, "query_decode_rate") if decoding else None
+    summary["mean_attractor_decoded_as"] = decoded_as(decode_state(mean_attractor)) if decoding else None
     hebb_rows = [r for r in query_rows if r["rule"] == "hebb"]
     summary["hebb_frac_mean_attractor"] = (
         round(sum(1 for r in hebb_rows if r["is_mean_attractor"]) / len(hebb_rows), 4) if hebb_rows else None
