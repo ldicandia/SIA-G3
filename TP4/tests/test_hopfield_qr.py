@@ -12,6 +12,7 @@ import pytest
 from PIL import Image
 
 from tp4 import runner
+from tp4.analysis import qr as qrmod
 from tp4.analysis.qr import load_qr_image
 from tp4.analysis.qr_damage import CORNERS, corner_distance
 from tp4.cli import main
@@ -507,3 +508,169 @@ def test_boundary_values_pass_validation(tmp_path: Path, overrides):
     cfg = _make_config(tmp_path, "cfg", **overrides)
     config = runner.validate_config(load_config(cfg))
     assert config["kind"] == "hopfield_qr"
+
+
+# --------------------------------------------------------------------------- decoder (Task 3)
+
+DECODE_COLUMNS = ["query_decode_ok", "final_decode_ok", "final_decoded_as"]
+
+
+def test_queries_header_ends_with_the_decode_columns(reduced_run: Path):
+    header = list(_read_csv(reduced_run / "queries.csv")[0].keys())
+    assert header[-4:] == ["final_energy", *DECODE_COLUMNS]
+    rates = list(_read_csv(reduced_run / "recovery_rates.csv")[0].keys())
+    assert rates[-2:] == ["query_decode_rate", "final_decode_rate"]
+
+
+def test_decoder_available_reads_originals_queries_and_recovered_states(reduced_run: Path):
+    pytest.importorskip("zxingcpp")
+    s = _summary(reduced_run)
+    assert s["decode_enabled"] is True and s["decoder_available"] is True
+    assert s["decoder_name"] == "zxing-cpp" and s["decoder_reason"] is None
+    assert s["decode_scale"] == 8 and s["decode_quiet_zone"] == 4
+    assert s["n_originals_decoded"] == 5
+    texts = s["reference_texts"]
+    assert len(texts) == 5 and len(set(texts)) == 5
+    for name, text in zip(NAMES, texts, strict=True):
+        assert f"{name}_menu" in text
+
+    rows = _read_csv(reduced_run / "queries.csv")
+    for r in rows:
+        if r["damage"] == "flip" and r["level"] == "0":
+            assert r["query_decode_ok"] == "True", r
+        if r["recovered"] == "True":
+            assert r["final_decode_ok"] == "True" and r["final_decoded_as"] == r["pattern"], r
+        if r["final_decode_ok"] == "True":
+            assert r["final_decoded_as"] == r["pattern"]
+        assert r["final_decoded_as"] in (*NAMES, "other", "none")
+        assert r["query_decode_ok"] in ("True", "False") and r["final_decode_ok"] in ("True", "False")
+    inverted = [r for r in rows if r["damage"] == "flip" and r["level"] == "1" and r["rule"] == "pseudoinverse"]
+    assert inverted and all(r["query_decode_ok"] == "False" for r in inverted)
+
+    rates = _read_csv(reduced_run / "recovery_rates.csv")
+    assert all(r["query_decode_rate"] != "" and r["final_decode_rate"] != "" for r in rates)
+    assert (reduced_run / "decode_vs_noise.png").stat().st_size > 0
+    assert s["pseudoinverse_final_flip_decode_rates"][0] == 1.0
+    assert len(s["query_flip_decode_rates"]) == 5 and len(s["pseudoinverse_final_corner_decode_rates"]) == 2
+    assert len(s["query_occlusion_decode_rates"]) == 1 and len(s["hebb_final_occlusion_decode_rates"]) == 1
+    assert s["query_max_level_full_decode"] is not None and s["query_max_level_full_decode"] >= 0.0
+    assert s["pseudoinverse_max_level_full_decode"] is not None
+    assert s["mean_attractor_decoded_as"] in (*NAMES, "other", "none")
+
+
+def test_reference_texts_equal_a_fresh_decode_of_each_original(reduced_run: Path):
+    pytest.importorskip("zxingcpp")
+    texts = _summary(reduced_run)["reference_texts"]
+    for name, path, text in zip(NAMES, IMAGES, texts, strict=True):
+        assert qrmod.decode_matrix(load_qr_image(path).matrix, scale=8, quiet_zone=4) == text, name
+
+
+def _unavailable(monkeypatch):
+    status = qrmod.DecoderStatus(False, "zxing-cpp", None, "ModuleNotFoundError: test")
+    monkeypatch.setattr(qrmod, "decoder_status", lambda: status)
+    _forbid_decode(monkeypatch)
+
+
+def _forbid_decode(monkeypatch):
+    def boom(*args, **kwargs):  # pragma: no cover - must never be reached
+        raise AssertionError("decode_matrix must not be called")
+
+    monkeypatch.setattr(qrmod, "decode_matrix", boom)
+
+
+def test_decoder_unavailable_degrades_cleanly(tmp_path: Path, monkeypatch):
+    _unavailable(monkeypatch)
+    cfg = _make_config(tmp_path, "cfg", **REDUCED)
+    out = tmp_path / "out"
+    assert main(["run", str(cfg), "--out-root", str(out)]) == 0
+    run_dir = out / "hopfield_qr"
+    s = _summary(run_dir)
+    assert s["decode_enabled"] is True and s["decoder_available"] is False
+    assert s["decoder_reason"] == "ModuleNotFoundError: test"
+    assert s["reference_texts"] == [] and s["n_originals_decoded"] is None
+    assert s["query_flip_decode_rates"] == [] and s["pseudoinverse_final_flip_decode_rates"] == []
+    assert s["query_max_level_full_decode"] is None and s["mean_attractor_decoded_as"] is None
+    for r in _read_csv(run_dir / "queries.csv"):
+        assert r["query_decode_ok"] == "" and r["final_decode_ok"] == "" and r["final_decoded_as"] == ""
+    for r in _read_csv(run_dir / "recovery_rates.csv"):
+        assert r["query_decode_rate"] == "" and r["final_decode_rate"] == ""
+    assert not (run_dir / "decode_vs_noise.png").exists()
+    for name in ARTIFACTS:
+        assert (run_dir / name).is_file(), name
+
+
+def test_decode_false_never_calls_the_decoder(tmp_path: Path, monkeypatch):
+    _forbid_decode(monkeypatch)
+    cfg = _make_config(tmp_path, "cfg", **{**REDUCED, "params.decode": False})
+    out = tmp_path / "out"
+    assert main(["run", str(cfg), "--out-root", str(out)]) == 0
+    run_dir = out / "hopfield_qr"
+    s = _summary(run_dir)
+    assert s["decode_enabled"] is False and s["decoder_available"] in (False, None)
+    assert s["reference_texts"] == [] and s["query_flip_decode_rates"] == []
+    assert not (run_dir / "decode_vs_noise.png").exists()
+    assert all(r["final_decode_ok"] == "" for r in _read_csv(run_dir / "queries.csv"))
+
+
+def test_decode_bookkeeping_with_a_fake_reader(tmp_path: Path, monkeypatch):
+    """A reader that only 'sees' a code when it equals an original exactly."""
+    originals = {load_qr_image(p).matrix.reshape(-1).tobytes(): n for n, p in zip(NAMES, IMAGES, strict=True)}
+
+    def fake_decode(matrix, *, scale, quiet_zone):
+        name = originals.get(np.asarray(matrix, dtype=np.int8).reshape(-1).tobytes())
+        return None if name is None else f"https://x/{name}_menu"
+
+    monkeypatch.setattr(qrmod, "decoder_status", lambda: qrmod.DecoderStatus(True, "fake", "0", None))
+    monkeypatch.setattr(qrmod, "decode_matrix", fake_decode)
+    cfg = _make_config(tmp_path, "cfg", plots=False, **REDUCED)
+    out = tmp_path / "out"
+    assert main(["run", str(cfg), "--out-root", str(out)]) == 0
+    run_dir = out / "hopfield_qr"
+    s = _summary(run_dir)
+    assert s["decoder_available"] is True and s["n_originals_decoded"] == 5
+    assert s["reference_texts"] == [f"https://x/{n}_menu" for n in NAMES]
+    for r in _read_csv(run_dir / "queries.csv"):
+        assert (r["query_decode_ok"] == "True") == (r["n_changed"] == "0"), r
+        assert (r["final_decode_ok"] == "True") == (r["recovered"] == "True"), r
+        if r["final_class"] == "spurious":
+            assert r["final_decoded_as"] == "none"
+        elif r["final_class"] == "stored":
+            assert r["final_decoded_as"] == r["final_pattern"]
+    assert s["mean_attractor_decoded_as"] == "none"
+    assert not (run_dir / "decode_vs_noise.png").exists()  # plots are off
+
+
+INVALID_DECODE_CASES = [
+    {"params.decode": "yes"},
+    {"params.decode": 1},
+    {"params.decode_scale": 0},
+    {"params.decode_scale": 17},
+    {"params.decode_scale": 8.0},
+    {"params.decode_quiet_zone": -1},
+    {"params.decode_quiet_zone": 11},
+]
+
+
+@pytest.mark.parametrize("overrides", INVALID_DECODE_CASES, ids=lambda o: ",".join(f"{k}={v}" for k, v in o.items()))
+def test_invalid_decode_params_exit_2(tmp_path: Path, capsys, overrides):
+    cfg = _make_config(tmp_path, "cfg", **overrides)
+    out = tmp_path / "out"
+    assert main(["run", str(cfg), "--out-root", str(out)]) == 2
+    assert "error:" in capsys.readouterr().err
+    assert not (out / "hopfield_qr").exists()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"params.decode_scale": 1},
+        {"params.decode_scale": 16},
+        {"params.decode_quiet_zone": 0},
+        {"params.decode_quiet_zone": 10},
+        {"params.decode": False},
+    ],
+    ids=lambda o: ",".join(f"{k}={v}" for k, v in o.items()),
+)
+def test_decode_boundary_values_pass_validation(tmp_path: Path, overrides):
+    cfg = _make_config(tmp_path, "cfg", **overrides)
+    assert runner.validate_config(load_config(cfg))["kind"] == "hopfield_qr"
