@@ -240,7 +240,13 @@ def run(ctx: RunContext) -> dict:
 
     # No evidence model consumes ctx.rng: each one uses its own config's seed, so the evidence
     # equals runs/oja and runs/som exactly (asserted by tests/test_campaigns.py).
-    fit = fit_index(Z, oja_config_from_params(oja_base["params"]), np.random.default_rng(oja_base["seed"]), pca.components[0])
+    fit = fit_index(
+        Z,
+        oja_config_from_params(oja_base["params"]),
+        np.random.default_rng(oja_base["seed"]),
+        pca.components[0],
+        xp=ctx.backend.xp,
+    )
     if fit.index is None:
         raise ConfigError("campaigns: the Oja config diverges; choose a converging eta (runs/oja_sweep)")
     som = som_evidence(som_base, Z, xp=ctx.backend.xp)

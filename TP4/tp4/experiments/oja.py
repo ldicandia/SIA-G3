@@ -107,9 +107,15 @@ class IndexFit:
     flipped: bool | None  # True when the orientation changed the sign of the trained vector
 
 
-def fit_index(Z: np.ndarray, cfg: OjaConfig, rng: np.random.Generator, reference: np.ndarray | None) -> IndexFit:
-    """Train the neuron and turn its vector into the oriented creator index (shared with the campaigns kind)."""
-    result = train_oja(Z, cfg, rng, reference=reference)
+def fit_index(
+    Z: np.ndarray, cfg: OjaConfig, rng: np.random.Generator, reference: np.ndarray | None, xp=np
+) -> IndexFit:
+    """Train the neuron and turn its vector into the oriented creator index (shared with the campaigns kind).
+
+    Only the training loop runs on `xp`; the weights come back as host numpy, so the orientation,
+    the projection and everything after it are plain numpy.
+    """
+    result = train_oja(Z, cfg, rng, reference=reference, xp=xp)
     if result.diverged:
         return IndexFit(result=result, w_hat=None, index=None, flipped=None)
     u = result.weights / np.linalg.norm(result.weights)
@@ -225,7 +231,7 @@ def run(ctx: RunContext) -> dict:
     pc1 = pca.components[0]
 
     # Training below is the only consumer of ctx.rng; every reading afterwards is deterministic.
-    fit = fit_index(Z, cfg, ctx.rng, pc1)
+    fit = fit_index(Z, cfg, ctx.rng, pc1, xp=ctx.backend.xp)
     result = fit.result
 
     history = pd.DataFrame(result.history).rename(columns={"cos_to_reference": "cos_to_pc1"})

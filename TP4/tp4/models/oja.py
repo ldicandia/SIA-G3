@@ -15,6 +15,14 @@ The model knows nothing about PCA: an optional `reference` vector is used only t
 A run that blows up is flagged (`diverged`, `divergence_epoch`, NaN weights), not raised: a
 non-finite weight or a norm above MAX_W_NORM at an epoch end stops the loop. numpy overflow
 warnings are suppressed only inside the training loop.
+
+Backend: `train_oja(..., xp=np)` runs the per-sample updates on the array module `xp` (numpy by
+default, cupy when the runner resolved it). Every random draw stays on the host Generator in the
+same order (initial w, then one permutation per epoch), so the same seed gives the same visiting
+order on any backend. The inner loop never forces a host sync; w comes back to the host once per
+epoch, where the divergence check, the norms and the history are computed, so `OjaResult` always
+holds host numpy arrays. A numpy run is bit-identical to the pre-backend code; a GPU run matches
+it up to floating-point rounding of the dot product.
 """
 
 from __future__ import annotations
@@ -24,6 +32,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..backend import to_numpy
 from .som import DECAYS, decay
 
 MAX_W_NORM = 1e6
@@ -91,7 +100,11 @@ def _check_data(X, reference) -> tuple[np.ndarray, np.ndarray | None]:
 
 
 def train_oja(
-    X: np.ndarray, config: OjaConfig, rng: np.random.Generator, reference: np.ndarray | None = None
+    X: np.ndarray,
+    config: OjaConfig,
+    rng: np.random.Generator,
+    reference: np.ndarray | None = None,
+    xp=np,
 ) -> OjaResult:
     """Train one Oja neuron on the rows of X (already standardized); see the module docstring."""
     _check_config(config)
@@ -106,16 +119,19 @@ def train_oja(
     diverged = False
     divergence_epoch: int | None = None
     t = 0
+    Xd = xp.asarray(X)
+    wd = xp.asarray(w)
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         for epoch in range(config.epochs):
             w_prev = w
             eta_t = config.eta0
             for i in rng.permutation(n):
                 eta_t = decay(config.eta0, config.eta_min, t, total, config.eta_decay)
-                x = X[int(i)]
-                y = float(w @ x)
-                w = w + eta_t * y * (x - y * w)
+                x = Xd[int(i)]
+                y = wd @ x  # stays a backend scalar: no per-sample host sync
+                wd = wd + eta_t * y * (x - y * wd)
                 t += 1
+            w = to_numpy(wd)
             norm = float(np.linalg.norm(w))
             if not bool(np.isfinite(w).all()) or not norm <= MAX_W_NORM:
                 hist["epoch"].append(epoch + 1)
