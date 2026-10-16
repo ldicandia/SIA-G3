@@ -1,0 +1,16 @@
+# Numerics and data handling.
+numpy>=1.26,<3
+pandas>=2.2,<4
+
+# Plots (matplotlib with the Agg backend, seaborn for heatmaps).
+matplotlib>=3.10,<4
+seaborn>=0.13,<1
+
+# PCA reference baseline (sklearn PCA only; Kohonen/Oja/Hopfield are hand-written).
+scikit-learn>=1.4,<2
+
+# Image I/O (Hopfield QR images, later phases).
+Pillow>=10,<13
+
+# Tests.
+pytest>=8,<10

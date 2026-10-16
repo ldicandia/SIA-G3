@@ -1,0 +1,783 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from tp4 import delivery
+from tp4.delivery import MANIFEST_PATH, ManifestError, load_manifest, main
+from tp4.runs import PROJECT_ROOT
+
+
+def _write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _tree(tmp_path, *, note="El valor es 53,2 y runs/a/summary.json.", manifest=None, extra_configs=()):
+    """A tmp project root (configs/, docs/hallazgos/, manifest) that is also its own runs root."""
+    _write(tmp_path / "configs/a.json", json.dumps({"experiment": "a"}))
+    _write(tmp_path / "configs/b.json", json.dumps({"experiment": "b"}))
+    for name in extra_configs:
+        _write(tmp_path / f"configs/{name}.json", json.dumps({"experiment": name}))
+    _write(tmp_path / "docs/hallazgos/ej.md", note)
+    _write(tmp_path / "runs/a/summary.json", json.dumps({"pct": 53.2, "flag": True}))
+    data = {
+        "run_order": ["configs/a.json", "configs/b.json"],
+        "not_run": {},
+        "notes": [
+            {
+                "md": "docs/hallazgos/ej.md",
+                "cites": ["runs/a/summary.json:pct"],
+                "requires": [],
+                "sections": [],
+            }
+        ],
+    }
+    if manifest:
+        manifest(data)
+    return _write(tmp_path / "docs/hallazgos/evidencia.json", json.dumps(data))
+
+
+def _run(tmp_path, command, manifest_path, *extra):
+    return main(
+        [command, "--manifest", str(manifest_path), "--project-root", str(tmp_path), *extra]
+    )
+
+
+def _check(tmp_path, manifest_path, root=None):
+    return _run(tmp_path, "check", manifest_path, "--root", str(root or tmp_path))
+
+
+def test_satisfied_tree_exits_0(tmp_path, capsys):
+    manifest = _tree(tmp_path)
+    assert _check(tmp_path, manifest) == 0
+    out = capsys.readouterr().out.strip().splitlines()
+    assert "== docs/hallazgos/ej.md" in out
+    assert out[-1] == "delivery ok: 1 notes, 2 configs, 1 cites, 0 figures"
+
+
+def test_unlisted_config_is_unclassified(tmp_path, capsys):
+    manifest = _tree(tmp_path, extra_configs=("c",))
+    assert _check(tmp_path, manifest) == 1
+    out = capsys.readouterr().out
+    assert "UNCLASSIFIED config: configs/c.json" in out
+    assert out.strip().splitlines()[-1] == "delivery FAILED: 1 problem(s)"
+
+
+def test_not_run_config_is_classified(tmp_path, capsys):
+    manifest = _tree(
+        tmp_path,
+        extra_configs=("c",),
+        manifest=lambda d: d["not_run"].update({"configs/c.json": "definición, no es una corrida"}),
+    )
+    assert _check(tmp_path, manifest) == 0
+    assert "UNCLASSIFIED" not in capsys.readouterr().out
+
+
+def test_artifact_without_config_prints_no_config(tmp_path, capsys):
+    manifest = _tree(tmp_path, note="El valor es 53,2 y runs/a/summary.json y runs/ghost/x.csv.")
+    assert _check(tmp_path, manifest) == 1
+    out = capsys.readouterr().out
+    assert "NO CONFIG for runs/ghost (docs/hallazgos/ej.md)" in out
+    assert "delivery FAILED:" in out.strip().splitlines()[-1]
+
+
+def test_cite_value_absent_from_note_exits_1(tmp_path, capsys):
+    manifest = _tree(tmp_path, note="El valor es 50 y runs/a/summary.json.")
+    assert _check(tmp_path, manifest) == 1
+    assert "MISSING cite: runs/a/summary.json:pct=53.2" in capsys.readouterr().out
+
+
+def test_requires_false_prints_precondition_with_hint(tmp_path, capsys):
+    def add_requires(data):
+        data["notes"][0]["requires"] = [
+            {"cite": "runs/a/summary.json:flag", "equals": False, "hint": "Instalá requirements-qr.txt."}
+        ]
+
+    manifest = _tree(tmp_path, manifest=add_requires)
+    assert _check(tmp_path, manifest) == 1
+    out = capsys.readouterr().out
+    assert "PRECONDITION runs/a/summary.json:flag = true, expected false: Instalá requirements-qr.txt." in out
+
+
+def test_requires_absent_file_prints_precondition(tmp_path, capsys):
+    def add_requires(data):
+        data["notes"][0]["requires"] = [
+            {"cite": "runs/a/other.json:flag", "equals": True, "hint": "regenerá"}
+        ]
+
+    manifest = _tree(tmp_path, manifest=add_requires)
+    assert _check(tmp_path, manifest) == 1
+    assert "PRECONDITION runs/a/other.json:flag = absent, expected true: regenerá" in capsys.readouterr().out
+
+
+def test_requires_satisfied_passes(tmp_path):
+    def add_requires(data):
+        data["notes"][0]["requires"] = [
+            {"cite": "runs/a/summary.json:flag", "equals": True, "hint": "x"}
+        ]
+
+    assert _check(tmp_path, _tree(tmp_path, manifest=add_requires)) == 0
+
+
+def test_root_without_runs_exits_1_without_raising(tmp_path, capsys):
+    manifest = _tree(tmp_path)
+    empty = tmp_path / "elsewhere"
+    empty.mkdir()
+    assert _check(tmp_path, manifest, root=empty) == 1
+    out = capsys.readouterr().out
+    assert "MISSING artifact: runs/a/summary.json" in out
+    assert "MISSING cite" in out
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d.update(extra=1),
+        lambda d: d["notes"][0].update(extra=1),
+        lambda d: d["notes"][0].update(md="/etc/passwd"),
+        lambda d: d["run_order"].__setitem__(0, "/abs/configs/a.json"),
+        lambda d: d["run_order"].__setitem__(0, "configs/../configs/a.json"),
+        lambda d: d["run_order"].__setitem__(0, "other/a.json"),
+        lambda d: d["run_order"].__setitem__(0, "configs/missing.json"),
+        lambda d: d["run_order"].__setitem__(1, "configs/a.json"),
+        lambda d: d["notes"][0].update(md="docs/hallazgos/../hallazgos/ej.md"),
+        lambda d: d["notes"][0].update(md="README.md"),
+        lambda d: d["notes"][0].update(cites=["configs/a.json:pct"]),
+        lambda d: d["notes"][0].update(cites=["runs/a/summary.json:"]),
+        lambda d: d["notes"][0].update(cites=["runs/../x/summary.json:pct"]),
+        lambda d: d["notes"][0].update(cites=["runs/a/summary.json:pct", "runs/a/summary.json:pct"]),
+        lambda d: d["notes"][0].update(requires=[{"cite": "runs/a/summary.json:flag", "equals": True}]),
+        lambda d: d["not_run"].update({"configs/a.json": "razón"}),
+        lambda d: d["not_run"].update({"configs/b.json": " "}),
+    ],
+)
+def test_invalid_manifest_exits_2(tmp_path, capsys, mutate):
+    manifest = _tree(tmp_path, manifest=mutate)
+    assert _check(tmp_path, manifest) == 2
+    captured = capsys.readouterr()
+    assert captured.err.startswith("error: ")
+    assert "delivery" not in captured.out
+
+
+def test_two_configs_with_the_same_experiment_are_rejected(tmp_path, capsys):
+    manifest = _tree(tmp_path, manifest=lambda d: None)
+    _write(tmp_path / "configs/b.json", json.dumps({"experiment": "a"}))
+    assert _check(tmp_path, manifest) == 2
+    assert "share the experiment 'a'" in capsys.readouterr().err
+
+
+def test_duplicate_json_key_is_rejected(tmp_path, capsys):
+    manifest = _tree(tmp_path)
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace('"not_run": {}', '"not_run": {}, "not_run": {}'), encoding="utf-8")
+    assert _check(tmp_path, manifest) == 2
+    assert "duplicate key" in capsys.readouterr().err
+
+
+def test_unreadable_manifest_exits_2(tmp_path, capsys):
+    assert _check(tmp_path, tmp_path / "nope.json") == 2
+    assert capsys.readouterr().err.startswith("error: ")
+
+
+# ----- regenerate with run_config patched (no real runs)
+
+
+def test_regenerate_runs_every_config_in_order(tmp_path, monkeypatch, capsys):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    calls = []
+    monkeypatch.setattr(delivery, "run_config", lambda cfg, out, root: calls.append((cfg.name, out)) or 0)
+    monkeypatch.setattr(delivery, "check_selection", lambda *a, **k: [])
+    assert delivery.regenerate(manifest, tmp_path / "out", tmp_path) == 0
+    assert [name for name, _ in calls] == ["a.json", "b.json"]
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "[1/2] configs/a.json" and out[1] == "[2/2] configs/b.json"
+    assert out[-1] == "regenerate ok: 2 configs, som selection ok"
+
+
+def test_run_config_uses_an_argument_list_without_a_shell(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"], seen["kwargs"] = command, kwargs
+        return type("R", (), {"returncode": 0})()
+
+    monkeypatch.setattr(delivery.subprocess, "run", fake_run)
+    assert delivery.run_config(tmp_path / "configs/a.json", tmp_path / "out", tmp_path) == 0
+    assert isinstance(seen["command"], list)
+    assert seen["command"][1:4] == ["-m", "tp4", "run"]
+    assert seen["command"][-2] == "--out-root"
+    assert not seen["kwargs"].get("shell")
+    assert seen["kwargs"]["cwd"] == tmp_path
+
+
+# ----- real manifest, tracked files only (no runs needed)
+
+
+def test_every_real_config_is_classified():
+    manifest = load_manifest(MANIFEST_PATH)
+    classified = set(manifest.run_order) | set(manifest.not_run)
+    on_disk = {f"configs/{p.name}" for p in (PROJECT_ROOT / "configs").iterdir() if p.suffix in (".json", ".toml")}
+    assert on_disk == classified
+    assert len(manifest.run_order) == 12
+    assert set(manifest.not_run) == {"configs/feature_set.json", "configs/som_design_base.json"}
+
+
+def test_real_manifest_keeps_every_cite_and_the_run_order():
+    manifest = load_manifest(MANIFEST_PATH)
+    by_md = {note.md: note for note in manifest.notes}
+    assert len(by_md["docs/hallazgos/ej1.md"].cites) >= 53
+    assert len(by_md["docs/hallazgos/ej2.md"].cites) >= 46
+    assert [c.rsplit("/", 1)[1] for c in manifest.run_order] == [
+        "eda.json", "pca.json", "pca_scaling_sweep.json", "som_design_sweep.json", "som_sweep.json",
+        "som.json", "som_pca_control.json", "oja_sweep.json", "oja.json", "campaigns.json",
+        "hopfield_letters.json", "hopfield_qr.json",
+    ]
+    (requirement,) = by_md["docs/hallazgos/ej2.md"].requires
+    assert requirement.cite == "runs/hopfield_qr/summary.json:decoder_available"
+    assert requirement.equals is True and "requirements-qr.txt" in requirement.hint
+
+
+def test_invalid_manifest_class():
+    assert issubclass(ManifestError, delivery.Tp4Error)
+
+
+# ----- Task 2: sections, broken section references, verify, stop-on-failure
+
+SECTION_NOTE = (
+    "# Nota\n"
+    "## A\n"
+    "El valor es 53,2 en A, runs/a/summary.json.\n"
+    "```bash\n"
+    "# no es un título\n"
+    "```\n"
+    "## B\n"
+    "El indicador es true en B.\n"
+)
+
+
+def _with_sections(data):
+    data["notes"][0]["sections"] = [
+        {"heading": "## A", "cites": ["runs/a/summary.json:pct"]},
+        {"heading": "## B", "cites": ["runs/a/summary.json:flag"]},
+    ]
+
+
+def test_sections_are_checked_and_counted(tmp_path, capsys):
+    manifest = _tree(tmp_path, note=SECTION_NOTE, manifest=_with_sections)
+    assert _check(tmp_path, manifest) == 0
+    out = capsys.readouterr().out.strip().splitlines()
+    assert "== docs/hallazgos/ej.md :: ## A" in out
+    assert "== docs/hallazgos/ej.md :: ## B" in out
+    assert out[-1] == "delivery ok: 1 notes, 2 configs, 3 cites, 0 figures"
+
+
+def test_section_cite_outside_its_section_fails(tmp_path, capsys):
+    def misplaced(data):
+        data["notes"][0]["sections"] = [{"heading": "## B", "cites": ["runs/a/summary.json:pct"]}]
+
+    manifest = _tree(tmp_path, note=SECTION_NOTE, manifest=misplaced)
+    assert _check(tmp_path, manifest) == 1
+    assert "MISSING cite: runs/a/summary.json:pct=53.2" in capsys.readouterr().out
+
+
+def test_absent_section_heading_fails(tmp_path, capsys):
+    def absent(data):
+        data["notes"][0]["sections"] = [{"heading": "## Z", "cites": []}]
+
+    manifest = _tree(tmp_path, note=SECTION_NOTE, manifest=absent)
+    assert _check(tmp_path, manifest) == 1
+    assert "MISSING section: ## Z" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        {"heading": "A", "cites": []},
+        {"heading": "##A", "cites": []},
+        {"heading": "####### A", "cites": []},
+        {"heading": "## A"},
+        {"heading": "## A", "cites": ["configs/a.json:x"]},
+        {"heading": "## A", "cites": [], "extra": 1},
+        "## A",
+    ],
+)
+def test_invalid_section_entry_exits_2(tmp_path, capsys, section):
+    manifest = _tree(tmp_path, note=SECTION_NOTE, manifest=lambda d: d["notes"][0].update(sections=[section]))
+    assert _check(tmp_path, manifest) == 2
+    assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_broken_section_reference_is_reported(tmp_path, capsys):
+    note = SECTION_NOTE + "Ver `### Comparación con PC1` para el detalle.\n"
+    manifest = _tree(tmp_path, note=note)
+    assert _check(tmp_path, manifest) == 1
+    out = capsys.readouterr().out
+    assert "BROKEN section reference: ### Comparación con PC1 (docs/hallazgos/ej.md)" in out
+
+
+def test_matching_section_reference_passes(tmp_path, capsys):
+    note = SECTION_NOTE + "Ver `## A` y `## B`; un `#hashtag` no es una referencia.\n"
+    manifest = _tree(tmp_path, note=note)
+    assert _check(tmp_path, manifest) == 0, capsys.readouterr().out
+
+
+def test_regenerate_stops_at_the_first_failing_config(tmp_path, monkeypatch, capsys):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    calls = []
+    monkeypatch.setattr(delivery, "run_config", lambda cfg, out, root: calls.append(cfg.name) or 2)
+    selection = []
+    monkeypatch.setattr(delivery, "check_selection", lambda *a, **k: selection.append(1) or [])
+    assert delivery.regenerate(manifest, tmp_path / "out", tmp_path) == 2
+    assert calls == ["a.json"]
+    assert selection == []
+    assert "FAILED: configs/a.json (exit 2)" in capsys.readouterr().out
+
+
+def test_regenerate_reports_selection_mismatch(tmp_path, monkeypatch, capsys):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    monkeypatch.setattr(delivery, "run_config", lambda cfg, out, root: 0)
+    monkeypatch.setattr(delivery, "check_selection", lambda *a, **k: ["MISMATCH som_sweep: k config=1 selected=2"])
+    assert delivery.regenerate(manifest, tmp_path / "out", tmp_path) == 1
+    assert "MISMATCH som_sweep" in capsys.readouterr().out
+
+
+def _patch_verify(monkeypatch, regenerate_code, check_code):
+    seen = {}
+
+    def fake_regenerate(manifest, out_root, project_root=PROJECT_ROOT):
+        seen["out_root"] = out_root
+        out_root.mkdir(parents=True, exist_ok=True)
+        return regenerate_code
+
+    def fake_check(manifest, root, project_root=PROJECT_ROOT):
+        seen["root"] = root
+        seen["check_called"] = True
+        return check_code
+
+    monkeypatch.setattr(delivery, "regenerate", fake_regenerate)
+    monkeypatch.setattr(delivery, "check", fake_check)
+    return seen
+
+
+def test_verify_regenerates_into_a_temp_dir_and_removes_it(tmp_path, monkeypatch, capsys):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    seen = _patch_verify(monkeypatch, 0, 0)
+    assert delivery.verify(manifest, tmp_path) == 0
+    assert seen["out_root"] == seen["root"] / "runs"
+    assert seen["root"] != tmp_path and not seen["root"].exists()
+    out = capsys.readouterr().out
+    assert f"verify: clean regeneration in {seen['root']}" in out
+    assert out.strip().splitlines()[-1] == "verify ok: clean regeneration matches the notes"
+
+
+def test_verify_removes_the_temp_dir_when_check_fails(tmp_path, monkeypatch, capsys):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    seen = _patch_verify(monkeypatch, 0, 1)
+    assert delivery.verify(manifest, tmp_path) == 1
+    assert not seen["root"].exists()
+    assert "verify ok" not in capsys.readouterr().out
+
+
+def test_verify_skips_check_when_regenerate_fails(tmp_path, monkeypatch):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    seen = _patch_verify(monkeypatch, 2, 0)
+    assert delivery.verify(manifest, tmp_path) == 2
+    assert "check_called" not in seen
+    assert not seen["out_root"].exists()
+
+
+def test_verify_subcommand_exists(tmp_path, monkeypatch):
+    manifest = _tree(tmp_path)
+    seen = _patch_verify(monkeypatch, 0, 0)
+    assert main(["verify", "--manifest", str(manifest), "--project-root", str(tmp_path)]) == 0
+    assert seen["check_called"]
+
+
+# ----- real tracked files only (no runs needed)
+
+
+def test_every_real_run_config_validates_with_distinct_experiments():
+    from tp4.config import load_config
+    from tp4.runner import validate_config
+
+    manifest = load_manifest(MANIFEST_PATH)
+    experiments = []
+    for config in manifest.run_order:
+        validated = validate_config(load_config(PROJECT_ROOT / config))
+        experiments.append(validated["experiment"])
+    assert len(set(experiments)) == len(experiments) == 12
+
+
+def test_every_runs_reference_in_the_real_notes_has_a_config():
+    from tp4.findings import referenced_artifacts
+
+    manifest = load_manifest(MANIFEST_PATH)
+    experiments = set(manifest.experiments.values())
+    for note in manifest.notes:
+        text = (PROJECT_ROOT / note.md).read_text(encoding="utf-8")
+        named = referenced_artifacts(text) + [c.rpartition(":")[0] for c in note.cites]
+        named += [r.cite.rpartition(":")[0] for r in note.requires]
+        for artifact in named:
+            assert artifact.split("/")[1] in experiments, f"{artifact} in {note.md}"
+
+
+def test_real_notes_have_no_broken_section_reference():
+    manifest = load_manifest(MANIFEST_PATH)
+    for note in manifest.notes:
+        text = (PROJECT_ROOT / note.md).read_text(encoding="utf-8")
+        assert delivery.broken_section_references(text) == [], note.md
+
+
+# ----- Task 1 (05-02): committed figures, `figures` subcommand and the figure rules of check
+
+FIG_FIGURES = "docs/hallazgos/figuras"
+RUN_LINK_NOTE = "El valor es 53,2 y runs/a/summary.json.\n\n![Curva](../../runs/a/curve.png)\n"
+COPY_NOTE = 'El valor es 53,2 y runs/a/summary.json.\n\n![Curva](figuras/a__curve.png "runs/a/curve.png")\n'
+
+
+def _figure_tree(tmp_path, note=COPY_NOTE, *, copy=b"PNG-A", source=b"PNG-A"):
+    manifest = _tree(tmp_path, note=note)
+    if source is not None:
+        (tmp_path / "runs/a/curve.png").write_bytes(source)
+    if copy is not None:
+        target = tmp_path / FIG_FIGURES / "a__curve.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(copy)
+    return manifest
+
+
+def _files(tmp_path):
+    return {
+        str(p.relative_to(tmp_path)): p.read_bytes() for p in sorted(tmp_path.rglob("*")) if p.is_file()
+    }
+
+
+def test_clean_figure_tree_passes_and_counts_figures(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path)
+    assert _check(tmp_path, manifest) == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "delivery ok: 1 notes, 2 configs, 1 cites, 1 figures"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "extra", "expected"),
+    [
+        ({"note": RUN_LINK_NOTE}, None, "BAD figure link: ![Curva](../../runs/a/curve.png) (docs/hallazgos/ej.md)"),
+        (
+            {"note": COPY_NOTE.replace('a__curve.png "', 'other.png "')},
+            None,
+            'BAD figure link: ![Curva](figuras/other.png "runs/a/curve.png") (docs/hallazgos/ej.md)',
+        ),
+        ({"note": COPY_NOTE.replace("![Curva](figuras", "![Curva](docs/figuras")}, None, "BAD figure link:"),
+        ({"copy": None}, None, "MISSING figure copy: a__curve.png"),
+        ({"source": None}, None, "MISSING figure source: runs/a/curve.png"),
+        ({"copy": b"OLD"}, None, "STALE figure: a__curve.png differs from runs/a/curve.png"),
+        ({}, "orphan.png", "ORPHAN figure copy: orphan.png"),
+        (
+            {"note": COPY_NOTE + "\nVer [la otra](figuras/ghost.png).\n"},
+            None,
+            "UNKNOWN figure reference: ghost.png (docs/hallazgos/ej.md)",
+        ),
+    ],
+)
+def test_each_figure_rule_fires(tmp_path, capsys, kwargs, extra, expected):
+    manifest = _figure_tree(tmp_path, **kwargs)
+    if extra:
+        (tmp_path / FIG_FIGURES / extra).write_bytes(b"x")
+    assert _check(tmp_path, manifest) == 1
+    out = capsys.readouterr().out
+    assert expected in out
+    assert out.strip().splitlines()[-1].startswith("delivery FAILED:")
+
+
+def test_sync_rewrites_a_run_link_and_copies_its_source(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path, RUN_LINK_NOTE, copy=None)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "figures: 1 declared, 1 copied, 1 links rewritten, 0 removed"
+    assert (tmp_path / "docs/hallazgos/ej.md").read_text(encoding="utf-8") == COPY_NOTE
+    assert (tmp_path / FIG_FIGURES / "a__curve.png").read_bytes() == b"PNG-A"
+    assert _check(tmp_path, manifest) == 0
+
+
+def test_sync_keeps_crlf_line_endings(tmp_path):
+    manifest = _figure_tree(tmp_path, copy=None)
+    note = tmp_path / "docs/hallazgos/ej.md"
+    note.write_bytes(RUN_LINK_NOTE.replace("\n", "\r\n").encode("utf-8"))
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert note.read_bytes() == COPY_NOTE.replace("\n", "\r\n").encode("utf-8")
+
+
+def test_sync_flattens_nested_sources_and_ignores_fenced_blocks(tmp_path, capsys):
+    note = (
+        "El valor es 53,2 y runs/a/summary.json.\n"
+        "![Anidada](../../runs/a/sweep/standardize-false/scree.png)\n"
+        "```\n![ejemplo](../../runs/a/curve.png)\n```\n"
+    )
+    manifest = _figure_tree(tmp_path, note, copy=None)
+    nested = tmp_path / "runs/a/sweep/standardize-false/scree.png"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"PNG-N")
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    text = (tmp_path / "docs/hallazgos/ej.md").read_text(encoding="utf-8")
+    assert '![Anidada](figuras/a__sweep__standardize-false__scree.png "runs/a/sweep/standardize-false/scree.png")' in text
+    assert "![ejemplo](../../runs/a/curve.png)" in text
+    assert (tmp_path / FIG_FIGURES / "a__sweep__standardize-false__scree.png").read_bytes() == b"PNG-N"
+    assert "1 declared, 1 copied, 1 links rewritten" in capsys.readouterr().out
+
+
+def test_sync_deletes_an_orphan_png_but_not_other_files(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path)
+    (tmp_path / FIG_FIGURES / "orphan.png").write_bytes(b"x")
+    (tmp_path / FIG_FIGURES / "notes.txt").write_text("keep", encoding="utf-8")
+    (tmp_path / FIG_FIGURES / "sub").mkdir()
+    (tmp_path / FIG_FIGURES / "sub/inner.png").write_bytes(b"x")
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "figures: 1 declared, 0 copied, 0 links rewritten, 1 removed"
+    assert not (tmp_path / FIG_FIGURES / "orphan.png").exists()
+    assert (tmp_path / FIG_FIGURES / "notes.txt").read_text(encoding="utf-8") == "keep"
+    assert (tmp_path / FIG_FIGURES / "sub/inner.png").exists()
+    assert (tmp_path / FIG_FIGURES / "a__curve.png").exists()
+
+
+def test_sync_overwrites_a_stale_copy(tmp_path):
+    manifest = _figure_tree(tmp_path, copy=b"OLD")
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert (tmp_path / FIG_FIGURES / "a__curve.png").read_bytes() == b"PNG-A"
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        '![x](figuras/a__curve.png "runs/../../secret.png")',
+        '![x](figuras/../evil.png "runs/a/curve.png")',
+        '![x](figuras/sub/evil.png "runs/a/curve.png")',
+        "![x](../../runs/../../secret.png)",
+        "![x](../../runs/a/../../secret.png)",
+        '![x](figuras/evil.png "/etc/passwd")',
+        '![x](figuras/..__evil.png "runs/../evil.png")',
+    ],
+)
+def test_traversal_is_rejected_and_writes_nothing_outside_figures(tmp_path, capsys, link):
+    note = "El valor es 53,2 y runs/a/summary.json.\n" + link + "\n"
+    manifest = _figure_tree(tmp_path, note, copy=None)
+    (tmp_path / "secret.png").write_bytes(b"SECRET")
+    (tmp_path / "docs/hallazgos/ej.md").write_text(note, encoding="utf-8")
+    before = _files(tmp_path)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 1
+    out = capsys.readouterr().out
+    assert "BAD figure link:" in out
+    assert _files(tmp_path) == before
+    assert not (tmp_path / FIG_FIGURES).exists()
+
+
+def test_a_bad_link_stops_orphan_deletion(tmp_path):
+    note = COPY_NOTE + '![x](figuras/sub/evil.png "runs/a/curve.png")\n'
+    manifest = _figure_tree(tmp_path, note)
+    (tmp_path / FIG_FIGURES / "keepme.png").write_bytes(b"x")
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 1
+    assert (tmp_path / FIG_FIGURES / "keepme.png").exists()
+
+
+def test_a_second_sync_copies_and_rewrites_nothing(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path, RUN_LINK_NOTE, copy=None)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    capsys.readouterr()
+    snapshot = _files(tmp_path)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "figures: 1 declared, 0 copied, 0 links rewritten, 0 removed"
+    assert _files(tmp_path) == snapshot
+
+
+def test_sync_reports_a_missing_source(tmp_path, capsys):
+    manifest = _figure_tree(tmp_path, RUN_LINK_NOTE, copy=None, source=None)
+    assert _run(tmp_path, "figures", manifest, "--root", str(tmp_path)) == 1
+    assert "MISSING figure source: runs/a/curve.png" in capsys.readouterr().out
+
+
+def test_flatten_joins_the_segments_after_runs():
+    assert delivery.flatten("runs/pca/biplot.png") == "pca__biplot.png"
+    assert (
+        delivery.flatten("runs/pca_scaling_sweep/standardize-false/scree.png")
+        == "pca_scaling_sweep__standardize-false__scree.png"
+    )
+
+
+def test_real_notes_embed_only_committed_copies():
+    """Static: a fresh clone fails here if the figure copies were not committed."""
+    manifest = load_manifest(MANIFEST_PATH)
+    texts = {n.md: (PROJECT_ROOT / n.md).read_text(encoding="utf-8") for n in manifest.notes}
+    declared = delivery._collect_figures(manifest, texts)
+    assert declared.bad == []
+    figures_dir = PROJECT_ROOT / delivery.FIGURES_DIR
+    assert len(declared.copies) == 43
+    for name in declared.copies:
+        assert (figures_dir / name).is_file(), name
+    assert delivery._png_names(figures_dir) == sorted(declared.copies)
+    assert [name for name, _ in declared.mentions if name not in declared.copies] == []
+
+
+# ----- fresh-venv (subprocess and venv creation faked: the suite never installs anything)
+
+
+class _FreshWorld:
+    """Fakes git, venv creation, pip and pytest; records every step in order."""
+
+    def __init__(self, monkeypatch, *, dirty="", pip_code=0, pytest_code=0, archive_code=0):
+        self.steps = []
+        self.calls = []
+        self.dirty = dirty
+        self.pip_code = pip_code
+        self.pytest_code = pytest_code
+        self.archive_code = archive_code
+        self.export = None
+        self.pytest_cwd_existed = None
+        monkeypatch.setattr(delivery.subprocess, "run", self._run)
+        monkeypatch.setattr(delivery.venv, "EnvBuilder", self._env_builder())
+
+    def _env_builder(self):
+        world = self
+
+        class FakeEnvBuilder:
+            def __init__(self, with_pip=False):
+                world.steps.append(("venv", with_pip))
+
+            def create(self, path):
+                world.venv_dir = path
+                path.mkdir(parents=True)
+
+        return FakeEnvBuilder
+
+    def _run(self, command, **kwargs):
+        self.calls.append((list(command), kwargs))
+        result = type("R", (), {"returncode": 0, "stdout": ""})()
+        if command[:2] == ["git", "status"]:
+            result.stdout = self.dirty
+        elif command[:2] == ["git", "archive"]:
+            self.steps.append("git archive")
+            result.returncode = self.archive_code
+            if not self.archive_code:
+                import io
+                import tarfile
+
+                payload = b"numpy\n"
+                with tarfile.open(command[command.index("-o") + 1], "w") as tar:
+                    info = tarfile.TarInfo("requirements.txt")
+                    info.size = len(payload)
+                    tar.addfile(info, io.BytesIO(payload))
+        elif "pip" in command:
+            self.steps.append("pip")
+            result.returncode = self.pip_code
+        elif "pytest" in command:
+            self.steps.append("pytest")
+            self.export = kwargs["cwd"]
+            self.pytest_cwd_existed = (kwargs["cwd"] / "requirements.txt").is_file()
+            result.returncode = self.pytest_code
+        return result
+
+    def call(self, name):
+        return next(c for c in self.calls if name in c[0] or c[0][:2] == name.split())
+
+
+def test_fresh_venv_runs_the_steps_in_order_inside_the_export(tmp_path, monkeypatch, capsys):
+    world = _FreshWorld(monkeypatch)
+    assert delivery.fresh_venv((), tmp_path) == 0
+    assert world.steps == ["git archive", ("venv", True), "pip", "pytest"]
+    archive, kwargs = world.call("git archive")
+    assert archive == ["git", "archive", "--format=tar", "-o", archive[4], "HEAD"]
+    assert kwargs["cwd"] == tmp_path and not kwargs.get("shell")
+    pip, pip_kwargs = world.call("pip")
+    assert pip[1:3] == ["-m", "pip"] and pip[pip.index("-r") + 1] == str(world.export / "requirements.txt")
+    assert pip_kwargs["cwd"] == world.export
+    assert world.pytest_cwd_existed  # the export was extracted and is the cwd of pytest
+    assert str(world.venv_dir) in pip[0]
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "fresh-venv: pytest exit 0"
+
+
+def test_fresh_venv_passes_pytest_args_through_and_defaults_to_quiet(tmp_path, monkeypatch):
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv((), tmp_path)
+    assert world.call("pytest")[0][1:] == ["-m", "pytest", "-q"]
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv(("-x", "tests/test_a.py::test_b"), tmp_path)
+    assert world.call("pytest")[0][1:] == ["-m", "pytest", "-x", "tests/test_a.py::test_b"]
+
+
+def test_fresh_venv_returns_pytests_exit_code(tmp_path, monkeypatch, capsys):
+    _FreshWorld(monkeypatch, pytest_code=1)
+    assert delivery.fresh_venv((), tmp_path) == 1
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "fresh-venv: pytest exit 1"
+
+
+def test_fresh_venv_pip_failure_returns_3_and_skips_pytest(tmp_path, monkeypatch, capsys):
+    world = _FreshWorld(monkeypatch, pip_code=1)
+    assert delivery.fresh_venv((), tmp_path) == 3
+    assert "pytest" not in world.steps
+    out = capsys.readouterr().out
+    assert "FAILED: pip install" in out and "fresh-venv: pytest exit" not in out
+    assert not world.venv_dir.parent.exists()
+
+
+def test_fresh_venv_git_archive_failure_returns_3(tmp_path, monkeypatch, capsys):
+    world = _FreshWorld(monkeypatch, archive_code=128)
+    assert delivery.fresh_venv((), tmp_path) == 3
+    assert world.steps == ["git archive"]
+    assert "FAILED: git archive" in capsys.readouterr().out
+
+
+def test_fresh_venv_removes_its_temp_dir_after_success_and_failure(tmp_path, monkeypatch):
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv((), tmp_path)
+    assert not world.export.parent.exists()
+    world = _FreshWorld(monkeypatch, pytest_code=2)
+    delivery.fresh_venv((), tmp_path)
+    assert not world.export.parent.exists()
+    world = _FreshWorld(monkeypatch, pip_code=1)
+    delivery.fresh_venv((), tmp_path)
+    assert not world.venv_dir.parent.exists()
+
+
+def test_fresh_venv_warns_about_uncommitted_changes_only_when_dirty(tmp_path, monkeypatch, capsys):
+    _FreshWorld(monkeypatch, dirty=" M tp4/delivery.py\n")
+    delivery.fresh_venv((), tmp_path)
+    assert "WARNING: uncommitted changes are not tested (fresh-venv tests the committed HEAD)" in capsys.readouterr().out
+    _FreshWorld(monkeypatch, dirty="")
+    delivery.fresh_venv((), tmp_path)
+    assert "WARNING" not in capsys.readouterr().out
+
+
+def test_fresh_venv_installs_only_requirements_txt(tmp_path, monkeypatch):
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv((), tmp_path)
+    installs = [c[0] for c in world.calls if "pip" in c[0]]
+    assert len(installs) == 1
+    text = " ".join(installs[0])
+    assert installs[0].count("-r") == 1
+    assert text.endswith("requirements.txt")
+    assert "requirements-qr" not in text and "requirements-cuda" not in text
+
+
+def test_fresh_venv_does_not_leak_pythonpath_into_the_export(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", "/somewhere/else")
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv((), tmp_path)
+    assert "PYTHONPATH" not in world.call("pytest")[1]["env"]
+
+
+def test_fresh_venv_subcommand_splits_pytest_args_at_double_dash(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_fresh_venv(pytest_args, project_root):
+        seen["args"], seen["root"] = list(pytest_args), project_root
+        return 7
+
+    monkeypatch.setattr(delivery, "fresh_venv", fake_fresh_venv)
+    assert main(["fresh-venv", "--project-root", str(tmp_path), "--", "-q", "-k", "x"]) == 7
+    assert seen["args"] == ["-q", "-k", "x"] and seen["root"] == tmp_path
+    assert main(["fresh-venv", "--project-root", str(tmp_path)]) == 7
+    assert seen["args"] == []
+
+
+def test_double_dash_is_rejected_outside_fresh_venv(tmp_path, capsys):
+    assert main(["check", "--project-root", str(tmp_path), "--", "-q"]) == 2
+    assert "only for fresh-venv" in capsys.readouterr().err

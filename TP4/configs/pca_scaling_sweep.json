@@ -1,0 +1,13 @@
+{
+  "experiment": "pca_scaling_sweep",
+  "kind": "sweep",
+  "seed": 42,
+  "backend": "numpy",
+  "plots": true,
+  "base": "configs/pca.json",
+  "grid": {
+    "params.standardize": [true, false]
+  },
+  "workers": 2,
+  "child_plots": true
+}

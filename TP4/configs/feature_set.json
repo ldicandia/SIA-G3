@@ -1,0 +1,14 @@
+{
+  "drop": {
+    "price_ars": "derivada de price_usd × 1500 (tipo de cambio fijo), misma información",
+    "total_engagement_per_1000": "suma exacta de likes, comments, saves y shares por 1000",
+    "estimated_argentina_reach": "derivada de average_reach × argentina_audience_pct / 100 (redondeada)",
+    "organic_posts_pct": "complemento exacto, 100 − sponsored_posts_pct",
+    "topic_art_pct": "el bloque de tópicos suma 100, así que es 100 − (fútbol + maquillaje + perros). Se descarta el miembro de menor desvío del bloque y se reconstruye para interpretar la campaña de arte",
+    "content_showcase_pct": "el bloque de tipo de contenido suma 100. Se descarta el miembro de menor desvío"
+  },
+  "reconstruct": {
+    "topic_art_pct": "100 - topic_football_pct - topic_makeup_pct - topic_dogs_pct",
+    "content_showcase_pct": "100 - content_tutorial_pct - content_review_pct - content_entertainment_pct"
+  }
+}

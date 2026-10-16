@@ -1,0 +1,17 @@
+{
+  "experiment": "pca",
+  "kind": "pca",
+  "seed": 42,
+  "backend": "numpy",
+  "plots": true,
+  "data": "datos/creadores.csv",
+  "feature_set": "configs/feature_set.json",
+  "params": {
+    "standardize": true,
+    "n_components": null,
+    "variance_thresholds": [0.8, 0.9],
+    "loadings_pcs": 6,
+    "biplot_max_arrows": null,
+    "top_n": 5
+  }
+}

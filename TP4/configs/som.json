@@ -1,0 +1,24 @@
+{
+  "experiment": "som",
+  "kind": "som",
+  "seed": 42,
+  "backend": "numpy",
+  "plots": true,
+  "data": "datos/creadores.csv",
+  "feature_set": "configs/feature_set.json",
+  "params": {
+    "rows": 8,
+    "cols": null,
+    "topology": "hex",
+    "neighborhood": "step",
+    "init": "random",
+    "epochs": 500,
+    "eta0": 0.5,
+    "eta_min": 0.01,
+    "eta_decay": "exponential",
+    "radius0": 5,
+    "radius_min": 1,
+    "radius_decay": "exponential",
+    "n_regions": null
+  }
+}

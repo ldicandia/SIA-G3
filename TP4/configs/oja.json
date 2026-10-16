@@ -1,0 +1,17 @@
+{
+  "experiment": "oja",
+  "kind": "oja",
+  "seed": 42,
+  "backend": "numpy",
+  "plots": true,
+  "data": "datos/creadores.csv",
+  "feature_set": "configs/feature_set.json",
+  "som_config": "configs/som.json",
+  "params": {
+    "epochs": 200,
+    "eta0": 0.0005,
+    "eta_min": 1e-05,
+    "eta_decay": "constant",
+    "norm_tol": 0.01
+  }
+}
