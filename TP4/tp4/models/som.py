@@ -152,9 +152,14 @@ def squared_distances(X, W, xp=np):
 
 
 def best_matching_unit(W, x) -> int:
-    """Index of the neuron nearest to x; ties go to the lowest index (first argmin)."""
+    """Index of the neuron nearest to x; ties go to the lowest index (first argmin).
+
+    The distances use whatever array type arrives; the argmin runs on the host copy so the tie
+    rule is numpy's on every backend (duplicate prototypes exist with init="sample" and
+    more neurons than samples).
+    """
     d2 = ((W - x) ** 2).sum(axis=1)
-    return int(d2.argmin())
+    return int(to_numpy(d2).argmin())
 
 
 def best_two_units(X: np.ndarray, W: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

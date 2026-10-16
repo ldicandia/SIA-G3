@@ -16,6 +16,17 @@ Course conventions (clases/4.2 - Modelo de Hopfield.pdf):
   trajectory is identical whether recalled alone or in a batch.
 - `iterations` counts sweeps that changed at least one neuron; the final no-change sweep
   is the convergence check and is not counted.
+
+Backend: `recall(..., xp=np)` and `energy(..., xp=np)` run the sweep loops and the per-sweep batch
+energies on the array module `xp` (numpy by default, cupy when the runner resolved it). The async
+step has no data-dependent host branch (flips are masked with `where`), and the state, the energies
+and the optional trace come back to the host once per sweep, where all the bookkeeping (active
+set, iterations, status, cycle detection) stays numpy. Random permutations are always drawn on
+the host Generator, once per sweep, so the same seed gives the same orders on any backend.
+Weight construction and validation (`train`, `hebbian_weights`, `pseudoinverse_weights`,
+`_check_weights`, `check_patterns`, `is_fixed_point`, `sign_keep`) stay on the host: they are
+one-shot and tiny, and they rely on exact host checks (symmetry, zero diagonal). Hebb weights are
+sums of +-1 products and therefore exact on any backend.
 """
 
 from __future__ import annotations
@@ -23,6 +34,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+from ..backend import to_numpy
 
 FIELD_TOL = 1e-9
 MAX_ITER = 1000
@@ -118,14 +131,17 @@ def sign_keep(h, s) -> np.ndarray:
     return out
 
 
-def energy(W, states) -> float | np.ndarray:
-    """Hopfield energy H = -1/2 s^T W s (float for 1-D state, float64 1-D array for 2-D batch)."""
-    W_arr = np.asarray(W, dtype=np.float64)
-    s_arr = np.asarray(states, dtype=np.float64)
+def energy(W, states, xp=np) -> float | np.ndarray:
+    """Hopfield energy H = -1/2 s^T W s (float for 1-D state, float64 1-D array for 2-D batch).
+
+    The arithmetic runs on `xp`; the result is always a host float / numpy array.
+    """
+    W_arr = xp.asarray(W, dtype=np.float64)
+    s_arr = xp.asarray(states, dtype=np.float64)
     if s_arr.ndim == 1:
         return float(-0.5 * float(s_arr @ W_arr @ s_arr))
     if s_arr.ndim == 2:
-        return -0.5 * np.sum((s_arr @ W_arr) * s_arr, axis=1)
+        return to_numpy(-0.5 * xp.sum((s_arr @ W_arr) * s_arr, axis=1))
     raise ValueError(f"states must be 1-D or 2-D, got {s_arr.ndim}-D")
 
 
@@ -159,8 +175,12 @@ def recall(
     rng: np.random.Generator | None = None,
     *,
     trace: bool = False,
+    xp=np,
 ) -> RecallResult:
-    """Run Hopfield associative recall on `queries` (1-D single query or 2-D batch)."""
+    """Run Hopfield associative recall on `queries` (1-D single query or 2-D batch).
+
+    The sweeps and the batch energies run on `xp`; the returned arrays are always host numpy.
+    """
     W_arr = _check_weights(W)
     n = W_arr.shape[0]
 
@@ -185,7 +205,8 @@ def recall(
     b = S.shape[0]
     iterations = np.zeros(b, dtype=int)
     status = np.full(b, "max_iter", dtype=object)
-    init_e = np.asarray(energy(W_arr, S), dtype=np.float64)
+    W_dev = xp.asarray(W_arr)  # one upload per call; bookkeeping below stays on the host
+    init_e = np.asarray(energy(W_dev, S, xp=xp), dtype=np.float64)
     energies: list[list[float]] = [[float(init_e[row])] for row in range(b)]
     update_traces: list[list[float]] | None = [[float(init_e[row])] for row in range(b)] if trace else None
     cur_e = init_e.copy()
@@ -198,26 +219,29 @@ def recall(
             act_idx = np.flatnonzero(active)
             S_prev = S[act_idx].copy()
             perm = rng.permutation(n)  # type: ignore[union-attr]
-            S_act = S[act_idx].astype(np.float64)
-            e_act = cur_e[act_idx].copy()
+            S_act = xp.asarray(S[act_idx].astype(np.float64))
+            e_act = xp.asarray(cur_e[act_idx].copy())
             if update_traces is not None:
-                step_e = np.empty((act_idx.size, n), dtype=np.float64)
+                step_e = xp.empty((act_idx.size, n), dtype=np.float64)
             for step_pos, i in enumerate(perm):
-                h = S_act @ W_arr[i]
-                old_s = S_act[:, i]
-                new_s = np.where(h > FIELD_TOL, 1.0, np.where(h < -FIELD_TOL, -1.0, old_s))
+                h = S_act @ W_dev[int(i)]
+                old_s = S_act[:, int(i)]
+                new_s = xp.where(h > FIELD_TOL, 1.0, xp.where(h < -FIELD_TOL, -1.0, old_s))
                 flipped = new_s != old_s
-                if np.any(flipped):
-                    e_act[flipped] += 2.0 * old_s[flipped] * h[flipped]
-                    S_act[:, i] = new_s
+                # No host branch on `flipped`: the energy change is masked, and it is computed
+                # before the column is overwritten (old_s is a view of it).
+                e_act = e_act + xp.where(flipped, 2.0 * old_s * h, 0.0)
+                S_act[:, int(i)] = new_s
                 if update_traces is not None:
                     step_e[:, step_pos] = e_act
-            S_new = S_act.astype(np.int8)
+            S_new = to_numpy(S_act).astype(np.int8)  # one device-to-host copy per sweep
             S[act_idx] = S_new
-            cur_e[act_idx] = e_act
+            e_act_host = to_numpy(e_act)
+            cur_e[act_idx] = e_act_host
             if update_traces is not None:
+                step_e_host = to_numpy(step_e)
                 for local_pos, row in enumerate(act_idx):
-                    update_traces[int(row)].extend(step_e[local_pos].tolist())
+                    update_traces[int(row)].extend(step_e_host[local_pos].tolist())
 
             changed = np.any(S_new != S_prev, axis=1)
             for row in act_idx[~changed]:
@@ -227,7 +251,7 @@ def recall(
 
             changed_rows = act_idx[changed]
             if changed_rows.size > 0:
-                row_energies = np.asarray(energy(W_arr, S[changed_rows]), dtype=np.float64)
+                row_energies = np.asarray(energy(W_dev, S[changed_rows], xp=xp), dtype=np.float64)
                 cur_e[changed_rows] = row_energies
                 for row, e_val in zip(changed_rows, row_energies, strict=True):
                     energies[int(row)].append(float(e_val))
@@ -239,7 +263,7 @@ def recall(
                 break
             act_idx = np.flatnonzero(active)
             S_cur = S[act_idx]
-            h = S_cur.astype(np.float64) @ W_arr
+            h = to_numpy(xp.asarray(S_cur.astype(np.float64)) @ W_dev)
             S_new = sign_keep(h, S_cur)
             same_as_cur = np.all(S_new == S_cur, axis=1)
             same_as_prev2 = (t >= 2) & (~same_as_cur) & np.all(S_new == S_prev2[act_idx], axis=1)
@@ -255,7 +279,7 @@ def recall(
             changed_mask = ~same_as_cur
             changed_rows = act_idx[changed_mask]
             if changed_rows.size > 0:
-                row_energies = np.asarray(energy(W_arr, S[changed_rows]), dtype=np.float64)
+                row_energies = np.asarray(energy(W_dev, S[changed_rows], xp=xp), dtype=np.float64)
                 for row, e_val in zip(changed_rows, row_energies, strict=True):
                     energies[int(row)].append(float(e_val))
                     iterations[int(row)] = t

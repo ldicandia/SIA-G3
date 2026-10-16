@@ -94,12 +94,15 @@ def _run_cli(config: Path, out_root: Path) -> Path:
     return runs[0]
 
 
-def _compare_runs(numpy_dir: Path, cupy_dir: Path, csvs: list[str]) -> dict:
+def _compare_runs(numpy_dir: Path, cupy_dir: Path, csvs: list[str] | None) -> dict:
     a = json.loads((numpy_dir / "summary.json").read_text(encoding="utf-8"))
     b = json.loads((cupy_dir / "summary.json").read_text(encoding="utf-8"))
     assert a.pop("backend_resolved") == "numpy"
     assert b.pop("backend_resolved") == "cupy"
     assert a == b
+    if csvs is None:  # every csv the numpy run wrote
+        csvs = sorted(p.name for p in numpy_dir.glob("*.csv"))
+        assert csvs
     for name in csvs:
         assert (numpy_dir / name).read_bytes() == (cupy_dir / name).read_bytes(), name
     return json.loads((cupy_dir / "run.json").read_text(encoding="utf-8"))
@@ -125,4 +128,177 @@ def test_cli_oja_fake_cupy_equals_numpy(write_config, tmp_path, monkeypatch):
 def test_cli_campaigns_fake_cupy_equals_numpy(write_config, tmp_path, monkeypatch):
     _cli_numpy_vs_fake(
         write_config, tmp_path, monkeypatch, "configs/campaigns.json", ["evidence.csv", "picks.csv"]
+    )
+
+
+# --------------------------------------------------------------------------- Hopfield
+
+
+def _patterns(p: int, n: int, seed: int) -> np.ndarray:
+    return np.random.default_rng(seed).choice([-1, 1], size=(p, n)).astype(np.int8)
+
+
+def _noisy_queries(P: np.ndarray, flips: list[int], seed: int) -> np.ndarray:
+    """One query per entry of `flips`, cycling over the stored patterns, with that many bits flipped."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for k, n_flip in enumerate(flips):
+        q = P[k % P.shape[0]].copy()
+        idx = rng.choice(P.shape[1], size=n_flip, replace=False)
+        q[idx] = -q[idx]
+        rows.append(q)
+    return np.array(rows, dtype=np.int8)
+
+
+def _assert_recall_equal(a, b):
+    np.testing.assert_array_equal(a.states, b.states)
+    assert isinstance(b.states, np.ndarray) and b.states.dtype == np.int8
+    np.testing.assert_array_equal(a.iterations, b.iterations)
+    assert a.status.tolist() == b.status.tolist()
+    assert len(a.energies) == len(b.energies)
+    for ea, eb in zip(a.energies, b.energies, strict=True):
+        assert isinstance(eb, np.ndarray)
+        np.testing.assert_array_equal(ea, eb)
+    assert (a.update_energies is None) == (b.update_energies is None)
+    if a.update_energies is not None:
+        for ea, eb in zip(a.update_energies, b.update_energies, strict=True):
+            np.testing.assert_array_equal(ea, eb)
+
+
+@pytest.mark.parametrize("rule", ["hebb", "pseudoinverse"])
+@pytest.mark.parametrize("update,trace", [("async", False), ("async", True), ("sync", False)])
+def test_recall_fake_xp_matches_numpy(rule, update, trace):
+    from tp4.models.hopfield import HopfieldConfig, recall, train
+
+    P = _patterns(4, 60, seed=1)
+    W = train(P, rule)
+    Q = _noisy_queries(P, [0, 3, 8, 15, 24, 30, 6, 12], seed=2)
+    cfg = HopfieldConfig(rule=rule, update=update, max_iter=50)
+    a = recall(W, Q, cfg, np.random.default_rng(5), trace=trace)
+    b = recall(W, Q, cfg, np.random.default_rng(5), trace=trace, xp=_fake_cupy())
+    _assert_recall_equal(a, b)
+
+
+def test_recall_active_set_shrinks_mid_run_and_still_matches():
+    from tp4.models.hopfield import HopfieldConfig, recall, train
+
+    P = _patterns(3, 80, seed=11)
+    W = train(P, "hebb")
+    Q = _noisy_queries(P, [0, 1, 5, 12, 22, 30, 36], seed=12)
+    cfg = HopfieldConfig(rule="hebb", update="async", max_iter=60)
+    a = recall(W, Q, cfg, np.random.default_rng(9), trace=True)
+    b = recall(W, Q, cfg, np.random.default_rng(9), trace=True, xp=_fake_cupy())
+    assert len(set(a.iterations.tolist())) > 1  # rows converge at different sweeps
+    _assert_recall_equal(a, b)
+
+
+def test_recall_sync_cycle_and_max_iter_statuses_match():
+    from tp4.models.hopfield import HopfieldConfig, recall, train
+
+    # Two neurons with W = [[0, -1], [-1, 0]]: synchronous (+1, +1) flips to (-1, -1) and back.
+    W = np.array([[0.0, -1.0], [-1.0, 0.0]])
+    q = np.array([[1, 1]], dtype=np.int8)
+    cfg = HopfieldConfig(rule="hebb", update="sync", max_iter=20)
+    a = recall(W, q, cfg)
+    b = recall(W, q, cfg, xp=_fake_cupy())
+    assert a.status.tolist() == b.status.tolist() == ["cycle"]
+    _assert_recall_equal(a, b)
+
+    P = _patterns(4, 60, seed=3)
+    Wh = train(P, "hebb")
+    Q = _noisy_queries(P, [20, 25, 28, 30], seed=4)
+    cfg = HopfieldConfig(rule="hebb", update="async", max_iter=1)
+    a = recall(Wh, Q, cfg, np.random.default_rng(0))
+    b = recall(Wh, Q, cfg, np.random.default_rng(0), xp=_fake_cupy())
+    assert "max_iter" in a.status.tolist()
+    _assert_recall_equal(a, b)
+
+
+def test_recall_rng_state_is_the_same_with_either_xp():
+    from tp4.models.hopfield import HopfieldConfig, recall, train
+
+    P = _patterns(3, 40, seed=6)
+    W = train(P, "hebb")
+    Q = _noisy_queries(P, [4, 8, 12], seed=7)
+    cfg = HopfieldConfig(rule="hebb", update="async", max_iter=30)
+    rng_a, rng_b = np.random.default_rng(21), np.random.default_rng(21)
+    recall(W, Q, cfg, rng_a)
+    recall(W, Q, cfg, rng_b, xp=_fake_cupy())
+    assert rng_a.random() == rng_b.random()
+
+
+def test_energy_xp_matches_numpy_and_returns_host_values():
+    from tp4.models.hopfield import energy, train
+
+    P = _patterns(3, 30, seed=8)
+    W = train(P, "hebb")
+    fake = _fake_cupy()
+    e1 = energy(W, P[0].astype(float), xp=fake)
+    assert isinstance(e1, float) and e1 == energy(W, P[0].astype(float))
+    e2 = energy(W, P, xp=fake)
+    assert isinstance(e2, np.ndarray) and e2.dtype == np.float64
+    np.testing.assert_array_equal(e2, energy(W, P))
+
+
+# --------------------------------------------------------------------------- SOM
+
+
+class _DeviceLike(np.ndarray):
+    """A numpy subclass that mimics a device array: `.get()` exists and argmin picks the LAST tie."""
+
+    def get(self):
+        return np.asarray(self)
+
+    def argmin(self, *args, **kwargs):
+        flipped = np.asarray(self)[::-1]
+        return len(flipped) - 1 - int(flipped.argmin())
+
+
+def test_best_matching_unit_ties_go_to_the_lowest_index_whatever_the_array_type():
+    from tp4.models.som import best_matching_unit
+
+    W = np.array([[1.0, 1.0], [0.0, 0.0], [0.0, 0.0], [2.0, 2.0], [0.0, 0.0]])
+    x = np.array([0.1, -0.1])
+    assert best_matching_unit(W, x) == 1
+    dev = W.view(_DeviceLike)
+    assert best_matching_unit(dev, x) == 1
+    assert type(best_matching_unit(dev, x)) is int
+
+
+def test_train_som_duplicate_initial_prototypes_match_under_fake_xp():
+    from tp4.models.som import SomConfig, train_som
+
+    X = np.random.default_rng(0).normal(size=(10, 4))
+    cfg = SomConfig(rows=4, cols=4, init="sample", epochs=5)  # 16 neurons > 10 samples: duplicates
+    a = train_som(X, cfg, np.random.default_rng(1))
+    b = train_som(X, cfg, np.random.default_rng(1), xp=_fake_cupy())
+    np.testing.assert_array_equal(a.weights, b.weights)
+
+
+# --------------------------------------------------------------------------- CLI: Hopfield and SOM
+
+
+def test_cli_hopfield_letters_fake_cupy_equals_numpy(write_config, tmp_path, monkeypatch):
+    _cli_numpy_vs_fake(
+        write_config, tmp_path, monkeypatch, "configs/hopfield_letters.json", None,
+        **{"params.trials": 6, "params.capacity_subsets": 5},
+    )
+
+
+def test_cli_hopfield_qr_fake_cupy_equals_numpy(write_config, tmp_path, monkeypatch):
+    _cli_numpy_vs_fake(
+        write_config, tmp_path, monkeypatch, "configs/hopfield_qr.json", None,
+        **{
+            "params.trials": 4,
+            "params.noise_levels": [0.0, 0.05, 0.3, 0.45, 1.0],
+            "params.torn_corner_sizes": [8, 20],
+            "params.occlusion_sizes": [12],
+            "params.trace_levels": [0.3],
+        },
+    )
+
+
+def test_cli_som_fake_cupy_equals_numpy(write_config, tmp_path, monkeypatch):
+    _cli_numpy_vs_fake(
+        write_config, tmp_path, monkeypatch, "configs/som.json", None, **{"params.epochs": 15}
     )

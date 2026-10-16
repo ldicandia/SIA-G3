@@ -750,6 +750,7 @@ def run(ctx: RunContext) -> dict[str, Any]:
             HopfieldConfig(rule=rule, update="async", max_iter=max_iter),
             rng=sp_rng,
             trace=True,
+            xp=ctx.backend.xp,
         )
         cls_sp, _ = classify_states(res_sp.states, P_sel)
         for t_idx in range(trials):
@@ -829,12 +830,14 @@ def run(ctx: RunContext) -> dict[str, Any]:
                             HopfieldConfig(rule=rule, update="async", max_iter=max_iter),
                             rng=cell_rng,
                             trace=is_example_cell,
+                            xp=ctx.backend.xp,
                         )
                     else:
                         res = recall(
                             W_set,
                             queries,
                             HopfieldConfig(rule=rule, update="sync", max_iter=max_iter),
+                            xp=ctx.backend.xp,
                         )
 
                     cls_arr, idx_arr = classify_states(res.states, P_set)

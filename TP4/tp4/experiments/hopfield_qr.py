@@ -724,6 +724,7 @@ def run(ctx: RunContext) -> dict[str, Any]:
                 queries,
                 HopfieldConfig(rule=rule, update=update, max_iter=max_iter),
                 np.random.default_rng([cell["seed"], r_idx]),
+                xp=ctx.backend.xp,
             )
             classes, class_idx = classify_states(res.states, P)
             per_rule[rule] = {
@@ -809,6 +810,7 @@ def run(ctx: RunContext) -> dict[str, Any]:
                 HopfieldConfig(rule=rule, update=update, max_iter=max_iter),
                 np.random.default_rng([cell["seed"], r_idx]),
                 trace=True,
+                xp=ctx.backend.xp,
             )
             assert res.update_energies is not None
             trace = res.update_energies[0]
