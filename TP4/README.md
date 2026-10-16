@@ -57,9 +57,58 @@ contiene un `run.json` de tp4; una carpeta ajena se rechaza sin tocarla.
 
 ## Tests
 
+Suite completa (unos 7 minutos; ningún test necesita `runs/`: cada experimento escribe en un directorio temporal):
+
 ```bash
 .venv/bin/python -m pytest -q
 ```
+
+Las cuatro propiedades que exige TEST-01, con los tests que las prueban (`archivo::test`):
+
+| Propiedad (TEST-01) | Tests |
+|---------------------|-------|
+| Oja se alinea con PC1 | `tests/test_oja_model.py::test_recovers_the_leading_eigenvector_and_norm_one` (datos sintéticos con autovector conocido); `tests/test_oja.py::test_summary_validation_numbers_and_orientation` y `tests/test_oja.py::test_weights_vs_pc1_table` (sobre los creadores, contra la PC1 de sklearn) |
+| Hopfield recupera los patrones guardados | `tests/test_hopfield_model.py::test_selected_letters_are_fixed_points_under_async_and_sync`; `tests/test_hopfield_model.py::test_random_stored_patterns_are_fixed_points`; `tests/test_hopfield_letters.py::test_exhaustive_one_and_two_flip_queries_converge_to_target` |
+| La energía asincrónica nunca sube | `tests/test_hopfield_model.py::test_async_energy_never_increases_per_neuron_update_or_per_iteration` |
+| Kohonen: ganadora (BMU) y vecindad | `tests/test_som_model.py::test_bmu_matches_brute_force_euclidean`; `tests/test_som_model.py::test_bmu_tie_goes_to_lowest_index_and_other_is_second`; `tests/test_som_model.py::test_gaussian_is_one_at_winner_and_decreases_with_distance_and_shrinking_radius`; `tests/test_som_model.py::test_step_is_non_increasing_in_distance_and_radius`; `tests/test_som_model.py::test_winner_always_has_full_influence_at_any_positive_radius` |
+
+Un solo comando que corre exactamente esos 12 tests (pytest sale con error si un nombre dejó de existir, así que el mapa no puede quedar desactualizado en silencio):
+
+```bash
+.venv/bin/python -m pytest -q \
+  tests/test_oja_model.py::test_recovers_the_leading_eigenvector_and_norm_one \
+  tests/test_oja.py::test_summary_validation_numbers_and_orientation \
+  tests/test_oja.py::test_weights_vs_pc1_table \
+  tests/test_hopfield_model.py::test_selected_letters_are_fixed_points_under_async_and_sync \
+  tests/test_hopfield_model.py::test_random_stored_patterns_are_fixed_points \
+  tests/test_hopfield_letters.py::test_exhaustive_one_and_two_flip_queries_converge_to_target \
+  tests/test_hopfield_model.py::test_async_energy_never_increases_per_neuron_update_or_per_iteration \
+  tests/test_som_model.py::test_bmu_matches_brute_force_euclidean \
+  tests/test_som_model.py::test_bmu_tie_goes_to_lowest_index_and_other_is_second \
+  tests/test_som_model.py::test_gaussian_is_one_at_winner_and_decreases_with_distance_and_shrinking_radius \
+  tests/test_som_model.py::test_step_is_non_increasing_in_distance_and_radius \
+  tests/test_som_model.py::test_winner_always_has_full_influence_at_any_positive_radius
+```
+
+### Prueba en una máquina limpia (`fresh-venv`)
+
+```bash
+.venv/bin/python -m tp4.delivery fresh-venv
+```
+
+Exporta el **HEAD commiteado** con `git archive` a un directorio temporal (sin `runs/`, sin `.venv`
+y sin archivos sin trackear), crea ahí un venv nuevo con **solo `requirements.txt`** (sin
+`zxing-cpp` ni CuPy), corre pytest dentro de la exportación y borra todo al terminar. Es lo que
+recibe un compañero con un clone limpio. Corrélo **después de commitear**: si hay cambios sin
+commitear imprime `WARNING: uncommitted changes are not tested` y no los prueba. Todo lo que
+sigue a `--` va a pytest sin cambios (por defecto, `-q`), por ejemplo los 12 tests de arriba:
+`fresh-venv -- -q <node ids>`. Sale con el código de pytest (se imprime `fresh-venv: pytest exit <código>`);
+si falla un paso de preparación (`git archive`, extracción, venv o `pip install`, que necesita
+acceso a PyPI) imprime `FAILED: <paso>` y sale con 3.
+
+Duración esperada: unos 10 minutos con la instalación. Los únicos tests que se saltean (`skipped`)
+son los de los extras opcionales: 3 de `zxing-cpp` (`tests/test_qr.py` y `tests/test_hopfield_qr.py`)
+y 1 de CuPy (`tests/test_backend.py`).
 
 ## Artefactos de `runs/eda/`
 

@@ -615,3 +615,169 @@ def test_real_notes_embed_only_committed_copies():
         assert (figures_dir / name).is_file(), name
     assert delivery._png_names(figures_dir) == sorted(declared.copies)
     assert [name for name, _ in declared.mentions if name not in declared.copies] == []
+
+
+# ----- fresh-venv (subprocess and venv creation faked: the suite never installs anything)
+
+
+class _FreshWorld:
+    """Fakes git, venv creation, pip and pytest; records every step in order."""
+
+    def __init__(self, monkeypatch, *, dirty="", pip_code=0, pytest_code=0, archive_code=0):
+        self.steps = []
+        self.calls = []
+        self.dirty = dirty
+        self.pip_code = pip_code
+        self.pytest_code = pytest_code
+        self.archive_code = archive_code
+        self.export = None
+        self.pytest_cwd_existed = None
+        monkeypatch.setattr(delivery.subprocess, "run", self._run)
+        monkeypatch.setattr(delivery.venv, "EnvBuilder", self._env_builder())
+
+    def _env_builder(self):
+        world = self
+
+        class FakeEnvBuilder:
+            def __init__(self, with_pip=False):
+                world.steps.append(("venv", with_pip))
+
+            def create(self, path):
+                world.venv_dir = path
+                path.mkdir(parents=True)
+
+        return FakeEnvBuilder
+
+    def _run(self, command, **kwargs):
+        self.calls.append((list(command), kwargs))
+        result = type("R", (), {"returncode": 0, "stdout": ""})()
+        if command[:2] == ["git", "status"]:
+            result.stdout = self.dirty
+        elif command[:2] == ["git", "archive"]:
+            self.steps.append("git archive")
+            result.returncode = self.archive_code
+            if not self.archive_code:
+                import io
+                import tarfile
+
+                payload = b"numpy\n"
+                with tarfile.open(command[command.index("-o") + 1], "w") as tar:
+                    info = tarfile.TarInfo("requirements.txt")
+                    info.size = len(payload)
+                    tar.addfile(info, io.BytesIO(payload))
+        elif "pip" in command:
+            self.steps.append("pip")
+            result.returncode = self.pip_code
+        elif "pytest" in command:
+            self.steps.append("pytest")
+            self.export = kwargs["cwd"]
+            self.pytest_cwd_existed = (kwargs["cwd"] / "requirements.txt").is_file()
+            result.returncode = self.pytest_code
+        return result
+
+    def call(self, name):
+        return next(c for c in self.calls if name in c[0] or c[0][:2] == name.split())
+
+
+def test_fresh_venv_runs_the_steps_in_order_inside_the_export(tmp_path, monkeypatch, capsys):
+    world = _FreshWorld(monkeypatch)
+    assert delivery.fresh_venv((), tmp_path) == 0
+    assert world.steps == ["git archive", ("venv", True), "pip", "pytest"]
+    archive, kwargs = world.call("git archive")
+    assert archive == ["git", "archive", "--format=tar", "-o", archive[4], "HEAD"]
+    assert kwargs["cwd"] == tmp_path and not kwargs.get("shell")
+    pip, pip_kwargs = world.call("pip")
+    assert pip[1:3] == ["-m", "pip"] and pip[pip.index("-r") + 1] == str(world.export / "requirements.txt")
+    assert pip_kwargs["cwd"] == world.export
+    assert world.pytest_cwd_existed  # the export was extracted and is the cwd of pytest
+    assert str(world.venv_dir) in pip[0]
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "fresh-venv: pytest exit 0"
+
+
+def test_fresh_venv_passes_pytest_args_through_and_defaults_to_quiet(tmp_path, monkeypatch):
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv((), tmp_path)
+    assert world.call("pytest")[0][1:] == ["-m", "pytest", "-q"]
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv(("-x", "tests/test_a.py::test_b"), tmp_path)
+    assert world.call("pytest")[0][1:] == ["-m", "pytest", "-x", "tests/test_a.py::test_b"]
+
+
+def test_fresh_venv_returns_pytests_exit_code(tmp_path, monkeypatch, capsys):
+    _FreshWorld(monkeypatch, pytest_code=1)
+    assert delivery.fresh_venv((), tmp_path) == 1
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "fresh-venv: pytest exit 1"
+
+
+def test_fresh_venv_pip_failure_returns_3_and_skips_pytest(tmp_path, monkeypatch, capsys):
+    world = _FreshWorld(monkeypatch, pip_code=1)
+    assert delivery.fresh_venv((), tmp_path) == 3
+    assert "pytest" not in world.steps
+    out = capsys.readouterr().out
+    assert "FAILED: pip install" in out and "fresh-venv: pytest exit" not in out
+    assert not world.venv_dir.parent.exists()
+
+
+def test_fresh_venv_git_archive_failure_returns_3(tmp_path, monkeypatch, capsys):
+    world = _FreshWorld(monkeypatch, archive_code=128)
+    assert delivery.fresh_venv((), tmp_path) == 3
+    assert world.steps == ["git archive"]
+    assert "FAILED: git archive" in capsys.readouterr().out
+
+
+def test_fresh_venv_removes_its_temp_dir_after_success_and_failure(tmp_path, monkeypatch):
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv((), tmp_path)
+    assert not world.export.parent.exists()
+    world = _FreshWorld(monkeypatch, pytest_code=2)
+    delivery.fresh_venv((), tmp_path)
+    assert not world.export.parent.exists()
+    world = _FreshWorld(monkeypatch, pip_code=1)
+    delivery.fresh_venv((), tmp_path)
+    assert not world.venv_dir.parent.exists()
+
+
+def test_fresh_venv_warns_about_uncommitted_changes_only_when_dirty(tmp_path, monkeypatch, capsys):
+    _FreshWorld(monkeypatch, dirty=" M tp4/delivery.py\n")
+    delivery.fresh_venv((), tmp_path)
+    assert "WARNING: uncommitted changes are not tested (fresh-venv tests the committed HEAD)" in capsys.readouterr().out
+    _FreshWorld(monkeypatch, dirty="")
+    delivery.fresh_venv((), tmp_path)
+    assert "WARNING" not in capsys.readouterr().out
+
+
+def test_fresh_venv_installs_only_requirements_txt(tmp_path, monkeypatch):
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv((), tmp_path)
+    installs = [c[0] for c in world.calls if "pip" in c[0]]
+    assert len(installs) == 1
+    text = " ".join(installs[0])
+    assert installs[0].count("-r") == 1
+    assert text.endswith("requirements.txt")
+    assert "requirements-qr" not in text and "requirements-cuda" not in text
+
+
+def test_fresh_venv_does_not_leak_pythonpath_into_the_export(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", "/somewhere/else")
+    world = _FreshWorld(monkeypatch)
+    delivery.fresh_venv((), tmp_path)
+    assert "PYTHONPATH" not in world.call("pytest")[1]["env"]
+
+
+def test_fresh_venv_subcommand_splits_pytest_args_at_double_dash(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_fresh_venv(pytest_args, project_root):
+        seen["args"], seen["root"] = list(pytest_args), project_root
+        return 7
+
+    monkeypatch.setattr(delivery, "fresh_venv", fake_fresh_venv)
+    assert main(["fresh-venv", "--project-root", str(tmp_path), "--", "-q", "-k", "x"]) == 7
+    assert seen["args"] == ["-q", "-k", "x"] and seen["root"] == tmp_path
+    assert main(["fresh-venv", "--project-root", str(tmp_path)]) == 7
+    assert seen["args"] == []
+
+
+def test_double_dash_is_rejected_outside_fresh_venv(tmp_path, capsys):
+    assert main(["check", "--project-root", str(tmp_path), "--", "-q"]) == 2
+    assert "only for fresh-venv" in capsys.readouterr().err

@@ -4,8 +4,9 @@
     python -m tp4.delivery check [--root DIR]            # check docs/hallazgos notes against DIR/runs (default: TP4/runs)
     python -m tp4.delivery figures [--root DIR]          # copy the figures the notes embed from DIR/runs into docs/hallazgos/figuras/
     python -m tp4.delivery verify                        # regenerate into a temporary directory, check against it, remove it
+    python -m tp4.delivery fresh-venv [-- PYTEST ARGS]   # run the suite from a clean export of HEAD in a throwaway venv
 
-Both read docs/hallazgos/evidencia.json (override with `--manifest PATH`): the run order of the
+The first four read docs/hallazgos/evidencia.json (override with `--manifest PATH`): the run order of the
 run configs, the classification of the configs that are not runs and the full cite list of each
 note. The manifest holds data only; it never names a module, a function or a command, so the only
 processes started are `python -m tp4 run <config> --out-root DIR` for the configs of `run_order`.
@@ -17,10 +18,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
+import venv
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -629,6 +633,96 @@ def verify(manifest: Manifest, project_root: Path = PROJECT_ROOT) -> int:
         return code
 
 
+# --------------------------------------------------------------------------- fresh-venv
+
+SETUP_FAILED_CODE = 3
+DEFAULT_PYTEST_ARGS = ("-q",)
+
+
+def _venv_python(venv_dir: Path) -> Path:
+    return venv_dir / ("Scripts" if sys.platform == "win32" else "bin") / "python"
+
+
+def _extract_tar(tar_path: Path, dest: Path) -> None:
+    """Extract the repo's own archive with the strictest stock filter (no absolute paths or links out)."""
+    dest.mkdir()
+    with tarfile.open(tar_path) as archive:
+        archive.extractall(dest, filter="data")
+
+
+def fresh_venv(
+    pytest_args: Sequence[str] = (), project_root: Path = PROJECT_ROOT
+) -> int:
+    """Run pytest from a clean export of the committed HEAD inside a throwaway venv.
+
+    The export (`git archive HEAD`) has no runs/, no .venv and no untracked file; the venv gets
+    only requirements.txt (never requirements-qr.txt or requirements-cuda.txt). Everything is
+    removed afterwards. Returns pytest's exit code, or 3 when a setup step fails.
+    """
+    args = list(pytest_args) if pytest_args else list(DEFAULT_PYTEST_ARGS)
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--", "."],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.returncode == 0 and (status.stdout or "").strip():
+        print("WARNING: uncommitted changes are not tested (fresh-venv tests the committed HEAD)", flush=True)
+
+    # No PYTHONPATH from the caller: the export must import its own tp4, not this checkout's.
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    env["PYTHONNOUSERSITE"] = "1"
+
+    with tempfile.TemporaryDirectory(prefix="tp4-fresh-") as tmp:
+        base = Path(tmp)
+        tar_path = base / "head.tar"
+        src = base / "src"
+        venv_dir = base / "venv"
+        try:
+            step = "git archive"
+            archived = subprocess.run(
+                ["git", "archive", "--format=tar", "-o", str(tar_path), "HEAD"],
+                cwd=project_root,
+                check=False,
+            )
+            if archived.returncode != 0:
+                raise OSError(f"git archive exited {archived.returncode}")
+
+            step = "extract"
+            _extract_tar(tar_path, src)
+
+            step = "venv"
+            venv.EnvBuilder(with_pip=True).create(venv_dir)
+
+            step = "pip install"
+            installed = subprocess.run(
+                [
+                    str(_venv_python(venv_dir)), "-m", "pip", "install",
+                    "--disable-pip-version-check", "-q",
+                    "-r", str(src / "requirements.txt"),
+                ],
+                cwd=src,
+                env=env,
+                check=False,
+            )
+            if installed.returncode != 0:
+                raise OSError(f"pip install exited {installed.returncode}")
+        except (OSError, tarfile.TarError, subprocess.CalledProcessError) as exc:
+            print(f"FAILED: {step} ({exc})", flush=True)
+            return SETUP_FAILED_CODE
+
+        print(f"fresh-venv: running pytest {' '.join(args)} in the export of HEAD", flush=True)
+        code = subprocess.run(
+            [str(_venv_python(venv_dir)), "-m", "pytest", *args],
+            cwd=src,
+            env=env,
+            check=False,
+        ).returncode
+    print(f"fresh-venv: pytest exit {code}", flush=True)
+    return code
+
+
 # --------------------------------------------------------------------------- CLI
 
 
@@ -644,15 +738,31 @@ def build_parser() -> argparse.ArgumentParser:
     fig = sub.add_parser("figures", help="rewrite run links of the notes and copy each declared figure into docs/hallazgos/figuras/")
     fig.add_argument("--root", type=Path, default=PROJECT_ROOT, help="figures are read from DIR/runs (default: TP4/)")
     ver = sub.add_parser("verify", help="clean regeneration into a temporary directory, then check against it")
+    fresh = sub.add_parser(
+        "fresh-venv",
+        help="run the suite from a clean export of the committed HEAD in a throwaway venv "
+        "(everything after `--` goes to pytest; default -q)",
+    )
     for command in (regen, chk, fig, ver):
         command.add_argument("--manifest", type=Path, default=MANIFEST_PATH, help="delivery manifest (default: docs/hallazgos/evidencia.json)")
+    for command in (regen, chk, fig, ver, fresh):
         command.add_argument("--project-root", type=Path, default=PROJECT_ROOT, help="tree holding configs/ and docs/hallazgos/ (default: TP4/; used by tests)")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    pytest_args: list[str] = []
+    if "--" in tokens:  # everything after the first `--` is pytest's, untouched by argparse
+        cut = tokens.index("--")
+        tokens, pytest_args = tokens[:cut], tokens[cut + 1 :]
+    args = build_parser().parse_args(tokens)
     project_root = args.project_root
+    if args.command == "fresh-venv":
+        return fresh_venv(pytest_args, project_root)
+    if pytest_args:
+        print("error: `--` is only for fresh-venv", file=sys.stderr)
+        return 2
     try:
         manifest = load_manifest(args.manifest, project_root)
     except Tp4Error as exc:
