@@ -17,13 +17,13 @@ ROOT = Path(__file__).resolve().parents[2]
 FIG = ROOT / "docs" / "hallazgos" / "figuras"
 OUT = ROOT / "docs" / "presentacion" / "TP4-presentacion.pptx"
 
-BG = RGBColor(0x1F, 0x1F, 0x2E)
-BAR = RGBColor(0x8A, 0xB4, 0xF8)
-TITLE = RGBColor(0xCF, 0xD6, 0xF5)
-GOLD = RGBColor(0xFF, 0xE3, 0xA8)
-CARD = RGBColor(0x30, 0x32, 0x43)
-TEXT = RGBColor(0xE4, 0xE7, 0xF7)
-MUTED = RGBColor(0x9A, 0x9D, 0xB3)
+BG = RGBColor(0x2A, 0x1F, 0x22)
+BAR = RGBColor(0xFF, 0x7F, 0x6E)
+TITLE = RGBColor(0xFF, 0xD9, 0xD0)
+GOLD = RGBColor(0xFF, 0x8A, 0x75)
+CARD = RGBColor(0x3D, 0x2B, 0x2F)
+TEXT = RGBColor(0xF6, 0xE9, 0xE6)
+MUTED = RGBColor(0xB5, 0x9A, 0x97)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 FONT = "Calibri"
 GROUP = "Grupo 3"
@@ -166,7 +166,7 @@ def table(slide, x, y, w, col_w, rows, header, row_h=0.5, size=15):
         for j, val in enumerate(row):
             c = tbl.cell(i, j)
             c.fill.solid()
-            c.fill.fore_color.rgb = CARD if i else RGBColor(0x3A, 0x3C, 0x50)
+            c.fill.fore_color.rgb = CARD if i else RGBColor(0x4A, 0x33, 0x38)
             c.vertical_anchor = MSO_ANCHOR.MIDDLE
             tf = c.text_frame
             tf.word_wrap = True
