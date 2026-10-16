@@ -304,6 +304,53 @@ La regla es determinista y **no mira PC1**:
 Con 1/(1,2·λ1) = `course_eta_bound` y la regla de "η0 <= 0,5" del curso, la regla online diverge
 sobre estos datos: cada paso escala con ‖x‖² del creador, no con λ1.
 
+## Campañas (`kind: "campaigns"`)
+
+```bash
+.venv/bin/python -m tp4 run configs/campaigns.json
+```
+
+No entrena ningún modelo nuevo: recalcula, desde las mismas configs, las tres evidencias de cada
+creador (PC1 y PC2 de la PCA, la celda y la región del mapa de Kohonen y el índice de Oja; un test
+verifica que son iguales a `runs/oja` y `runs/som`) y aplica una **regla transparente por cliente**
+(filtro de tópico, filtro opcional de región del mapa y una suma ponderada de puntajes z calculados
+sobre los 50 creadores). Los elegidos son los `n_picks` de mayor puntaje, y se comparan con dos
+selecciones solo por seguidores (global y dentro del tópico). Esquema de `configs/campaigns.json`:
+
+| Clave | Significado |
+|-------|-------------|
+| `oja_config` | ruta a la config `oja` (de ella salen `som_config`, `data` y `feature_set`) |
+| `params.n_picks` | elegidos por cliente, entero entre 1 y 10 (3 por defecto) |
+| `clients` | lista de 1 a 8 clientes, cada uno con las claves de abajo |
+| `clients[].name` | identificador (`[a-z][a-z0-9_]{0,23}`, único, no puede ser `n`, `oja`, `followers_global`, `overlapping` ni `backend`): prefija sus claves de `summary.json` |
+| `clients[].label` | nombre para las tablas y gráficos |
+| `clients[].objective` | objetivo del cliente (texto) |
+| `clients[].topic` | columna de tópico del filtro: `topic_football_pct`, `topic_makeup_pct`, `topic_dogs_pct` o `topic_art_pct` (nunca nombres de cuenta) |
+| `clients[].min_share` | participación mínima del tópico, 0 a 100, inclusiva |
+| `clients[].regions` | opcional: regiones del mapa permitidas (enteros desde 1, sin repetir; `[]` o ausente = todas). Un número mayor que `n_regions` sale con código 2 |
+| `clients[].rank_by` | lista no vacía de `{column, weight}`: peso distinto de cero (negativo = menor es mejor) y columna sin repetir |
+
+Columnas permitidas en `rank_by` (`RANKABLE_COLUMNS` en `tp4/analysis/campaigns.py`, una lista
+cerrada): las 25 variables seleccionadas más `topic_art_pct` (reconstruido), `content_showcase_pct`,
+y las derivadas `est_arg_reach`, `engagement_per_1000` y `cost_per_1000_arg_reach`. Una config
+inválida sale con `error: ...` y código 2 antes de crear `runs/campaigns/`.
+
+| Artefacto en `runs/campaigns/` | Contenido |
+|--------------------------------|-----------|
+| `evidence.csv` | una fila por creador: PC1/PC2, celda y región del mapa, índice y rango de Oja y las métricas |
+| `picks.csv` | los elegidos por cliente con sus tres evidencias y los otros clientes que eligieron al mismo creador (`also_picked_for`) |
+| `baselines.csv` | las selecciones solo por seguidores: las más seguidas de todo el catálogo y las más seguidas dentro del tópico del cliente |
+| `comparison.csv` | método, seguidores global y seguidores en el tópico, lado a lado: participación del tópico, audiencia argentina, alcance argentino estimado, engagement, precio total y USD por mil de alcance argentino |
+| `strategy_profiles.csv` | los candidatos de cada cliente perfilados por región del mapa (la evidencia de la pregunta de fútbol: alcance masivo, descubrimiento o profundidad educativa) |
+| `comparison.png` | la comparación en barras, una fila por cliente |
+| `summary.json`, `run.json` | por cliente (`<nombre>_picks`, `_rule`, `_n_candidates`, `_mean_topic_share`, `_cost_per_1000_arg_reach`, ...), `followers_global_*`, `n_overlapping_creators`, `oja_top_creator` y `oja_top_creator_picked_for` |
+
+**Agregar un cliente nuevo:** sumar un objeto a `clients` en `configs/campaigns.json` y volver a
+correr el comando de arriba; no hace falta reentrenar el mapa ni Oja. Las suposiciones de las
+métricas (una publicación por creador al precio `price_usd`, costo agrupado por mil de alcance
+argentino estimado) y qué cambiar si cambian los datos están en la sección "Mantenimiento del
+sistema" de [`docs/hallazgos/ej1.md`](docs/hallazgos/ej1.md).
+
 ## Backend CUDA opcional
 
 Con `"backend": "cupy"` en la config, los cálculos de arrays que usan `ctx.backend.xp` (por ahora
@@ -424,4 +471,72 @@ por qué no conviene elegir siempre al creador con el índice más alto. Para re
   --cite runs/oja_sweep/summary.json:selected_eta0 \
   --cite runs/oja_sweep/summary.json:selected_child \
   --cite runs/campaigns/summary.json:oja_top_creator_picked_for
+```
+
+### Sección 1.4: campañas
+
+La sección `## 1.4 Decisión para las campañas` de la misma nota explica el método de selección, da tres elegidos por cliente
+con su posición en el biplot, su región y celda del mapa y su índice de Oja, responde la pregunta de fútbol (alcance masivo,
+descubrimiento o profundidad educativa) con los perfiles por región, compara con la selección solo por seguidores y describe
+el mantenimiento del sistema (campaña nueva, creadores o variables nuevas y actualización mensual). Para regenerar su
+evidencia, en este orden (barrido de η, Oja y campañas), y verificarla (los 53 valores de 1.1 a 1.4):
+
+```bash
+.venv/bin/python -m tp4 run configs/oja_sweep.json
+.venv/bin/python -m tp4 run configs/oja.json
+.venv/bin/python -m tp4 run configs/campaigns.json
+.venv/bin/python -m tp4.findings docs/hallazgos/ej1.md \
+  --cite runs/pca/summary.json:pc1_explained_variance_pct \
+  --cite runs/pca/summary.json:pc2_explained_variance_pct \
+  --cite runs/pca/summary.json:cumulative_pc2_pct \
+  --cite runs/pca/summary.json:pc1_top_feature \
+  --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
+  --cite runs/eda/summary.json:n_selected_features \
+  --cite runs/som_sweep/summary.json:selected_child \
+  --cite runs/som_sweep/summary.json:selected_quantization_error \
+  --cite runs/som_sweep/summary.json:selected_topographic_error \
+  --cite runs/som_sweep/summary.json:selected_distance_preservation \
+  --cite runs/som_design_sweep/summary.json:selected_child \
+  --cite runs/som/summary.json:n_regions \
+  --cite runs/som/summary.json:u_border_ratio \
+  --cite runs/som/summary.json:pc1_region_eta2 \
+  --cite runs/som/summary.json:pc2_region_eta2 \
+  --cite runs/som/summary.json:empty_neuron_frac \
+  --cite runs/som_pca_control/summary.json:region_ari \
+  --cite runs/som_pca_control/summary.json:bmu_distance_agreement \
+  --cite runs/oja/summary.json:cosine_to_pc1 \
+  --cite runs/oja/summary.json:pearson_scores_pc1 \
+  --cite runs/oja/summary.json:final_w_norm \
+  --cite runs/oja/summary.json:epochs_to_converge \
+  --cite runs/oja/summary.json:top_creator \
+  --cite runs/oja/summary.json:bottom_creator \
+  --cite runs/oja/summary.json:oja_top_feature \
+  --cite runs/oja/summary.json:lambda1 \
+  --cite runs/oja/summary.json:course_eta_bound \
+  --cite runs/oja_sweep/summary.json:selected_eta0 \
+  --cite runs/oja_sweep/summary.json:selected_child \
+  --cite runs/campaigns/summary.json:oja_top_creator_picked_for \
+  --cite runs/campaigns/summary.json:dogs_picks \
+  --cite runs/campaigns/summary.json:football_picks \
+  --cite runs/campaigns/summary.json:makeup_picks \
+  --cite runs/campaigns/summary.json:art_picks \
+  --cite runs/campaigns/summary.json:followers_global_picks \
+  --cite runs/campaigns/summary.json:dogs_baseline_topic \
+  --cite runs/campaigns/summary.json:football_baseline_topic \
+  --cite runs/campaigns/summary.json:makeup_baseline_topic \
+  --cite runs/campaigns/summary.json:art_baseline_topic \
+  --cite runs/campaigns/summary.json:dogs_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:football_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:makeup_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:art_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:followers_global_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:dogs_mean_topic_share \
+  --cite runs/campaigns/summary.json:football_mean_topic_share \
+  --cite runs/campaigns/summary.json:makeup_mean_topic_share \
+  --cite runs/campaigns/summary.json:art_mean_topic_share \
+  --cite runs/campaigns/summary.json:dogs_global_mean_topic_share \
+  --cite runs/campaigns/summary.json:football_global_mean_topic_share \
+  --cite runs/campaigns/summary.json:makeup_global_mean_topic_share \
+  --cite runs/campaigns/summary.json:art_global_mean_topic_share \
+  --cite runs/campaigns/summary.json:n_overlapping_creators
 ```

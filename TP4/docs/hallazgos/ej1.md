@@ -647,3 +647,253 @@ Verificación de la evidencia (los 18 valores de 1.1 y 1.2 más los de 1.3):
   --cite runs/oja_sweep/summary.json:selected_child \
   --cite runs/campaigns/summary.json:oja_top_creator_picked_for
 ```
+
+## 1.4 Decisión para las campañas
+
+El enunciado pide interpretar los resultados "a lo largo de todo el trabajo" y, con esa evidencia, tomar decisiones para los cuatro clientes. La agencia hoy elige por cantidad de seguidores y sus campañas "no generan ingresos suficientes para recuperar la inversión": las publicaciones tienen visibilidad pero no llegan al público al que están dirigidos los productos. Los refugios quieren impulsar consultas y adopciones; los otros tres clientes, aumentar las ventas. Todo lo de esta sección sale de `runs/campaigns/` (más `runs/oja/`, `runs/som/` y `runs/pca/`), regenerados con los comandos de "Cómo regenerar (1.4)". **No hay datos de ventas ni de conversión**: "mejor que elegir por seguidores" se mide con proxies (participación del tópico, audiencia argentina, alcance argentino estimado, engagement, precio y costo por mil de alcance argentino), que están en "Supuestos (1.4)".
+
+### Método de selección
+
+**Una regla transparente por cliente, no un índice único: un filtro de tópico, opcionalmente una región del mapa, y una suma ponderada de puntajes z, y para cada elegido se muestran sus tres evidencias (PCA, mapa y Oja).**
+
+![Biplot de PC1 y PC2](../../runs/pca/biplot.png)
+
+![Regiones del mapa con los creadores](../../runs/som/region_map.png)
+
+![Planos de componentes](../../runs/som/component_planes.png)
+
+- **Por qué por cliente.** La conclusión de 1.3 es que el índice de Oja es el eje de tamaño y estilo (el mismo PC1 de 1.1) y no sabe de tópico ni de audiencia argentina, y que el primero del ranking no fue elegido por ningún cliente. Cada cliente tiene un objetivo distinto, así que la regla lo escribe explícito.
+- **Forma de la regla** (`configs/campaigns.json`, un cliente por entrada): (1) candidatos: los creadores cuya columna de tópico (`topic_*_pct`, nunca el nombre de la cuenta: `@crearenreels` y `@makeupconsejos` engañan) llega a al menos 40%; (2) opcional, una región del mapa de Kohonen (`regions`); (3) puntaje = suma de `peso · z(columna)` sobre las columnas elegidas, con z calculado sobre los 50 creadores (desvío poblacional), de modo que el puntaje no depende del filtro; (4) los tres mejores; los empates se resuelven en el orden del catálogo.
+- **Candidatos por cliente** (`dogs_n_candidates`, etc. en `runs/campaigns/summary.json`): perros 9 (tópico y región 1), fútbol 14, maquillaje 11, arte 11.
+- **La evidencia se recalcula, no se copia:** `runs/campaigns/evidence.csv` recalcula PC1 y PC2, la celda y región del mapa y el índice de Oja desde las mismas configs (`configs/oja.json` y `configs/som.json`), y un test verifica que coinciden con `runs/oja/ranking.csv` y `runs/som/bmus.csv` para los 50 creadores.
+- **N = 3** por cliente (`n_picks`). Si un creador queda elegido por dos clientes se marca en `picks.csv` (`also_picked_for`) y en el resumen: `n_overlapping_creators` = 0, `overlapping_creators` = `[]`. Ningún creador sale elegido por dos clientes.
+- Cada tabla de abajo muestra por elegido: posición en el biplot (PC1 / PC2 de `runs/campaigns/picks.csv`), región y celda del mapa (fila y columna de 0 a 7) con la lectura de los planos de componentes (el peso de esa neurona en unidades z, de `runs/som/weights.csv`) y el índice de Oja con su rango entre los 50 (`runs/campaigns/evidence.csv`).
+
+### Refugios de perros
+
+**Objetivo:** impulsar consultas y adopciones. Hacen falta creadores de perros con audiencia argentina (la adopción es local) y señales de que la comunidad escribe, guarda y visita el perfil.
+
+- **Regla** (`dogs_rule`): `topic_dogs_pct >= 40; región del mapa en [1]; puntaje = +1·z(argentina_audience_pct) +1·z(profile_visits_per_1000) +0,5·z(comments_per_1000) +0,5·z(saves_per_1000)`.
+- **Por qué esas columnas:** la audiencia argentina porque se adopta en el país; visitas al perfil, comentarios y guardados como proxy de consulta e interés real. **Por qué región 1:** en 1.2 la región 1 es "profundidad educativa y comunidad cercana" (epígrafes largos, guardados y comentarios altos, audiencia chica): el perfil del que consulta. Es una decisión nuestra, discutida en "Supuestos (1.4)".
+
+**Elegidos:** `@ideasconhuella`, `@huellasyconsejos` y `@consejoscaninos`.
+
+| Creador | PC1 / PC2 | Región y celda | Lectura de la celda (peso z) | Índice de Oja (rango) |
+|---------|-----------|----------------|------------------------------|-----------------------|
+| `@ideasconhuella` | 5,19 / 0,83 | 1, fila 2 columna 0 | tutoriales +1,7, perros +1,5, guardados +1,3; video −1,1 | 5,1874 (4) |
+| `@huellasyconsejos` | 6,16 / 2,70 | 1, fila 0 columna 0 | perros +1,8, epígrafes +1,7, guardados +1,6; `likes` −2,5, video corto −2,1 | 6,1537 (3) |
+| `@consejoscaninos` | 6,49 / 3,13 | 1, fila 0 columna 0 | perros +1,8, epígrafes +1,7, guardados +1,6; `likes` −2,5, video corto −2,1 | 6,4849 (2) |
+
+- `@ideasconhuella` (55,6% perros, 83,11% de audiencia argentina, 27,00 visitas al perfil por mil, 70,52% de contenido de tutoriales): el de más visitas y más didáctico de los tres, aunque el más caro por mil de alcance argentino (47,29 USD).
+- `@huellasyconsejos` (64,49% perros): la mayor audiencia argentina de todo el catálogo (94,43%), 23,71 visitas por mil y 75 USD por publicación.
+- `@consejoscaninos` (82% perros, la mayor participación de perros): 86,63% de audiencia argentina, 22,68 visitas por mil y 75 USD, en la misma celda que el anterior.
+- Los tres están en el extremo de PC1 positivo (5,19 a 6,49) y de PC2 positivo (0,83 a 3,13): audiencia chica, epígrafes largos y audiencia local, justo la zona que 1.1 describe para perros. En el índice de Oja son los rangos 4, 3 y 2: acá el índice y la regla coinciden, pero no con el rango 1. El primero (`@mundoanimal.ar`) queda fuera de los tres por su audiencia argentina de 32,89% (ver 1.3).
+
+### Ropa de entrenamiento de fútbol
+
+**Objetivo:** aumentar las ventas de ropa de entrenamiento. Hacen falta creadores de fútbol con alcance argentino barato (se compra en el país) y alguna señal de interés por el perfil.
+
+- **Regla** (`football_rule`): `topic_football_pct >= 40; puntaje = -1·z(cost_per_1000_arg_reach) +0,5·z(argentina_audience_pct) +0,5·z(profile_visits_per_1000)`; sin filtro de región.
+- **Por qué esas columnas:** una venta pide llegar a muchos argentinos por poco dinero (el costo por mil de alcance argentino pesa −1) y que sean argentinos (audiencia argentina) con interés (visitas al perfil).
+
+**Elegidos:** `@futbolcononda`, `@golconmate` y `@lookdecancha`.
+
+| Creador | PC1 / PC2 | Región y celda | Lectura de la celda (peso z) | Índice de Oja (rango) |
+|---------|-----------|----------------|------------------------------|-----------------------|
+| `@futbolcononda` | −0,18 / −0,36 | 2, fila 7 columna 3 | fútbol +1,8, alcance a no seguidores +1,1, audiencia argentina +0,8 | −0,1879 (26) |
+| `@golconmate` | −5,53 / 0,38 | 3, fila 6 columna 6 | vistas +1,8, alcance +1,7, impresiones +1,7; epígrafes −1,3 | −5,5378 (47) |
+| `@lookdecancha` | −2,80 / −0,57 | 2, fila 7 columna 4 | fútbol +1,7, alcance a no seguidores +1,2, entretenimiento +1,0; reseñas −1,0 | −2,7962 (37) |
+
+- `@futbolcononda` (73,46% fútbol): 89,37% de audiencia argentina, 18,26 USD por mil de alcance argentino, 76,41% del alcance viene de no seguidores.
+- `@golconmate` (82,18% fútbol, la mayor del catálogo): el más barato de los tres (15,63 USD por mil), 77,46% de audiencia argentina y un alcance argentino estimado de 207994, a 3251,20 USD por publicación.
+- `@lookdecancha` (69,29% fútbol): 77,76% de audiencia argentina y el mayor alcance a no seguidores (81,96%), pero el más caro por mil de los tres (33,26 USD).
+
+**¿Alcance masivo, descubrimiento o profundidad educativa?** Los números por región de `runs/campaigns/strategy_profiles.csv` (los creadores de fútbol con al menos 40%) dicen que los elegidos encarnan **descubrimiento con alcance masivo, no profundidad educativa**, y que eso es lo que le sirve a una marca que quiere vender.
+
+| Región (estrategia) | Creadores de fútbol | Alcance argentino estimado medio | Audiencia argentina | Alcance a no seguidores | USD por mil de alcance argentino | Guardados por mil | Visitas al perfil por mil | Tutoriales (%) |
+|---------------------|---------------------|----------------------------------|---------------------|--------------------------|----------------------------------|-------------------|----------------------------|----------------|
+| 3 (alcance masivo) | 3 | 129626 | 57,65 | 71,46 | 27,55 | 7,01 | 12,70 | 7,22 |
+| 2 (descubrimiento) | 6 | 49495 | 49,06 | 75,81 | 61,95 | 12,03 | 11,66 | 13,82 |
+| 1 (profundidad educativa) | 5 | 7296 | 41,00 | 46,42 | 55,40 | 18,48 | 20,36 | 42,56 |
+
+- **Profundidad educativa (región 1)** es la que más guarda (18,48), visita el perfil (20,36) y enseña (42,56% de tutoriales), pero llega a 7296 argentinos por creador, solo 46,42% del alcance es de no seguidores y cuesta 55,40 USD por mil: es comunidad, no ventas masivas.
+- **Alcance masivo (región 3)** llega 129626 argentinos por creador al menor costo por mil (27,55 USD) y con 71,46% de no seguidores, pero solo hay 3 creadores de fútbol ahí, con pocos guardados y tutoriales (7,01 y 7,22%): el alcance es amplio y superficial.
+- **Descubrimiento (región 2)** tiene el mayor alcance a no seguidores (75,81%) pero es la más cara por mil (61,95 USD) y su audiencia argentina es la segunda más baja de las tres (49,06%, contra 41,00% de la región 1).
+- **Qué hace la regla.** No elige una región: elige el alcance argentino más barato dentro de los candidatos y quedó con dos creadores de la región 2 y uno de la 3. Entre ellos hay audiencia argentina de 77,46 a 89,37% (media 81,53%) contra medias de 41,00 a 57,65% en las regiones, y un costo medio de 19,91 USD por mil contra 27,55 a 61,95. Los tres tienen entre 59,70 y 81,96% de alcance a no seguidores. Para una marca de ropa que busca ventas, el descubrimiento de gente nueva que además es argentina y barata de alcanzar pesa más que la profundidad educativa. Es un argumento de costo y alcance, no de conversión: no medimos compra.
+- **Límites.** La región 3 tiene 3 creadores y la 2, 6: son muestras chicas. El costo de la región 2 como grupo (61,95) es mucho mayor que el de sus elegidos (18,26 y 33,26) porque la regla toma los más baratos de la región; si el cliente quisiera profundidad, habría que cambiar los pesos de la regla.
+
+### Productos de belleza
+
+**Objetivo:** aumentar las ventas de productos de belleza. Mismo esquema de ventas que fútbol, con los guardados como señal de contenido (asumimos que guardar indica intención de volver al producto).
+
+- **Regla** (`makeup_rule`): `topic_makeup_pct >= 40; puntaje = -1·z(cost_per_1000_arg_reach) +0,5·z(argentina_audience_pct) +0,5·z(saves_per_1000)`; sin filtro de región.
+
+**Elegidos:** `@reelargentino`, `@brochasymates` y `@maquillajereal`.
+
+| Creador | PC1 / PC2 | Región y celda | Lectura de la celda (peso z) | Índice de Oja (rango) |
+|---------|-----------|----------------|------------------------------|-----------------------|
+| `@reelargentino` | 4,31 / 0,11 | 1, fila 6 columna 0 | reseñas +1,1, maquillaje +1,0, epígrafes +1,0; `shares` −1,2 | 4,3055 (6) |
+| `@brochasymates` | 0,05 / 0,82 | 2, fila 0 columna 5 | tutoriales +1,3, maquillaje +1,0, publicaciones +0,7 | 0,0558 (25) |
+| `@maquillajereal` | −4,94 / 2,22 | 3, fila 5 columna 7 | seguidores +2,3, alcance +2,0; comentarios −2,1, guardados −1,5 | −4,9424 (44) |
+
+- `@reelargentino` (59,62% maquillaje): chico (18000 seguidores, 172,53 USD por publicación), 79,55% de audiencia argentina y 19,69 guardados por mil, el que más guarda de los tres; pero el más caro por mil (36,98 USD).
+- `@brochasymates` (58,24% maquillaje): la mayor audiencia argentina de los tres (88,23%), 24,91 USD por mil y 44,87% de contenido de tutoriales.
+- `@maquillajereal` (66,74% maquillaje): el más barato por mil (17,86 USD) y el más grande de los tres (608003 seguidores), pero con pocos guardados (5,99 por mil) y la audiencia argentina más baja de los tres (69,15%).
+- Los tres cubren las tres regiones: es un portafolio que mezcla comunidad (región 1), descubrimiento (2) y alcance (3). El índice de Oja los pone en los rangos 6, 25 y 44: un ranking por índice no habría armado esta combinación.
+
+### Materiales de arte
+
+**Objetivo:** aumentar las ventas de materiales de arte. Mismo esquema, con el contenido tutorial como señal (se aprende y se compra el material). **Nota:** el arte usa `topic_art_pct`, que no entra a los modelos (en 1.1 se descartó por ser el complemento de los otros tres tópicos) y se reconstruye como 100 menos fútbol, maquillaje y perros.
+
+- **Regla** (`art_rule`): `topic_art_pct >= 40; puntaje = -1·z(cost_per_1000_arg_reach) +0,5·z(argentina_audience_pct) +0,5·z(content_tutorial_pct)`; sin filtro de región.
+
+**Elegidos:** `@colorenmovimiento`, `@galeriacotidiana` y `@rinconcreativo`.
+
+| Creador | PC1 / PC2 | Región y celda | Lectura de la celda (peso z) | Índice de Oja (rango) |
+|---------|-----------|----------------|------------------------------|-----------------------|
+| `@colorenmovimiento` | 1,19 / −0,49 | 2, fila 1 columna 4 | celda de transición, ningún peso pasa de ±1,1: `shares` +0,7, video +0,7; patrocinadas −1,1 | 1,1935 (21) |
+| `@galeriacotidiana` | −5,84 / 1,36 | 3, fila 7 columna 7 | impresiones +2,1, alcance +2,0, vistas +2,0; reseñas −1,7 | −5,8391 (49) |
+| `@rinconcreativo` | −0,35 / 0,13 | 2, fila 2 columna 3 | celda de transición, ningún peso pasa de ±1,0: tiempo de visualización +0,4; patrocinadas −1,0 | −0,3496 (28) |
+
+- `@colorenmovimiento` (68,49% arte): 71,15 de engagement por mil, 53,78% de tutoriales y 72,08% de audiencia argentina; pero el más caro por mil de los tres (36,53 USD).
+- `@galeriacotidiana` (61,04% arte): 84,01% de audiencia argentina y 26,03 USD por mil con un alcance argentino estimado de 186931; casi no tiene tutoriales (0,77%): entra por costo y audiencia, no por contenido, y cuesta 4866,57 USD por publicación.
+- `@rinconcreativo` (64,09% arte): 30,05% de tutoriales, 27,93 USD por mil, pero la audiencia argentina más baja de los tres (50,74%, cerca de la media de 52,64% del catálogo).
+- El arte no tiene un rincón propio en el mapa (1.2): los planos de las celdas de los elegidos son suaves (el plano reconstruido de arte en esas celdas es 28,4%, 34,5% y 45,3%, contra el máximo de 63,3% del mapa), así que la región ayuda poco y la regla se apoya sobre todo en el costo y la audiencia argentina. Es una limitación del arte en este dataset.
+
+### Comparación con una selección solo por seguidores
+
+**La regla le gana a los seguidores en audiencia argentina en los cuatro clientes y en costo por mil en tres (fútbol, maquillaje y arte), pero llega a menos gente en total en todos, y para los refugios el costo por mil de los más seguidos del tópico es más bajo.**
+
+![Regla contra seguidores, por cliente](../../runs/campaigns/comparison.png)
+
+Se comparan tres selecciones de tres creadores por cliente (`runs/campaigns/comparison.csv`; participación media del tópico en %, audiencia argentina media en %, alcance argentino estimado total, engagement medio por mil, precio total en USD y USD por mil de alcance argentino):
+
+| Cliente | Estrategia | Participación del tópico | Audiencia argentina | Alcance argentino estimado | Engagement por mil | Precio total | USD por mil |
+|---------|------------|--------------------------|---------------------|----------------------------|--------------------|--------------|-------------|
+| Perros | método | 67,36 | 88,06 | 9138 | 57,09 | 259,49 | 28,40 |
+| Perros | seguidores global | 9,48 | 63,48 | 482578 | 64,61 | 15896,60 | 32,94 |
+| Perros | seguidores en el tópico | 66,04 | 57,53 | 315276 | 73,36 | 6992,95 | 22,18 |
+| Fútbol | método | 74,98 | 81,53 | 364307 | 69,08 | 7252,87 | 19,91 |
+| Fútbol | seguidores global | 34,56 | 63,48 | 482578 | 64,61 | 15896,60 | 32,94 |
+| Fútbol | seguidores en el tópico | 68,88 | 57,65 | 388879 | 70,73 | 10712,71 | 27,55 |
+| Belleza | método | 61,53 | 78,98 | 223277 | 66,53 | 4456,20 | 19,96 |
+| Belleza | seguidores global | 45,97 | 63,48 | 482578 | 64,61 | 15896,60 | 32,94 |
+| Belleza | seguidores en el tópico | 66,25 | 60,71 | 439539 | 62,54 | 15592,28 | 35,47 |
+| Arte | método | 64,54 | 68,94 | 240126 | 75,12 | 6484,76 | 27,01 |
+| Arte | seguidores global | 10,00 | 63,48 | 482578 | 64,61 | 15896,60 | 32,94 |
+| Arte | seguidores en el tópico | 67,16 | 57,51 | 288999 | 74,48 | 9717,03 | 33,62 |
+
+- **Los más seguidos dentro del tópico de cada cliente** (`*_baseline_topic`, `runs/campaigns/baselines.csv`): perros `@crearenreels`, `@patitasenred` y `@patitascontentas`; fútbol `@golconmate`, `@futbolsinvueltas` y `@tribunacreativa`; belleza `@mateconideas`, `@brillourbano` y `@maquillajereal`; arte `@galeriacotidiana`, `@pincelcotidiano` y `@artequeinspira`. Comparten un creador con los elegidos del método en fútbol (`@golconmate`), belleza (`@maquillajereal`) y arte (`@galeriacotidiana`), y ninguno en perros.
+- **Los más seguidos del catálogo son los mismos para todos los clientes** (`followers_global_picks`): `@mateconideas`, `@golconmate` y `@brillourbano`, a 32,94 USD por mil (`followers_global_cost_per_1000_arg_reach`). Para cada cliente dan una participación del tópico de 9,48% (perros), 34,56% (fútbol), 45,97% (belleza) y 10,00% (arte). `@brillourbano` tiene solo 29,78% de audiencia argentina y cuesta 90,28 USD por mil. Para fútbol, `@golconmate` está también entre los elegidos del método.
+- **Ventajas de los seguidores (los dos baselines):** es simple, no necesita ningún modelo ni mantenimiento y tiene el mayor alcance bruto: 482578 de alcance argentino estimado contra 9138 a 364307 del método. Dentro del tópico, los más seguidos pueden salir más baratos por mil cuando la cuenta grande es local: en perros 22,18 contra 28,40 USD, con un alcance de 315276 contra 9138, porque el baseline incluye a `@crearenreels` (88,61% de audiencia argentina, 16,31 USD por mil). En belleza y arte, el baseline dentro del tópico tiene una participación un poco mayor (66,25 contra 61,53; 67,16 contra 64,54), porque la regla cambia participación por costo.
+- **Desventajas de los seguidores:** ignora el tópico (el top global tiene 9,48% y 10,00% de participación para perros y arte), ignora la audiencia local (63,48% el global y de 57,51 a 60,71% el del tópico, contra 68,94 a 88,06% del método) y el costo por mil no baja con los seguidores: tres de los cuatro clientes pagan menos con el método. La cantidad de seguidores no informa sobre la audiencia argentina: la correlación entre `followers` y `argentina_audience_pct` en los 50 creadores es −0,001 (Pearson, calculada sobre `runs/campaigns/evidence.csv`).
+- **Ventajas del método:** audiencia argentina más alta en los cuatro (88,06; 81,53; 78,98; 68,94), costo por mil menor en fútbol (19,91), belleza (19,96) y arte (27,01), participación del tópico mayor en perros y fútbol que la de cualquier selección por seguidores, y cada elegido viene con su evidencia (PCA, mapa y Oja).
+- **Desventajas del método:** hace falta un pipeline mantenido (EDA, PCA, mapa, Oja, campañas), las reglas (pesos, umbral de 40%, región) son supuestos nuestros, llega a menos gente en total (para los refugios el alcance argentino estimado total es de apenas 9138), y para perros el costo por mil es más alto que el del baseline dentro del tópico: filtrar por la región 1 sacó a `@crearenreels` (región 3). El engagement medio del método es menor al del baseline en perros (57,09 contra 73,36) y fútbol (69,08 contra 70,73).
+- **No hay datos de ventas:** la comparación usa los proxies del plan, y que el método gane en esos proxies no prueba que venda más. Es evidencia para decidir con criterio, no una medición del retorno.
+
+### Mantenimiento del sistema
+
+**Una campaña nueva no necesita reentrenar nada; nuevos creadores o variables y la actualización mensual sí piden repetir todo el pipeline en orden y releer las reglas.**
+
+- **Nueva campaña:** agregar un cliente a `clients` en `configs/campaigns.json` (`name`, `label`, `objective`, `topic`, `min_share`, `regions`, `rank_by`) y correr solo `python -m tp4 run configs/campaigns.json`. Reusa el índice de Oja y el mapa ya entrenados (se recalculan desde sus configs, con la misma semilla); no hay reentrenamiento de modelos.
+- **Nuevos creadores o nuevas variables:** actualizar `datos/creadores.csv` (y `configs/feature_set.json` para variables) y repetir en orden: EDA, PCA, barridos del mapa (diseño y numérico), copiar la selección a `configs/som.json` y correr el comando de verificación, el mapa, el control, el barrido de Oja (copiar `selected_eta0` a `configs/oja.json`), Oja y campañas. Después **releer las reglas**: los números de región y sus perfiles (el filtro `regions: [1]` de perros se escribió para el mapa actual y una renumeración que conserve `k` no se detecta; un número de región mayor que `k` sí falla con error), los umbrales de tópico, que las columnas siguen siendo las mismas, y `RANKABLE_COLUMNS` en `tp4/analysis/campaigns.py` si una variable nueva se quiere usar para rankear (es una lista permitida: agregarla es un cambio de código).
+- **Actualización mensual:** el mismo reproceso completo con las mismas semillas. Los rankings, las regiones e incluso `k` pueden cambiar, así que hay que releer 1.2 a 1.4. No hay arranque en caliente ni entrenamiento incremental: Oja y el mapa se vuelven a entrenar desde cero, lo que con 50 creadores lleva segundos, y el refresco mensual no está automatizado (se corre a mano). Una selección con presupuesto (elegir creadores hasta agotar un monto) sería una extensión posible, no existe en el código.
+
+```bash
+# Nueva campaña (sin reentrenar)
+.venv/bin/python -m tp4 run configs/campaigns.json
+
+# Nuevos creadores, nuevas variables o actualización mensual (todo, en orden)
+.venv/bin/python -m tp4 run configs/eda.json
+.venv/bin/python -m tp4 run configs/pca.json
+.venv/bin/python -m tp4 run configs/pca_scaling_sweep.json
+.venv/bin/python -m tp4 run configs/som_design_sweep.json
+.venv/bin/python -m tp4 run configs/som_sweep.json
+# copiar la selección de runs/som_sweep a configs/som.json; después:
+.venv/bin/python -m tp4 run configs/som.json
+.venv/bin/python -m tp4 run configs/som_pca_control.json
+.venv/bin/python -m tp4.experiments.som_sweep_report check configs/som.json runs/som_design_sweep runs/som_sweep --run runs/som
+.venv/bin/python -m tp4 run configs/oja_sweep.json
+# copiar selected_eta0 de runs/oja_sweep/summary.json a configs/oja.json; después:
+.venv/bin/python -m tp4 run configs/oja.json
+.venv/bin/python -m tp4 run configs/campaigns.json
+```
+
+### Supuestos (1.4)
+
+- **Proxies en vez de ventas:** no existen datos de ventas ni de conversión. "Mejor" significa más participación del tópico, más audiencia argentina, más alcance argentino estimado, más engagement y menor costo por mil.
+- **Una publicación por creador:** se asume una publicación patrocinada por creador al precio `price_usd`, que llega a `average_reach` cuentas, de las cuales `argentina_audience_pct` son argentinas (`est_arg_reach`).
+- **Costo agrupado:** USD por mil de alcance argentino = suma de precios dividida por la suma de alcances argentinos estimados, por mil (no el promedio de los cocientes de cada creador).
+- **Pesos y umbrales:** los pesos de cada cliente, el 40% mínimo de tópico (inclusivo) y el filtro de región 1 para perros son elecciones nuestras que el grupo todavía tiene que aceptar; las audiencias y los costos citados salen de los datos, pero cambiar un peso puede cambiar los elegidos.
+- **Numeración de regiones:** `regions: [1]` se refiere al mapa actual (`k` = 3); si el mapa cambia, hay que revisar el filtro a mano.
+- **Superposición permitida:** un creador puede ser elegido por dos clientes (se marca); hoy no pasa.
+- **Arte reconstruido:** `topic_art_pct` se reconstruye como 100 menos los otros tres tópicos, igual que en 1.1.
+- **Alcance de la interpretación:** las lecturas de región y de celda salen de los planos de componentes y de los perfiles de 1.2; no afirmamos nada que esas figuras y tablas no muestren. Una selección con presupuesto, el reentrenamiento incremental y un refresco mensual automático no están construidos: son extensiones posibles.
+- Los gráficos se enlazan desde `runs/` (se regeneran, no se versionan). Copiarlos a `docs/` queda para la fase de documentación.
+
+### Cómo regenerar (1.4)
+
+```bash
+.venv/bin/python -m tp4 run configs/oja_sweep.json
+.venv/bin/python -m tp4 run configs/oja.json
+.venv/bin/python -m tp4 run configs/campaigns.json
+```
+
+Verificación de la evidencia (los 30 valores de 1.1 a 1.3 más los de 1.4):
+
+```bash
+.venv/bin/python -m tp4.findings docs/hallazgos/ej1.md \
+  --cite runs/pca/summary.json:pc1_explained_variance_pct \
+  --cite runs/pca/summary.json:pc2_explained_variance_pct \
+  --cite runs/pca/summary.json:cumulative_pc2_pct \
+  --cite runs/pca/summary.json:pc1_top_feature \
+  --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
+  --cite runs/eda/summary.json:n_selected_features \
+  --cite runs/som_sweep/summary.json:selected_child \
+  --cite runs/som_sweep/summary.json:selected_quantization_error \
+  --cite runs/som_sweep/summary.json:selected_topographic_error \
+  --cite runs/som_sweep/summary.json:selected_distance_preservation \
+  --cite runs/som_design_sweep/summary.json:selected_child \
+  --cite runs/som/summary.json:n_regions \
+  --cite runs/som/summary.json:u_border_ratio \
+  --cite runs/som/summary.json:pc1_region_eta2 \
+  --cite runs/som/summary.json:pc2_region_eta2 \
+  --cite runs/som/summary.json:empty_neuron_frac \
+  --cite runs/som_pca_control/summary.json:region_ari \
+  --cite runs/som_pca_control/summary.json:bmu_distance_agreement \
+  --cite runs/oja/summary.json:cosine_to_pc1 \
+  --cite runs/oja/summary.json:pearson_scores_pc1 \
+  --cite runs/oja/summary.json:final_w_norm \
+  --cite runs/oja/summary.json:epochs_to_converge \
+  --cite runs/oja/summary.json:top_creator \
+  --cite runs/oja/summary.json:bottom_creator \
+  --cite runs/oja/summary.json:oja_top_feature \
+  --cite runs/oja/summary.json:lambda1 \
+  --cite runs/oja/summary.json:course_eta_bound \
+  --cite runs/oja_sweep/summary.json:selected_eta0 \
+  --cite runs/oja_sweep/summary.json:selected_child \
+  --cite runs/campaigns/summary.json:oja_top_creator_picked_for \
+  --cite runs/campaigns/summary.json:dogs_picks \
+  --cite runs/campaigns/summary.json:football_picks \
+  --cite runs/campaigns/summary.json:makeup_picks \
+  --cite runs/campaigns/summary.json:art_picks \
+  --cite runs/campaigns/summary.json:followers_global_picks \
+  --cite runs/campaigns/summary.json:dogs_baseline_topic \
+  --cite runs/campaigns/summary.json:football_baseline_topic \
+  --cite runs/campaigns/summary.json:makeup_baseline_topic \
+  --cite runs/campaigns/summary.json:art_baseline_topic \
+  --cite runs/campaigns/summary.json:dogs_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:football_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:makeup_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:art_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:followers_global_cost_per_1000_arg_reach \
+  --cite runs/campaigns/summary.json:dogs_mean_topic_share \
+  --cite runs/campaigns/summary.json:football_mean_topic_share \
+  --cite runs/campaigns/summary.json:makeup_mean_topic_share \
+  --cite runs/campaigns/summary.json:art_mean_topic_share \
+  --cite runs/campaigns/summary.json:dogs_global_mean_topic_share \
+  --cite runs/campaigns/summary.json:football_global_mean_topic_share \
+  --cite runs/campaigns/summary.json:makeup_global_mean_topic_share \
+  --cite runs/campaigns/summary.json:art_global_mean_topic_share \
+  --cite runs/campaigns/summary.json:n_overlapping_creators
+```
