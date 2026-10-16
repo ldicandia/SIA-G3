@@ -185,7 +185,11 @@ def test_recall_and_recall_rates_tables_and_summary(letters_run: Path):
     assert len(rate_rows) == 2 * 2 * n_levels == 32
 
     assert s["selected_async_recovery"][0] == 1.0
-    assert s["worst_async_recovery"] == [0.25] * n_levels
+    # Worst set: only N is a fixed point, so every query ends in N (recovery 0.25 = N's own share) up
+    # to level 0.36. At 11 flips some queries fall into the inverted N attractor, so it may dip below.
+    worst = s["worst_async_recovery"]
+    assert worst[:-1] == [0.25] * (n_levels - 1)
+    assert 0.2 <= worst[-1] <= 0.25
     assert s["n_async_cycles"] == 0
     assert s["n_sync_cycles"] > 0
     assert s["selected_max_level_full_recovery"] is not None and s["selected_max_level_full_recovery"] >= 0.08
