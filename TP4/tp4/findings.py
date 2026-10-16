@@ -6,6 +6,9 @@ Checks that (1) every `runs/...` artifact the note references exists and
 (2) every cited summary value appears in the note text (decimal point or
 decimal comma). Exit code 0 when everything is present, 1 otherwise.
 
+With `--section "## Heading"` both checks look only inside that section (the heading line up to
+the next heading of the same or a higher level, subsections included).
+
 Standard library only: no plotting, no imports from tp4.experiments.
 """
 
@@ -48,6 +51,43 @@ def cited_value_present(text: str, value: Any) -> bool:
     return False
 
 
+_HEADING_RE = re.compile(r"^(#{1,6}) ")
+
+
+def _is_fence(line: str) -> bool:
+    return line.lstrip().startswith("```")
+
+
+def section_text(text: str, heading: str) -> str | None:
+    """The section of `text` that starts at the line equal to `heading` (right-stripped).
+
+    It runs up to, not including, the next Markdown heading of the same or a higher level
+    (subsections are included). Lines inside fenced code blocks are never headings. Returns
+    None when `heading` is not a heading line of `text`.
+    """
+    level = len(heading) - len(heading.lstrip("#"))
+    wanted = heading.rstrip()
+    if not 1 <= level <= 6 or wanted[level : level + 1] != " ":
+        return None
+    lines = text.splitlines()
+    start: int | None = None
+    in_fence = False
+    for index, line in enumerate(lines):
+        if _is_fence(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if start is None:
+            if line.rstrip() == wanted:
+                start = index
+            continue
+        match = _HEADING_RE.match(line)
+        if match and len(match.group(1)) <= level:
+            return "\n".join(lines[start:index]) + "\n"
+    return None if start is None else "\n".join(lines[start:]) + "\n"
+
+
 def _lookup(data: Any, dotted: str) -> Any:
     node = data
     for part in dotted.split("."):
@@ -71,9 +111,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="JSON file (relative to --root) and dotted key whose value must appear in the note",
     )
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument(
+        "--section",
+        metavar="HEADING",
+        default=None,
+        help="check artifacts and cites only inside this section (e.g. '## 1.4 Decisión'), subsections included",
+    )
     args = parser.parse_args(argv)
 
     text = args.md.read_text(encoding="utf-8")
+    if args.section is not None:
+        scoped = section_text(text, args.section)
+        if scoped is None:
+            print(f"MISSING section: {args.section}")
+            return 1
+        text = scoped
     problems = 0
 
     artifacts = referenced_artifacts(text)
@@ -104,7 +156,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if problems:
         return 1
-    print(f"ok: {len(artifacts)} artifacts, {len(args.cite)} cites")
+    scope = "" if args.section is None else f" (section {args.section})"
+    print(f"ok: {len(artifacts)} artifacts, {len(args.cite)} cites{scope}")
     return 0
 
 

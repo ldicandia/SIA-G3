@@ -318,7 +318,7 @@ def test_broken_section_reference_is_reported(tmp_path, capsys):
 
 
 def test_matching_section_reference_passes(tmp_path, capsys):
-    note = SECTION_NOTE + "Ver `## A` y `## B`; un `#hashtag` o `# no es un título` en un bloque no cuentan.\n"
+    note = SECTION_NOTE + "Ver `## A` y `## B`; un `#hashtag` no es una referencia.\n"
     manifest = _tree(tmp_path, note=note)
     assert _check(tmp_path, manifest) == 0, capsys.readouterr().out
 

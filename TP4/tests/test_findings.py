@@ -156,7 +156,11 @@ def test_section_text_absent_heading_is_none():
 def test_section_scopes_cites_and_artifacts(tmp_path, capsys):
     note = tmp_path / "note.md"
     note.write_text(SECTIONED, encoding="utf-8")
-    for rel, data in (("runs/x/summary.json", {"a": 53.2, "b": 11}), ("runs/x/otro.json", {})):
+    for rel, data in (
+        ("runs/x/summary.json", {"a": 53.2, "b": 11}),
+        ("runs/x/otro.json", {}),
+        ("runs/x/intro.json", {}),
+    ):
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data), encoding="utf-8")

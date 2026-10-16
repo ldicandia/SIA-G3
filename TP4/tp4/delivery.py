@@ -2,6 +2,7 @@
 
     python -m tp4.delivery regenerate [--out-root DIR]   # re-run every config of run_order, then the SOM selection check
     python -m tp4.delivery check [--root DIR]            # check docs/hallazgos notes against DIR/runs (default: TP4/runs)
+    python -m tp4.delivery verify                        # regenerate into a temporary directory, check against it, remove it
 
 Both read docs/hallazgos/evidencia.json (override with `--manifest PATH`): the run order of the
 run configs, the classification of the configs that are not runs and the full cite list of each
@@ -18,6 +19,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -37,6 +39,10 @@ _CONFIG_SUFFIXES = (".json", ".toml")
 _TOP_KEYS = frozenset({"run_order", "not_run", "notes"})
 _NOTE_KEYS = frozenset({"md", "cites", "requires", "sections"})
 _REQUIRES_KEYS = frozenset({"cite", "equals", "hint"})
+_SECTION_KEYS = frozenset({"heading", "cites"})
+_SECTION_HEADING_RE = re.compile(r"^#{1,6} \S")
+_HEADING_LINE_RE = re.compile(r"^#{1,6} ")
+_BACKTICK_SPAN_RE = re.compile(r"`([^`\n]+)`")
 _WIN_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 
@@ -52,11 +58,17 @@ class Requirement:
 
 
 @dataclass(frozen=True)
+class Section:
+    heading: str
+    cites: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Note:
     md: str
     cites: tuple[str, ...]
     requires: tuple[Requirement, ...]
-    sections: tuple[Any, ...]
+    sections: tuple[Section, ...]
 
 
 @dataclass(frozen=True)
@@ -68,7 +80,10 @@ class Manifest:
 
     @property
     def total_cites(self) -> int:
-        return sum(len(note.cites) for note in self.notes)
+        return sum(
+            len(note.cites) + sum(len(section.cites) for section in note.sections)
+            for note in self.notes
+        )
 
 
 # --------------------------------------------------------------------------- manifest loading
@@ -153,6 +168,19 @@ def _requirement(raw: Any, where: str) -> Requirement:
     return Requirement(cite=cite, equals=obj["equals"], hint=obj["hint"])
 
 
+def _section(raw: Any, where: str) -> Section:
+    obj = _check_keys(raw, _SECTION_KEYS, where)
+    heading = obj["heading"]
+    if not isinstance(heading, str) or not _SECTION_HEADING_RE.match(heading):
+        raise ManifestError(f"{where}.heading must start with 1 to 6 '#' marks and a space")
+    cites = obj["cites"]
+    if not isinstance(cites, list):
+        raise ManifestError(f"{where}.cites must be a list")
+    cites = [_cite_spec(c, f"{where}.cites[{i}]") for i, c in enumerate(cites)]
+    _unique(cites, f"{where}.cites")
+    return Section(heading=heading, cites=tuple(cites))
+
+
 def _note(raw: Any, project_root: Path, where: str) -> Note:
     obj = _check_keys(raw, _NOTE_KEYS, where)
     md = _note_md(obj["md"], project_root, f"{where}.md")
@@ -168,7 +196,9 @@ def _note(raw: Any, project_root: Path, where: str) -> Note:
     sections = obj["sections"]
     if not isinstance(sections, list):
         raise ManifestError(f"{where}.sections must be a list")
-    return Note(md=md, cites=tuple(cites), requires=reqs, sections=tuple(sections))
+    parsed = tuple(_section(s, f"{where}.sections[{i}]") for i, s in enumerate(sections))
+    _unique([s.heading for s in parsed], f"{where}.sections")
+    return Note(md=md, cites=tuple(cites), requires=reqs, sections=parsed)
 
 
 def load_manifest(path: Path | str, project_root: Path = PROJECT_ROOT) -> Manifest:
@@ -264,6 +294,29 @@ def _display(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _outside_fences(text: str) -> list[str]:
+    lines: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence:
+            lines.append(line)
+    return lines
+
+
+def broken_section_references(text: str) -> list[str]:
+    """Backticked heading references (`### Title`) of `text` that match no heading line of it."""
+    lines = _outside_fences(text)
+    headings = {line.rstrip() for line in lines if _HEADING_LINE_RE.match(line)}
+    broken: list[str] = []
+    for line in lines:
+        for span in _BACKTICK_SPAN_RE.findall(line):
+            if _HEADING_LINE_RE.match(span) and span.rstrip() not in headings and span not in broken:
+                broken.append(span)
+    return broken
+
+
 def _precondition_problems(note: Note, root: Path) -> int:
     problems = 0
     for req in note.requires:
@@ -313,6 +366,9 @@ def check(manifest: Manifest, root: Path | str, project_root: Path = PROJECT_ROO
                 reported.add((experiment, where))
                 print(f"NO CONFIG for runs/{experiment} ({where})")
                 problems += 1
+        for span in broken_section_references(text):
+            print(f"BROKEN section reference: {span} ({note.md})")
+            problems += 1
         problems += _precondition_problems(note, root)
 
     for note in manifest.notes:
@@ -322,6 +378,13 @@ def check(manifest: Manifest, root: Path | str, project_root: Path = PROJECT_ROO
             argv += ["--cite", cite]
         if findings.main(argv) != 0:
             problems += 1
+        for section in note.sections:
+            print(f"== {note.md} :: {section.heading}")
+            section_argv = [*argv[:3], "--section", section.heading]
+            for cite in section.cites:
+                section_argv += ["--cite", cite]
+            if findings.main(section_argv) != 0:
+                problems += 1
 
     if problems:
         print(f"delivery FAILED: {problems} problem(s)")
@@ -331,6 +394,26 @@ def check(manifest: Manifest, root: Path | str, project_root: Path = PROJECT_ROO
         f"{manifest.total_cites} cites"
     )
     return 0
+
+
+# --------------------------------------------------------------------------- verify
+
+
+def verify(manifest: Manifest, project_root: Path = PROJECT_ROOT) -> int:
+    """Regenerate everything into a temporary directory and check the notes against it.
+
+    runs/ is never written; the temporary directory is removed in every outcome.
+    """
+    with tempfile.TemporaryDirectory(prefix="tp4-verify-") as tmp:
+        root = Path(tmp)
+        print(f"verify: clean regeneration in {root}", flush=True)
+        code = regenerate(manifest, root / "runs", project_root)
+        if code != 0:
+            return code
+        code = check(manifest, root, project_root)
+        if code == 0:
+            print("verify ok: clean regeneration matches the notes")
+        return code
 
 
 # --------------------------------------------------------------------------- CLI
@@ -345,7 +428,8 @@ def build_parser() -> argparse.ArgumentParser:
     regen.add_argument("--out-root", type=Path, default=DEFAULT_RUNS_ROOT, help="receives <experiment>/ dirs (default: TP4/runs)")
     chk = sub.add_parser("check", help="check the notes against DIR/runs")
     chk.add_argument("--root", type=Path, default=PROJECT_ROOT, help="runs are read from DIR/runs (default: TP4/)")
-    for command in (regen, chk):
+    ver = sub.add_parser("verify", help="clean regeneration into a temporary directory, then check against it")
+    for command in (regen, chk, ver):
         command.add_argument("--manifest", type=Path, default=MANIFEST_PATH, help="delivery manifest (default: docs/hallazgos/evidencia.json)")
         command.add_argument("--project-root", type=Path, default=PROJECT_ROOT, help="tree holding configs/ and docs/hallazgos/ (default: TP4/; used by tests)")
     return parser
@@ -362,6 +446,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "regenerate":
             return regenerate(manifest, args.out_root, project_root)
+        if args.command == "verify":
+            return verify(manifest, project_root)
         return check(manifest, args.root, project_root)
     except Tp4Error as exc:
         print(f"error: {exc}", file=sys.stderr)
