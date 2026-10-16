@@ -1,0 +1,22 @@
+{
+  "experiment": "hopfield_qr",
+  "kind": "hopfield_qr",
+  "seed": 42,
+  "backend": "numpy",
+  "plots": true,
+  "images": [
+    "datos/hopfield/food_menu_qr.png",
+    "datos/hopfield/wine_menu_qr.png",
+    "datos/hopfield/beverages_menu_qr.png",
+    "datos/hopfield/dessert_menu_qr.png",
+    "datos/hopfield/specials_menu_qr.png"
+  ],
+  "params": {
+    "side": 37,
+    "rules": ["hebb", "pseudoinverse"],
+    "update": "async",
+    "max_iter": 100,
+    "noise_levels": [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5],
+    "trials": 20
+  }
+}
