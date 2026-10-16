@@ -42,6 +42,7 @@ from ..models.oja import OjaConfig, OjaResult, convergence_epoch, train_oja
 from ..models.som import DECAYS
 from ..plotting import plt, save_figure
 from ..runs import Experiment, RunContext, resolve_project_path, write_csv
+from .oja_sweep_report import report
 from .pca import TOPIC_COLORS, TOPIC_LABELS
 from .som import load_som_config, som_evidence
 
@@ -342,4 +343,5 @@ EXPERIMENT = Experiment(
     extra_keys=EXTRA_KEYS,
     param_defaults=PARAM_DEFAULTS,
     validate=validate,
+    sweep_report=report,
 )

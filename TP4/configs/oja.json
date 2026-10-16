@@ -9,7 +9,7 @@
   "som_config": "configs/som.json",
   "params": {
     "epochs": 200,
-    "eta0": 0.001,
+    "eta0": 0.0005,
     "eta_min": 1e-05,
     "eta_decay": "constant",
     "norm_tol": 0.01
