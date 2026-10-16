@@ -241,3 +241,190 @@ def test_real_manifest_keeps_every_cite_and_the_run_order():
 
 def test_invalid_manifest_class():
     assert issubclass(ManifestError, delivery.Tp4Error)
+
+
+# ----- Task 2: sections, broken section references, verify, stop-on-failure
+
+SECTION_NOTE = (
+    "# Nota\n"
+    "## A\n"
+    "El valor es 53,2 en A, runs/a/summary.json.\n"
+    "```bash\n"
+    "# no es un título\n"
+    "```\n"
+    "## B\n"
+    "El indicador es true en B.\n"
+)
+
+
+def _with_sections(data):
+    data["notes"][0]["sections"] = [
+        {"heading": "## A", "cites": ["runs/a/summary.json:pct"]},
+        {"heading": "## B", "cites": ["runs/a/summary.json:flag"]},
+    ]
+
+
+def test_sections_are_checked_and_counted(tmp_path, capsys):
+    manifest = _tree(tmp_path, note=SECTION_NOTE, manifest=_with_sections)
+    assert _check(tmp_path, manifest) == 0
+    out = capsys.readouterr().out.strip().splitlines()
+    assert "== docs/hallazgos/ej.md :: ## A" in out
+    assert "== docs/hallazgos/ej.md :: ## B" in out
+    assert out[-1] == "delivery ok: 1 notes, 2 configs, 3 cites"
+
+
+def test_section_cite_outside_its_section_fails(tmp_path, capsys):
+    def misplaced(data):
+        data["notes"][0]["sections"] = [{"heading": "## B", "cites": ["runs/a/summary.json:pct"]}]
+
+    manifest = _tree(tmp_path, note=SECTION_NOTE, manifest=misplaced)
+    assert _check(tmp_path, manifest) == 1
+    assert "MISSING cite: runs/a/summary.json:pct=53.2" in capsys.readouterr().out
+
+
+def test_absent_section_heading_fails(tmp_path, capsys):
+    def absent(data):
+        data["notes"][0]["sections"] = [{"heading": "## Z", "cites": []}]
+
+    manifest = _tree(tmp_path, note=SECTION_NOTE, manifest=absent)
+    assert _check(tmp_path, manifest) == 1
+    assert "MISSING section: ## Z" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        {"heading": "A", "cites": []},
+        {"heading": "##A", "cites": []},
+        {"heading": "####### A", "cites": []},
+        {"heading": "## A"},
+        {"heading": "## A", "cites": ["configs/a.json:x"]},
+        {"heading": "## A", "cites": [], "extra": 1},
+        "## A",
+    ],
+)
+def test_invalid_section_entry_exits_2(tmp_path, capsys, section):
+    manifest = _tree(tmp_path, note=SECTION_NOTE, manifest=lambda d: d["notes"][0].update(sections=[section]))
+    assert _check(tmp_path, manifest) == 2
+    assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_broken_section_reference_is_reported(tmp_path, capsys):
+    note = SECTION_NOTE + "Ver `### Comparación con PC1` para el detalle.\n"
+    manifest = _tree(tmp_path, note=note)
+    assert _check(tmp_path, manifest) == 1
+    out = capsys.readouterr().out
+    assert "BROKEN section reference: ### Comparación con PC1 (docs/hallazgos/ej.md)" in out
+
+
+def test_matching_section_reference_passes(tmp_path, capsys):
+    note = SECTION_NOTE + "Ver `## A` y `## B`; un `#hashtag` o `# no es un título` en un bloque no cuentan.\n"
+    manifest = _tree(tmp_path, note=note)
+    assert _check(tmp_path, manifest) == 0, capsys.readouterr().out
+
+
+def test_regenerate_stops_at_the_first_failing_config(tmp_path, monkeypatch, capsys):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    calls = []
+    monkeypatch.setattr(delivery, "run_config", lambda cfg, out, root: calls.append(cfg.name) or 2)
+    selection = []
+    monkeypatch.setattr(delivery, "check_selection", lambda *a, **k: selection.append(1) or [])
+    assert delivery.regenerate(manifest, tmp_path / "out", tmp_path) == 2
+    assert calls == ["a.json"]
+    assert selection == []
+    assert "FAILED: configs/a.json (exit 2)" in capsys.readouterr().out
+
+
+def test_regenerate_reports_selection_mismatch(tmp_path, monkeypatch, capsys):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    monkeypatch.setattr(delivery, "run_config", lambda cfg, out, root: 0)
+    monkeypatch.setattr(delivery, "check_selection", lambda *a, **k: ["MISMATCH som_sweep: k config=1 selected=2"])
+    assert delivery.regenerate(manifest, tmp_path / "out", tmp_path) == 1
+    assert "MISMATCH som_sweep" in capsys.readouterr().out
+
+
+def _patch_verify(monkeypatch, regenerate_code, check_code):
+    seen = {}
+
+    def fake_regenerate(manifest, out_root, project_root=PROJECT_ROOT):
+        seen["out_root"] = out_root
+        out_root.mkdir(parents=True, exist_ok=True)
+        return regenerate_code
+
+    def fake_check(manifest, root, project_root=PROJECT_ROOT):
+        seen["root"] = root
+        seen["check_called"] = True
+        return check_code
+
+    monkeypatch.setattr(delivery, "regenerate", fake_regenerate)
+    monkeypatch.setattr(delivery, "check", fake_check)
+    return seen
+
+
+def test_verify_regenerates_into_a_temp_dir_and_removes_it(tmp_path, monkeypatch, capsys):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    seen = _patch_verify(monkeypatch, 0, 0)
+    assert delivery.verify(manifest, tmp_path) == 0
+    assert seen["out_root"] == seen["root"] / "runs"
+    assert seen["root"] != tmp_path and not seen["root"].exists()
+    out = capsys.readouterr().out
+    assert f"verify: clean regeneration in {seen['root']}" in out
+    assert out.strip().splitlines()[-1] == "verify ok: clean regeneration matches the notes"
+
+
+def test_verify_removes_the_temp_dir_when_check_fails(tmp_path, monkeypatch, capsys):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    seen = _patch_verify(monkeypatch, 0, 1)
+    assert delivery.verify(manifest, tmp_path) == 1
+    assert not seen["root"].exists()
+    assert "verify ok" not in capsys.readouterr().out
+
+
+def test_verify_skips_check_when_regenerate_fails(tmp_path, monkeypatch):
+    manifest = load_manifest(_tree(tmp_path), tmp_path)
+    seen = _patch_verify(monkeypatch, 2, 0)
+    assert delivery.verify(manifest, tmp_path) == 2
+    assert "check_called" not in seen
+    assert not seen["out_root"].exists()
+
+
+def test_verify_subcommand_exists(tmp_path, monkeypatch):
+    manifest = _tree(tmp_path)
+    seen = _patch_verify(monkeypatch, 0, 0)
+    assert main(["verify", "--manifest", str(manifest), "--project-root", str(tmp_path)]) == 0
+    assert seen["check_called"]
+
+
+# ----- real tracked files only (no runs needed)
+
+
+def test_every_real_run_config_validates_with_distinct_experiments():
+    from tp4.config import load_config
+    from tp4.runner import validate_config
+
+    manifest = load_manifest(MANIFEST_PATH)
+    experiments = []
+    for config in manifest.run_order:
+        validated = validate_config(load_config(PROJECT_ROOT / config))
+        experiments.append(validated["experiment"])
+    assert len(set(experiments)) == len(experiments) == 12
+
+
+def test_every_runs_reference_in_the_real_notes_has_a_config():
+    from tp4.findings import referenced_artifacts
+
+    manifest = load_manifest(MANIFEST_PATH)
+    experiments = set(manifest.experiments.values())
+    for note in manifest.notes:
+        text = (PROJECT_ROOT / note.md).read_text(encoding="utf-8")
+        named = referenced_artifacts(text) + [c.rpartition(":")[0] for c in note.cites]
+        named += [r.cite.rpartition(":")[0] for r in note.requires]
+        for artifact in named:
+            assert artifact.split("/")[1] in experiments, f"{artifact} in {note.md}"
+
+
+def test_real_notes_have_no_broken_section_reference():
+    manifest = load_manifest(MANIFEST_PATH)
+    for note in manifest.notes:
+        text = (PROJECT_ROOT / note.md).read_text(encoding="utf-8")
+        assert delivery.broken_section_references(text) == [], note.md
