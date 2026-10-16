@@ -488,3 +488,162 @@ Verificación de la evidencia (los seis valores de 1.1 más los de 1.2):
   --cite runs/som_pca_control/summary.json:region_ari \
   --cite runs/som_pca_control/summary.json:bmu_distance_agreement
 ```
+
+## 1.3 Índice (regla de Oja)
+
+Todo lo de esta sección sale de `runs/oja/`, `runs/oja_sweep/` y `runs/campaigns/`, regenerados con los comandos de "Cómo regenerar (1.3)". Los valores de los `summary.json` se copian con su precisión guardada (6 decimales para el coseno y la correlación, 4 para normas y autovalores). Los criterios que son nuestros y que el grupo todavía tiene que aceptar están en "Supuestos (1.3)".
+
+### Regla de Oja implementada
+
+**Escribimos una sola neurona de Oja a mano en numpy (`tp4/models/oja.py`), sin librerías de redes ni autovalores, y la entrenamos con las mismas 25 variables estandarizadas de 1.1.**
+
+- La regla del curso, un creador por vez: `y = w·x` y `Δw = η · y · (x − y · w)`. Una época son los 50 creadores en orden aleatorio, con una permutación nueva por época y semilla fija (42).
+- Entrada: las 25 variables estandarizadas de 1.1 (las mismas que usan la PCA y el mapa de Kohonen), así que el índice y PC1 se calculan sobre exactamente los mismos datos. Pesos iniciales: uniformes en [0, 1), como pide el curso.
+- Después de entrenar, el vector se normaliza a largo 1 y se orienta como en 1.1 (el coeficiente de mayor valor absoluto positivo). **El índice de un creador es `Z · ŵ`**: su fila estandarizada proyectada sobre ese vector. Con `ŵ` de largo 1, el índice está en las mismas unidades que el puntaje de PC1.
+- Lo que garantizan los tests (`tests/test_oja_model.py`): sobre datos sintéticos con un autovector conocido la regla lo recupera con |cos| ≥ 0,99 y la norma queda a menos de 0,01 de 1, el paso a mano coincide exacto con la implementación, la corrida es determinista, la divergencia se marca en el resultado en vez de romper, y ningún módulo de `tp4/` importa una librería de redes ni llama a un autovalor o a un SVD.
+
+### Convergencia y elección de la tasa de aprendizaje
+
+**La norma de `w` baja de 2,20 en la primera época y entra en la banda de 1 ± 0,01 en la época 9; al final vale 1,0015.**
+
+![Norma de w y cambio por época](../../runs/oja/convergence.png)
+
+- `runs/oja/summary.json`: `final_w_norm` = 1,0015 y `epochs_to_converge` = 9 (la primera época desde la que la norma queda dentro de `norm_tol` = 0,01). La norma de partida era 3,3422 (`initial_w_norm`).
+- Con η constante la regla no se clava en 1,0000 sino un poco arriba (1,0015) y sigue moviéndose un poco por época (`final_delta_w` = 0,004425): es el ruido del paso online, no una falta de convergencia.
+- La dirección también converge: el coseno con PC1 pasa de 0,47 en la época 1 a 0,99 en la 9 (`runs/oja/history.csv`, `runs/oja/cos_to_pc1.png`).
+
+![Coseno con PC1 por época](../../runs/oja/cos_to_pc1.png)
+
+**La tasa no se eligió a ojo: un barrido de 9 valores de η0 con 3 semillas (27 corridas) y una regla registrada eligió η0 = 0,0005, sin mirar PC1.**
+
+![Norma de w por época para cada η0 y cada semilla](../../runs/oja_sweep/sweep_convergence.png)
+
+Tabla de `runs/oja_sweep/selection.csv` (por η0, el peor caso entre las 3 semillas):
+
+| η0 | Semillas divergentes | Épocas para converger (máx.) | Desvío máximo de la norma | Desplazamiento máx. de ranking | Pasa estable / norma / orden |
+|----|----------------------|------------------------------|----------------------------|--------------------------------|------------------------------|
+| 0,00001 | 0 de 3 | no converge | 1,2298 | 42 | sí / no / no |
+| 0,0001 | 0 de 3 | 118 | 0,0003 | 0 | sí / sí / sí |
+| **0,0005** | 0 de 3 | **24** | 0,0015 | 0 | sí / sí / sí |
+| 0,001 | 0 de 3 | 12 | 0,003 | 2 | sí / sí / no |
+| 0,002 | 0 de 3 | 6 | 0,0063 | 49 | sí / sí / no |
+| 0,005 | 0 de 3 | no converge | 0,0169 | 49 | sí / no / no |
+| 0,02 | 0 de 3 | no converge | 0,1149 | 49 | sí / no / no |
+| 0,06 | 3 de 3 | | | | no |
+| 0,5 | 3 de 3 | | | | no |
+
+- **Cuatro regímenes.** (1) *Demasiado lenta*: con η0 = 0,00001 la norma final de las tres semillas sigue entre 1,2149 y 2,2298 después de 200 épocas y el coseno con PC1 queda entre 0,01 y 0,81. (2) *Converge*: de 0,0001 a 0,002 la norma entra en la banda; cuanto mayor el η0, menos épocas (118, 24, 12, 6). (3) *Oscila fuera de la banda*: con 0,005 y 0,02 la norma se queda dando vueltas con un desvío de 0,0169 y 0,1149. (4) *Diverge*: con 0,06 y 0,5 las tres semillas explotan (en la época 1 con η0 = 0,5).
+- **La guía del curso diverge acá.** El autovalor mayor de la matriz de correlación es `lambda1` = 13,2944, y la cota del curso `η0 = 1/(1,2·λ1)` da `course_eta_bound` = 0,0627. Con 0,06, e incluso con la regla de "η0 ≤ 0,5", la corrida online diverge. La razón: cada paso individual escala con ‖x‖² del creador (media 25, hasta unos 57 para `@mundoanimal.ar`, calculado sobre las 25 variables estandarizadas), no con λ1, que es el promedio. Por eso η tiene que ser un orden de magnitud o más chico que la cota.
+- **Regla registrada** (`selection_rule` en `runs/oja_sweep/summary.json`): se descartan los η0 con alguna semilla divergente; luego los que dejan alguna semilla fuera de la banda de la norma; luego los cuyas semillas ordenan a los creadores distinto (desplazamiento máximo de ranking mayor que 0); entre los que quedan, el que converge en menos épocas (el máximo entre semillas) y, en empate, el η0 menor. PC1 no interviene.
+- Cuántos pasan cada etapa (de `n_eta` = 9): `n_stable` = 7, `n_norm_ok` = 4, `n_index_ok` = 2. Sobreviven 0,0001 y 0,0005; gana 0,0005 con 24 épocas contra 118.
+
+**Tasa de aprendizaje final:** η0 = 0,0005 (`runs/oja_sweep/summary.json`: `selected_eta0` = 0,0005, `selected_child` = `eta0-0p0005__seed-42`), constante, 200 épocas; `configs/oja.json` lleva ese valor y un test lo verifica.
+
+### Comparación con PC1
+
+**El vector de Oja y el primer autovector de la PCA son casi el mismo: coseno de 0,999993 entre los dos y correlación de 0,999999 entre los puntajes de los 50 creadores.**
+
+![Peso de Oja contra carga de PC1, variable por variable](../../runs/oja/weights_vs_pc1.png)
+
+- `cosine_to_pc1` = 0,999993 y `pearson_scores_pc1` = 0,999999 (`runs/oja/summary.json`). La diferencia más grande entre un peso de Oja y la carga de PC1 es de 0,003172 (`max_abs_weight_diff`, en `monthly_posts`: −0,0366 de Oja contra −0,0397 de PC1; `runs/oja/weights_vs_pc1.csv`). En las otras 24 variables la diferencia es menor a 0,0007.
+
+![Índice de Oja contra puntaje de PC1 por creador](../../runs/oja/scores_vs_pc1.png)
+
+- En el gráfico de dispersión los 50 creadores caen sobre la diagonal (`runs/oja/ranking.csv`: `oja_index` y `pc1_score`; por ejemplo `@mundoanimal.ar` 6,7680 contra 6,7728 y `@futbolsinvueltas` −6,4065 contra −6,4034). Ordenar por el índice o por el puntaje de PC1 da exactamente el mismo ranking de los 50 creadores.
+- **Es lo esperado, no una coincidencia:** la regla de Oja converge al primer autovector de la matriz de covarianza, y PC1 es justamente ese autovector. Lo que cambia es el camino: Oja llega online, un creador por vez, sin descomponer ninguna matriz.
+- **El signo es frágil y por eso se orienta.** La red encuentra el eje, no su sentido: con η0 = 0,0005 las semillas 42 y 7 convergen al opuesto de PC1 (`seeds_flipped`) y la 11 al mismo signo (`seeds_not_flipped`). El `oja_top_feature` de la corrida es `average_caption_words`, igual que `pc1_top_feature`, pero la regla de orientación (coeficiente de mayor |valor| positivo, como en 1.1) se apoya en una ventaja mínima: en PC1, `average_caption_words` (+0,2573) le gana a `average_impressions` (−0,2513) por solo 0,006. Con un η0 de 0,002 o más, la orientación puede quedar al revés en alguna semilla y el índice completo se da vuelta (es lo que muestra el desplazamiento de ranking de 49 en la tabla).
+
+![Pesos antes y después de orientar, por semilla](../../runs/oja_sweep/sign_ambiguity.png)
+
+### Qué mide el índice
+
+**Un índice alto es "engagement profundo con audiencia chica": epígrafes largos, guardados, comentarios, visitas al perfil y tutoriales. Un índice bajo es "audiencia grande, video corto de tendencia y precio alto".**
+
+Lo dicen los signos y las magnitudes de los pesos (`runs/oja/weights_vs_pc1.csv`, ya orientados):
+
+| Lado | Variables (peso de Oja) |
+|------|-------------------------|
+| Positivo (suma al índice) | `average_caption_words` +0,2574 (el mayor), `saves_per_1000` +0,2309, `profile_visits_per_1000` +0,2130, `comments_per_1000` +0,2100, `average_watch_time_seconds` +0,2015, `content_tutorial_pct` +0,2008 |
+| Negativo (resta) | `average_impressions` −0,2518 (el más negativo), `average_video_views` −0,2507, `average_reach` −0,2495, `trend_posts_pct` −0,2475, `video_posts_pct` −0,2420, `short_form_posts_pct` −0,2403, `followers` −0,2386, `price_usd` −0,2385 |
+
+- Es el mismo eje que PC1 de 1.1 (de "audiencia grande y video corto de tendencia" a "audiencia chica, epígrafes largos y contenido didáctico") y el mismo que ordena las regiones del mapa: `pc1_region_eta2` = 0,8314 en 1.2. Los 20 primeros del índice son todos de la región 1 y los cinco últimos de la 3.
+- **Qué no mide.** Pesos casi nulos: `argentina_audience_pct` +0,0333, `monthly_posts` −0,0366 y `sponsored_posts_pct` −0,0168. Los pesos de los tópicos son chicos (−0,0666 fútbol, −0,0646 maquillaje, +0,1344 perros; arte no entra, se reconstruye). O sea, el índice casi no sabe de qué habla el creador ni dónde está su audiencia, y de perros sabe solo un poco. **No es un puntaje de calidad ni de "mejor creador":** mezcla tamaño y estilo, y un creador grande, caro y de video corto queda abajo por definición.
+
+### ¿Conviene elegir al creador con el índice más alto?
+
+**No: el índice ordena tamaño y estilo, no tópico ni objetivo, así que el primero del ranking no es el indicado para cualquier campaña.**
+
+Los cinco primeros y los cinco últimos de `runs/oja/ranking.csv` (participación de cada tópico en %, región del mapa de 1.2):
+
+| Rango | Creador | Fútbol | Maquillaje | Perros | Arte | Followers | Región | Índice |
+|-------|---------|--------|------------|--------|------|-----------|--------|--------|
+| 1 | `@mundoanimal.ar` | 6,75 | 12,31 | **74,21** | 6,73 | 17062 | 1 | 6,7680 |
+| 2 | `@consejoscaninos` | 4,44 | 6,76 | **82** | 6,8 | 9604 | 1 | 6,4849 |
+| 3 | `@huellasyconsejos` | 10,68 | 9,54 | **64,49** | 15,29 | 13235 | 1 | 6,1537 |
+| 4 | `@ideasconhuella` | 14,05 | 13,35 | **55,6** | 17 | 34822 | 1 | 5,1874 |
+| 5 | `@perrosfelices.ar` | 7,72 | 13,46 | **70,74** | 8,08 | 33338 | 1 | 4,3959 |
+| 46 | `@crearenreels` | 14,86 | 9,93 | **66,99** | 8,22 | 551553 | 3 | −5,4766 |
+| 47 | `@golconmate` | **82,18** | 5,89 | 4,16 | 7,77 | 745025 | 3 | −5,5378 |
+| 48 | `@brillourbano` | 11,6 | **70,43** | 11,04 | 6,93 | 638718 | 3 | −5,6792 |
+| 49 | `@galeriacotidiana` | 11,81 | 13,57 | 13,58 | **61,04** | 381324 | 3 | −5,8391 |
+| 50 | `@futbolsinvueltas` | **63,36** | 10,44 | 10,1 | 16,1 | 493194 | 3 | −6,4065 |
+
+- **El tope es de un solo perfil.** Los cinco primeros son de perros, chicos (de 9604 a 34822 followers) y de la región 1; en los diez primeros hay 7 de perros, 2 de fútbol y 1 de maquillaje. Un cliente de fútbol, de maquillaje o de arte recibiría un creador con a lo sumo 14,05% de fútbol, 13,46% de maquillaje o 17% de arte entre los cinco primeros. El tópico no está en el eje: es lo mismo que vimos en 1.1, donde PC1 no separa tópicos (dispersión de 2,45 a 3,72 dentro de cada uno) y separa tamaño y estilo.
+- **Abajo no está "lo malo", está lo grande.** Los cinco últimos cubren los cuatro tópicos y son todos de la región 3 (alcance masivo). `@golconmate` tiene la mayor participación de fútbol de todo el catálogo (82,18%) y `@galeriacotidiana` un 61,04% de arte con 84,01% de audiencia argentina, y las dos reglas de 1.4 los eligen. Un índice bajo solo dice "audiencia grande, video de tendencia, caro".
+- **Un solo índice no puede expresar el objetivo del cliente.** Un refugio de perros quiere audiencia local y señales de consulta; una marca de ropa quiere alcance argentino barato. Ninguna de esas cosas es el eje de PC1: el peso del índice sobre `argentina_audience_pct` es de apenas +0,0333.
+- **Qué hicieron las reglas de 1.4 con el primero del ranking.** `oja_top_creator` es `@mundoanimal.ar` y `oja_top_creator_picked_for` es `[]` (la lista vacía): ningún cliente lo eligió. Es candidato de perros (74,21%, región 1) pero tiene la audiencia argentina más baja de los 9 candidatos (32,89%), con 65,40 USD por mil de alcance argentino (`runs/campaigns/evidence.csv`). Las elecciones de perros son los rangos 4, 3 y 2 del índice, pero las de los otros tres clientes llegan hasta el rango 49 (`@galeriacotidiana`).
+- **Cómo sí se puede usar el índice:** como una evidencia más dentro de una regla propia de cada cliente (1.4 lo muestra al lado de la posición en el biplot y la región del mapa), no como un ranking único de campaña.
+
+### Supuestos (1.3)
+
+- **Inicialización y orden:** pesos uniformes en [0, 1) y una permutación de los creadores por época, con la semilla 42; las otras dos semillas del barrido dan el mismo vector hasta el signo (`runs/oja_sweep/sign_ambiguity.png`).
+- **Banda de la norma:** "converge a 1" significa que la norma queda a menos de `norm_tol` = 0,01 de 1 (con η constante la norma se estabiliza un poco por encima: 1,0015). Es un umbral nuestro.
+- **Escala del índice:** el vector se normaliza a largo 1, así que el índice está en las mismas unidades que PC1 (desvíos z sumados con pesos de largo 1). Un índice de 6,77 no es una probabilidad ni un puntaje de 0 a 100.
+- **Regla de selección de η0 sin PC1:** los umbrales (banda de 0,01 y desplazamiento de ranking cero entre semillas) son del plan y el grupo los tiene que aceptar; con otros valores podría ganar 0,0001 o 0,001.
+- **Signo:** coeficiente de mayor valor absoluto positivo, como en 1.1; frágil por la ventaja de 0,006 entre dos variables.
+- **Lectura del índice:** se apoya solo en los signos y magnitudes de los pesos y en las posiciones de los creadores, no afirma nada que esas tablas no muestren.
+- Los gráficos se enlazan desde `runs/` (se regeneran, no se versionan). Copiarlos a `docs/` queda para la fase de documentación.
+
+### Cómo regenerar (1.3)
+
+```bash
+.venv/bin/python -m tp4 run configs/oja_sweep.json
+.venv/bin/python -m tp4 run configs/oja.json
+.venv/bin/python -m tp4 run configs/campaigns.json
+```
+
+Verificación de la evidencia (los 18 valores de 1.1 y 1.2 más los de 1.3):
+
+```bash
+.venv/bin/python -m tp4.findings docs/hallazgos/ej1.md \
+  --cite runs/pca/summary.json:pc1_explained_variance_pct \
+  --cite runs/pca/summary.json:pc2_explained_variance_pct \
+  --cite runs/pca/summary.json:cumulative_pc2_pct \
+  --cite runs/pca/summary.json:pc1_top_feature \
+  --cite runs/pca_scaling_sweep/standardize-false/summary.json:pc1_explained_variance_pct \
+  --cite runs/eda/summary.json:n_selected_features \
+  --cite runs/som_sweep/summary.json:selected_child \
+  --cite runs/som_sweep/summary.json:selected_quantization_error \
+  --cite runs/som_sweep/summary.json:selected_topographic_error \
+  --cite runs/som_sweep/summary.json:selected_distance_preservation \
+  --cite runs/som_design_sweep/summary.json:selected_child \
+  --cite runs/som/summary.json:n_regions \
+  --cite runs/som/summary.json:u_border_ratio \
+  --cite runs/som/summary.json:pc1_region_eta2 \
+  --cite runs/som/summary.json:pc2_region_eta2 \
+  --cite runs/som/summary.json:empty_neuron_frac \
+  --cite runs/som_pca_control/summary.json:region_ari \
+  --cite runs/som_pca_control/summary.json:bmu_distance_agreement \
+  --cite runs/oja/summary.json:cosine_to_pc1 \
+  --cite runs/oja/summary.json:pearson_scores_pc1 \
+  --cite runs/oja/summary.json:final_w_norm \
+  --cite runs/oja/summary.json:epochs_to_converge \
+  --cite runs/oja/summary.json:top_creator \
+  --cite runs/oja/summary.json:bottom_creator \
+  --cite runs/oja/summary.json:oja_top_feature \
+  --cite runs/oja/summary.json:lambda1 \
+  --cite runs/oja/summary.json:course_eta_bound \
+  --cite runs/oja_sweep/summary.json:selected_eta0 \
+  --cite runs/oja_sweep/summary.json:selected_child \
+  --cite runs/campaigns/summary.json:oja_top_creator_picked_for
+```
