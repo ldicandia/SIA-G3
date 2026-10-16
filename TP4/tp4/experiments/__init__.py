@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from ..errors import ConfigError
 from ..runs import Experiment
-from . import eda, oja, pca, som, som_control, sweep
+from . import campaigns, eda, oja, pca, som, som_control, sweep
 
 REGISTRY: dict[str, Experiment] = {
+    "campaigns": campaigns.EXPERIMENT,
     "eda": eda.EXPERIMENT,
     "oja": oja.EXPERIMENT,
     "pca": pca.EXPERIMENT,
