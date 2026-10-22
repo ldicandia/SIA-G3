@@ -1,7 +1,6 @@
-"""Evaluation, orthogonality, noise and mixture helpers for Hopfield experiments.
+"""Evaluation, orthogonality and noise helpers for Hopfield experiments.
 
-Shared by `hopfield_letters` (plan 04-01) and `hopfield_qr` (plan 04-03). Uses numpy and the
-Python standard library only.
+Shared by the letter and QR experiments.
 """
 
 from __future__ import annotations
@@ -114,26 +113,6 @@ def rank_subsets(
         items.append((max_abs, mean_abs, combo))
     items.sort()
     return [(combo, max_abs, mean_abs) for max_abs, mean_abs, combo in items]
-
-
-def mixture_states(
-    patterns, order: int = 3
-) -> list[tuple[tuple[int, ...], tuple[int, ...], np.ndarray]]:
-    """Build sign(sum_{m=1}^order s_m xi_{i_m}) for all combinations and signs with s_0 == +1."""
-    P = check_patterns(patterns)
-    p = P.shape[0]
-    if order < 1 or order > p:
-        raise ValueError(f"order must be in [1, {p}], got {order}")
-    out: list[tuple[tuple[int, ...], tuple[int, ...], np.ndarray]] = []
-    for indices in itertools.combinations(range(p), order):
-        sub = P[list(indices)].astype(int)
-        for rest_signs in itertools.product((1, -1), repeat=order - 1):
-            signs = (1, *rest_signs)
-            s_vec = np.asarray(signs, dtype=int)[:, np.newaxis]
-            total = np.sum(s_vec * sub, axis=0)
-            state = np.where(total >= 0, 1, -1).astype(np.int8)
-            out.append((indices, signs, state))
-    return out
 
 
 def render_rows(pattern, shape: tuple[int, int]) -> list[str]:

@@ -1,4 +1,4 @@
-"""QR-01 / QR-04: loading the menu QR PNGs as 37x37 +-1 matrices and the optional decoder."""
+"""QR module conversion and decoding."""
 
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ from tp4.analysis.qr import (
     decode_matrix,
     decoder_status,
     load_qr_image,
-    main,
     matrix_to_image,
     qr_name,
 )
@@ -52,9 +51,6 @@ def _save_gray(tmp_path: Path, name: str, pixels: np.ndarray) -> Path:
     return path
 
 
-# ---------------------------------------------------------------- constants
-
-
 def test_constants():
     assert QR_SIDE == 37
     assert GRAY_THRESHOLD == 128
@@ -66,9 +62,6 @@ def test_qr_name():
     assert qr_name("datos/hopfield/food_menu_qr.png") == "food"
     assert qr_name(Path("x/specials_menu_qr.png")) == "specials"
     assert qr_name("other.png") == "other"
-
-
-# ------------------------------------------------------------------ loading
 
 
 @pytest.mark.parametrize("path", PATHS, ids=NAMES)
@@ -164,9 +157,6 @@ def test_non_image_file_is_data_error(tmp_path):
         load_qr_image(path)
 
 
-# ----------------------------------------------------------------- rendering
-
-
 @pytest.mark.parametrize(
     "matrix, kwargs",
     [
@@ -191,9 +181,6 @@ def test_scale_and_quiet_zone_limits_are_inclusive():
     assert matrix_to_image(m, scale=1, quiet_zone=0).tolist() == [[0, 255], [255, 0]]
 
 
-# ------------------------------------------------------- unavailable decoder
-
-
 def test_decoder_unavailable_status(no_decoder):
     status = decoder_status()
     assert status.available is False
@@ -206,23 +193,6 @@ def test_decode_matrix_raises_when_unavailable(no_decoder):
         decode_matrix(load_qr_image(PATHS[0]).matrix)
 
 
-def test_main_reports_decoder_unavailable(no_decoder, capsys):
-    rc = main([str(p) for p in PATHS])
-    out = capsys.readouterr().out.splitlines()
-    assert rc == 1
-    assert sum(line.startswith("decoder unavailable:") for line in out) == 1
-    assert sum(line.endswith("roundtrip ok") for line in out) == 5
-    assert all("37x37, black 0.5" in line for line in out if line.endswith("roundtrip ok"))
-    assert not any("decoded:" in line for line in out)
-
-
-def test_main_missing_file_exits_2(capsys, tmp_path):
-    rc = main([str(tmp_path / "missing.png")])
-    captured = capsys.readouterr()
-    assert rc == 2
-    assert captured.err.startswith("error:")
-
-
 def test_no_module_level_decoder_import():
     tree = ast.parse(Path(qr.__file__).read_text(encoding="utf-8"))
     for node in tree.body:
@@ -230,9 +200,6 @@ def test_no_module_level_decoder_import():
             assert all(alias.name.split(".")[0] != "zxingcpp" for alias in node.names)
         if isinstance(node, ast.ImportFrom):
             assert (node.module or "").split(".")[0] != "zxingcpp"
-
-
-# ------------------------------------------------------------ real decoder
 
 
 def test_originals_decode_to_menu_urls(capsys):
@@ -244,6 +211,3 @@ def test_originals_decode_to_menu_urls(capsys):
         assert f"{name}_menu" in text
         texts.append(text)
     assert len(set(texts)) == 5
-    assert main([str(p) for p in PATHS]) == 0
-    out = capsys.readouterr().out
-    assert out.count("decoded: https://") == 5

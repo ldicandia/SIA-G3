@@ -1,32 +1,9 @@
-"""QR input and output ends for the Hopfield experiment (QR-01, QR-04).
-
-Loading contract (QR-01): a menu PNG is read with Pillow only, converted to grayscale
-(mode "L") and never resized or cropped. A pixel below `GRAY_THRESHOLD` (128) is black
-and maps to +1; 128 or above is white and maps to -1. An image that is not exactly
-`side` x `side` is rejected with `DataError` (resampling would invent modules). The
-stored matrix is the code itself: no quiet zone. The quiet zone and the upscaling exist
-only in the image handed to the decoder (`matrix_to_image`).
-
-Decoder (QR-04): `zxing-cpp` is an OPTIONAL extra (`requirements-qr.txt`). It is never
-imported at module level: `decoder_status()` imports it lazily, so every run and every
-test works without it and `decode_matrix` raises `DecoderUnavailableError` instead of
-crashing a caller that did not check.
-
-CLI:
-
-    python -m tp4.analysis.qr IMAGE [IMAGE ...] [--side N] [--scale S] [--quiet-zone Q]
-
-Exit code 0 when every image loads, round-trips and decodes; 1 when any image does not
-decode or the decoder is unavailable; 2 with `error: ...` on stderr for an unreadable image.
-"""
+"""Conversion between 37×37 bipolar QR modules and images for the optional reader."""
 
 from __future__ import annotations
 
-import argparse
 import importlib
 import importlib.metadata
-import sys
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,7 +11,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
-from tp4.errors import DataError, Tp4Error
+from tp4.errors import DataError
 from tp4.runs import resolve_project_path
 
 QR_SIDE = 37
@@ -152,41 +129,3 @@ def decode_matrix(
         if "QR" in str(result.format):
             return str(result.text)
     return None
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="tp4.analysis.qr",
-        description="Load menu QR PNGs as +-1 matrices, check the roundtrip and decode them.",
-    )
-    parser.add_argument("images", nargs="+", help="QR PNG files")
-    parser.add_argument("--side", type=int, default=QR_SIDE)
-    parser.add_argument("--scale", type=int, default=DEFAULT_SCALE)
-    parser.add_argument("--quiet-zone", type=int, default=DEFAULT_QUIET_ZONE)
-    args = parser.parse_args(argv)
-
-    status = decoder_status()
-    if not status.available:
-        print(f"decoder unavailable: {status.reason}")
-
-    ok = status.available
-    try:
-        for image_path in args.images:
-            img = load_qr_image(image_path, side=args.side)
-            roundtrip = np.array_equal(matrix_to_image(img.matrix), img.pixels)
-            black = float((img.matrix == 1).mean())
-            tag = "roundtrip ok" if roundtrip else "roundtrip MISMATCH"
-            print(f"{image_path}: {args.side}x{args.side}, black {black:.4f}, {tag}")
-            ok = ok and roundtrip
-            if status.available:
-                text = decode_matrix(img.matrix, scale=args.scale, quiet_zone=args.quiet_zone)
-                print(f"  decoded: {text if text is not None else 'NONE'}")
-                ok = ok and text is not None
-    except (Tp4Error, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    return 0 if ok else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

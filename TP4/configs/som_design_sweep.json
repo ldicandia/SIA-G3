@@ -2,14 +2,18 @@
   "experiment": "som_design_sweep",
   "kind": "sweep",
   "seed": 42,
-  "backend": "numpy",
   "plots": true,
   "base": "configs/som_design_base.json",
   "grid": {
-    "params.topology": ["hex", "rect"],
-    "params.neighborhood": ["gaussian", "step"],
-    "params.init": ["sample", "random"]
+    "params.topology": [
+      "hex",
+      "rect"
+    ],
+    "params.init": [
+      "sample",
+      "random"
+    ]
   },
-  "workers": 8,
+  "workers": 4,
   "child_plots": false
 }

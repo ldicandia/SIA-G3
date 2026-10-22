@@ -1,27 +1,4 @@
-"""Experiment kind `hopfield_letters`: Hopfield associative memory on 5x5 letters (Ej. 2.2).
-
-Assignment items (docs/SIATP42026.pdf page 6, section 2.2):
-1. Build 5x5 letter patterns with +1 ('#', black pixel) and -1 ('.', white pixel), store 4
-   patterns and associate 5x5 queries with them using a hand-written Hopfield network.
-2. Analyze pairwise orthogonality (dot-product matrix) and storage capacity (~0.138 * N and
-   the course's 0.15 * N).
-3. Enter a very noisy pattern and identify a spurious state.
-
-Course conventions (clases/4.2 - Modelo de Hopfield.pdf):
-- States in {-1, +1}; local field h_i = sum_{j != i} w_ij S_j; when h_i == 0 (|h_i| <= FIELD_TOL)
-  the neuron keeps its previous state (slides 14-15).
-- Hebbian weights w_ij = (1/N) sum_mu xi_i^mu xi_j^mu for i != j and w_ii = 0 (slides 18, 20).
-- Energy H(S) = -1/2 sum_{i,j} w_ij S_i S_j (slides 34-36).
-
-Config keys (besides common keys):
-  alphabet   path to the JSON alphabet file (datos/letras_5x5.json)
-
-Artifacts:
-  dot_products.csv, orthogonality.csv, stored.csv, recall.csv, recall_rates.csv,
-  energy.csv, energy_trace.csv, mixtures.csv, capacity.csv,
-  alphabet.png, dot_products.png, capacity.png, recovery_vs_noise.png,
-  recall_examples.png, spurious.png, energy.png, summary.json, run.json
-"""
+"""Hopfield recall, orthogonality and capacity with four 5×5 letters."""
 
 from __future__ import annotations
 
@@ -38,7 +15,6 @@ from ..analysis.hopfield_eval import (
     classify_states,
     dot_matrix,
     flip_bits,
-    mixture_states,
     n_flips_for,
     nearest_pattern,
     overlaps,
@@ -46,16 +22,16 @@ from ..analysis.hopfield_eval import (
     render_rows,
     stability_margins,
 )
+from ..analysis.hopfield_repetitions import repeated_recall, aggregate_repetitions
 from ..errors import ConfigError
 from ..models.hopfield import (
     MAX_ITER,
-    RULES,
     UPDATES,
     HopfieldConfig,
     energy,
     is_fixed_point,
     recall,
-    train,
+    hebbian_weights,
 )
 from ..parallel import spawn_seeds
 from ..plotting import grid_shape, plt, save_figure
@@ -63,9 +39,8 @@ from ..runs import Experiment, RunContext, resolve_project_path, write_csv
 
 EXTRA_KEYS = frozenset({"alphabet"})
 PARAM_DEFAULTS: dict[str, Any] = {
-    "n_store": 4,
+    "n_repeats": 30,
     "letters": [],
-    "rule": "hebb",
     "updates": ["async", "sync"],
     "max_iter": 100,
     "noise_levels": [0.04, 0.08, 0.12, 0.16, 0.2, 0.28, 0.36, 0.44],
@@ -75,8 +50,7 @@ PARAM_DEFAULTS: dict[str, Any] = {
     "capacity_max_p": 10,
     "capacity_subsets": 200,
 }
-MAX_STORE = 6
-MAX_SUBSETS = 300000
+N_STORE = 4
 SELECTION_RULE = (
     "Menor máximo |producto interno| fuera de la diagonal, luego menor promedio |producto interno|, "
     "luego orden alfabético."
@@ -124,8 +98,8 @@ def load_alphabet(path: str | Path) -> tuple[list[str], np.ndarray, tuple[int, i
         n_cols = len(glyph[0])
         if any(len(r) != n_cols for r in glyph):
             raise ConfigError(f"hopfield_letters: alphabet glyph for {letter!r} has unequal row lengths")
-        if n_rows * n_cols < 2:
-            raise ConfigError(f"hopfield_letters: alphabet glyph for {letter!r} must have at least 2 pixels")
+        if (n_rows, n_cols) != (5, 5):
+            raise ConfigError(f"hopfield_letters: alphabet glyph for {letter!r} must be 5x5")
         if shape is None:
             shape = (n_rows, n_cols)
         elif (n_rows, n_cols) != shape:
@@ -167,15 +141,11 @@ def validate(config: dict) -> None:
     n_letters = len(letters_all)
 
     p = config["params"]
-    n_store = p["n_store"]
-    if not (_is_int(n_store) and 2 <= n_store <= min(MAX_STORE, n_letters)):
-        raise ConfigError(
-            f"hopfield_letters: params.n_store must be an integer in [2, {min(MAX_STORE, n_letters)}], got {n_store!r}"
-        )
-    if math.comb(n_letters, n_store) > MAX_SUBSETS:
-        raise ConfigError(
-            f"hopfield_letters: C({n_letters}, {n_store}) exceeds MAX_SUBSETS ({MAX_SUBSETS})"
-        )
+    if type(p["n_repeats"]) is not int or not 2 <= p["n_repeats"] <= 200:
+        raise ConfigError("n_repeats must be an integer in [2, 200]")
+    n_store = N_STORE
+    if n_letters < n_store:
+        raise ConfigError("hopfield_letters: store exactly four 5x5 letters, as required by the assignment")
 
     manual = p["letters"]
     if not isinstance(manual, list):
@@ -189,9 +159,6 @@ def validate(config: dict) -> None:
             raise ConfigError(
                 f"hopfield_letters: params.letters must be {n_store} distinct letters from the alphabet, got {manual!r}"
             )
-
-    if p["rule"] not in RULES:
-        raise ConfigError(f"hopfield_letters: params.rule must be one of {list(RULES)}, got {p['rule']!r}")
 
     updates = p["updates"]
     if not isinstance(updates, list) or not updates:
@@ -251,9 +218,6 @@ def validate(config: dict) -> None:
         )
 
 
-# --------------------------------------------------------------------------- plotting helpers
-
-
 def _draw_pattern(ax, pattern: np.ndarray, shape: tuple[int, int], title: str = "", frame_color: str | None = None):
     grid = pattern.reshape(shape)
     ax.imshow(grid, cmap="binary", vmin=-1, vmax=1, interpolation="nearest")
@@ -310,6 +274,33 @@ def _plot_alphabet(
     save_figure(fig, path)
 
 
+def _plot_storage(letters, patterns, weights, path):
+    fig = plt.figure(figsize=(14, 5))
+    grid = fig.add_gridspec(2, 4, width_ratios=[1, 1, 4, 4], wspace=0.45)
+    for i, (letter, pattern) in enumerate(zip(letters, patterns)):
+        ax = fig.add_subplot(grid[i // 2, i % 2])
+        ax.imshow(pattern.reshape(5, 5), cmap="gray_r", vmin=-1, vmax=1)
+        ax.set_title(letter)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    vectors = fig.add_subplot(grid[:, 2])
+    vectors.imshow(patterns, cmap="gray_r", vmin=-1, vmax=1, aspect="auto")
+    vectors.set_yticks(range(len(letters)), labels=letters)
+    vectors.set_xticks([0, 4, 9, 14, 19, 24], labels=[1, 5, 10, 15, 20, 25])
+    vectors.set_xlabel("Neurona: recorrido por filas de cada letra")
+    vectors.set_title("P: cuatro vectores de 25 estados ±1")
+    synapses = fig.add_subplot(grid[:, 3])
+    limit = float(np.abs(weights).max())
+    image = synapses.imshow(weights, cmap="coolwarm", vmin=-limit, vmax=limit)
+    synapses.set_xlabel("Neurona j")
+    synapses.set_ylabel("Neurona i")
+    synapses.set_title("W = PᵀP / 25, con diagonal cero")
+    fig.colorbar(image, ax=synapses, shrink=0.7, label="Peso wᵢⱼ")
+    fig.suptitle("Almacenamiento: 5×5 → 25 estados → pesos 25×25")
+    fig.subplots_adjust(top=0.84, bottom=0.15)
+    save_figure(fig, path)
+
+
 def _plot_dot_products(
     letters: list[str],
     dots: np.ndarray,
@@ -337,7 +328,7 @@ def _plot_dot_products(
     cbar = fig.colorbar(im, ax=ax, shrink=0.82)
     cbar.set_label("Producto interno ξa · ξb")
     ax.set_title(
-        f"Matriz de productos internos (26×26) — Conjunto más ortogonal resaltado: {', '.join(sel_letters)} (|dot| = 1)",
+        f"Matriz de productos internos — Letras almacenadas: {', '.join(sel_letters)}",
         fontsize=10.5,
     )
     fig.tight_layout()
@@ -351,23 +342,26 @@ def _plot_capacity(
     sel_letters: list[str],
     worst_letters: list[str],
     path: Path,
+    repeated: pd.DataFrame,
 ) -> None:
-    rand_df = cap_df[cap_df["kind"] == "random"]
+    rand_df = repeated
     sel_row = cap_df[cap_df["kind"] == "selected"].iloc[0]
     worst_row = cap_df[cap_df["kind"] == "worst"].iloc[0]
 
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
-    ax.plot(
+    ax.errorbar(
         rand_df["p"],
-        rand_df["frac_stable"],
+        rand_df["frac_stable_mean"],
+        yerr=rand_df["frac_stable_std"], capsize=3,
         marker="o",
         color="#0072B2",
         linewidth=2.0,
         label="Fracción de letras estables (subconjuntos al azar)",
     )
-    ax.plot(
+    ax.errorbar(
         rand_df["p"],
-        rand_df["frac_sets_all_stable"],
+        rand_df["frac_sets_all_stable_mean"],
+        yerr=rand_df["frac_sets_all_stable_std"], capsize=3,
         marker="s",
         linestyle="--",
         color="#009E73",
@@ -393,9 +387,7 @@ def _plot_capacity(
         edgecolor="black",
         label=f"Peores ({','.join(worst_letters)}): {worst_row['frac_stable']:.2f}",
     )
-    c_0138 = 0.138 * n_neurons
     c_015 = 0.15 * n_neurons
-    ax.axvline(c_0138, color="#CC79A7", linestyle=":", linewidth=1.8, label=f"0,138·N = {c_0138:.2f}")
     ax.axvline(c_015, color="#E69F00", linestyle="-.", linewidth=1.8, label=f"0,15·N = {c_015:.2f}")
     ax.set_xlabel("Cantidad de patrones almacenados (p)")
     ax.set_ylabel("Fracción de puntos fijos")
@@ -403,60 +395,49 @@ def _plot_capacity(
     ax.set_xticks(rand_df["p"].tolist())
     ax.grid(alpha=0.3)
     ax.legend(loc="upper right", fontsize=8.5)
-    ax.set_title("Capacidad empírica de almacenamiento en función de p (N = 25)")
+    ax.set_title(f"Capacidad empírica: media ± DE entre {int(repeated.n_seeds.iloc[0])} semillas (N = 25)")
     fig.tight_layout()
     save_figure(fig, path)
 
 
-def _plot_recovery_vs_noise(
-    rates_df: pd.DataFrame,
-    n_neurons: int,
-    sel_letters: list[str],
-    worst_letters: list[str],
-    path: Path,
-) -> None:
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5.2))
-
+def _plot_recovery_vs_noise(repeated, sel_letters, worst_letters, path):
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.2))
     styles = [
-        ("selected", "async", "#0072B2", "-", "o", f"Elegidas ({','.join(sel_letters)}) — async"),
-        ("selected", "sync", "#0072B2", "--", "s", f"Elegidas ({','.join(sel_letters)}) — sync"),
-        ("worst", "async", "#D55E00", "-", "^", f"Peores ({','.join(worst_letters)}) — async"),
-        ("worst", "sync", "#D55E00", "--", "v", f"Peores ({','.join(worst_letters)}) — sync"),
+        ("selected", "async", "#0072B2", "-", "o", f"Elegidas ({','.join(sel_letters)}), async"),
+        ("selected", "sync", "#0072B2", "--", "s", f"Elegidas ({','.join(sel_letters)}), sync"),
+        ("worst", "async", "#D55E00", "-", "^", f"Correlacionadas ({','.join(worst_letters)}), async"),
+        ("worst", "sync", "#D55E00", "--", "v", f"Correlacionadas ({','.join(worst_letters)}), sync"),
     ]
-    for set_name, upd, color, ls, marker, label in styles:
-        sub = rates_df[(rates_df["set"] == set_name) & (rates_df["update"] == upd)]
-        if not sub.empty:
-            ax1.plot(sub["level"], sub["recovery_rate"], color=color, linestyle=ls, marker=marker, linewidth=1.9, label=label)
-
-    ax1.set_xlabel("Nivel de ruido (fracción de píxeles invertidos)")
-    ax1.set_ylabel("Tasa de recuperación exacta")
-    ax1.set_ylim(-0.04, 1.06)
-    ax1.grid(alpha=0.3)
-    ax1.legend(loc="lower left", fontsize=8)
-    ax1.set_title("Recuperación frente al nivel de ruido")
-
-    sel_async = rates_df[(rates_df["set"] == "selected") & (rates_df["update"] == "async")]
-    if not sel_async.empty:
-        x = np.arange(len(sel_async))
-        labels_x = [f"{lv:g}\n({n_flips_for(lv, n_neurons)})" for lv in sel_async["level"]]
-        rec = sel_async["recovery_rate"].to_numpy(dtype=float)
-        oth = sel_async["other_rate"].to_numpy(dtype=float)
-        inv = sel_async["inverted_rate"].to_numpy(dtype=float)
-        spu = sel_async["spurious_rate"].to_numpy(dtype=float)
-
-        ax2.bar(x, rec, color="#009E73", label="Recuperada (objetivo)")
-        ax2.bar(x, oth, bottom=rec, color="#56B4E9", label="Otra letra almacenada")
-        ax2.bar(x, inv, bottom=rec + oth, color="#E69F00", label="Letra invertida (−ξ)")
-        ax2.bar(x, spu, bottom=rec + oth + inv, color="#CC79A7", label="Estado espúreo")
-        ax2.set_xticks(x, labels=labels_x, fontsize=8)
-        ax2.set_xlabel("Nivel de ruido (píxeles invertidos de 25)")
-        ax2.set_ylabel("Proporción de estados finales")
-        ax2.set_ylim(0, 1.05)
-        ax2.legend(loc="lower left", fontsize=8)
-        ax2.set_title(f"Destino de las consultas (elegidas {', '.join(sel_letters)}, async)")
-        ax2.grid(alpha=0.25, axis="y")
-
+    for set_name, update, color, line, marker, label in styles:
+        sub = repeated[(repeated["set"] == set_name) & (repeated["update"] == update)]
+        for ax, metric in zip(axes, ("recovery_rate", "mean_iterations")):
+            if not sub.empty:
+                ax.errorbar(sub["level"], sub[f"{metric}_mean"], yerr=sub[f"{metric}_std"],
+                            color=color, linestyle=line, marker=marker, capsize=3, label=label)
+    for ax in axes:
+        ax.set_xlabel("Fracción solicitada de píxeles invertidos")
+        ax.grid(alpha=.3)
+    axes[0].set_ylabel("Recuperación exacta")
+    axes[0].set_ylim(-.04, 1.06)
+    axes[1].set_ylabel("Barridos que modifican el estado")
+    axes[0].legend(fontsize=8)
+    count = int(repeated.n_seeds.iloc[0])
+    fig.suptitle(f"Media ± DE entre {count} semillas: ruido y orden de actualización")
     fig.tight_layout()
+    save_figure(fig, path)
+
+
+def _plot_final_energy(repeated, path):
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+    for (name, update), sub in repeated.groupby(["set", "update"], sort=False):
+        ax.errorbar(sub["level"], sub["mean_final_energy_mean"],
+                    yerr=sub["mean_final_energy_std"], marker="o", capsize=3,
+                    label=f"{name}, {update}")
+    ax.set_xlabel("Fracción solicitada de píxeles invertidos")
+    ax.set_ylabel("Energía final media por consulta")
+    ax.set_title(f"Media ± DE entre {int(repeated.n_seeds.iloc[0])} semillas")
+    ax.legend()
+    ax.grid(alpha=.3)
     save_figure(fig, path)
 
 
@@ -508,12 +489,11 @@ def _plot_spurious(
         title=f"Consulta ({sp_info['letter']}, {sp_info['n_flips']} flips)",
         frame_color="#E69F00",
     )
-    mix_lbl = f" [{sp_info['mixture']}]" if sp_info["mixture"] else ""
     _draw_pattern(
         axes[1],
         sp_info["state_vec"],
         shape,
-        title=f"Espúreo{mix_lbl}\nH = {sp_info['energy']:.2f}",
+        title=f"Espúreo\nH = {sp_info['energy']:.2f}",
         frame_color="#CC79A7",
     )
     for idx, ch in enumerate(sel_letters):
@@ -537,6 +517,7 @@ def _plot_energy_traces(
     trace_df: pd.DataFrame,
     n_neurons: int,
     path: Path,
+    seed: int,
 ) -> None:
     fig, ax = plt.subplots(figsize=(9.5, 5.2))
     palette = ["#0072B2", "#009E73", "#E69F00", "#56B4E9", "#CC79A7", "#D55E00"]
@@ -558,22 +539,18 @@ def _plot_energy_traces(
         ax.axvline(boundary, color="#888888", linestyle=":", linewidth=0.8)
     ax.set_xlabel(f" Visitas individuales a neuronas (líneas punteadas = barridos de N = {n_neurons})")
     ax.set_ylabel("Energía H(S)")
-    ax.set_title("Evolución monótona no creciente de la energía H por actualización asincrónica")
+    ax.set_title(f"Ejemplos semilla {seed}: energía por actualización asincrónica")
     ax.grid(alpha=0.3)
     ax.legend(loc="upper right", fontsize=8.5)
     fig.tight_layout()
     save_figure(fig, path)
 
 
-# --------------------------------------------------------------------------- run
-
-
 def run(ctx: RunContext) -> dict[str, Any]:
     letters, patterns, shape = load_alphabet(ctx.config["alphabet"])
     n_letters, n_neurons = patterns.shape
     p = ctx.params
-    n_store = int(p["n_store"])
-    rule = str(p["rule"])
+    n_store = N_STORE
     updates = [str(u) for u in p["updates"]]
     max_iter = int(p["max_iter"])
     levels = [float(x) for x in p["noise_levels"]]
@@ -617,8 +594,8 @@ def run(ctx: RunContext) -> dict[str, Any]:
 
     P_sel = patterns[list(sel_idx)]
     P_worst = patterns[list(worst_idx)]
-    W_sel = train(P_sel, rule)
-    W_worst = train(P_worst, rule)
+    W_sel = hebbian_weights(P_sel)
+    W_worst = hebbian_weights(P_worst)
 
     fp_sel = is_fixed_point(W_sel, P_sel)
     fp_worst = is_fixed_point(W_worst, P_worst)
@@ -644,8 +621,6 @@ def run(ctx: RunContext) -> dict[str, Any]:
             )
     write_csv(ctx.artifact("stored.csv"), pd.DataFrame(stored_rows))
 
-    # ctx.rng is not used directly. One spawn_seeds list is consumed in fixed order:
-    # 0: capacity, 1: spurious, then one per (set, letter, level) cell in order.
     sets_spec = [
         ("selected", sel_letters, P_sel, W_sel),
         ("worst", worst_letters, P_worst, W_worst),
@@ -656,12 +631,9 @@ def run(ctx: RunContext) -> dict[str, Any]:
     sp_seed = all_seeds[1]
     cell_seeds = all_seeds[2:]
 
-    # 1. Capacity curve (consumes cap_seed)
     cap_rng = np.random.default_rng(cap_seed)
     cap_rows: list[dict[str, Any]] = []
     cap_p_list: list[int] = []
-    cap_frac_stable_list: list[float] = []
-    cap_frac_all_list: list[float] = []
 
     for p_val in range(1, capacity_max_p + 1):
         total_fp = 0
@@ -669,7 +641,7 @@ def run(ctx: RunContext) -> dict[str, Any]:
         for _ in range(capacity_subsets):
             sub_idx = cap_rng.choice(n_letters, size=p_val, replace=False)
             P_sub = patterns[sub_idx]
-            W_sub = train(P_sub, rule)
+            W_sub = hebbian_weights(P_sub)
             fps = is_fixed_point(W_sub, P_sub)
             n_ok = int(np.sum(fps))
             total_fp += n_ok
@@ -686,8 +658,6 @@ def run(ctx: RunContext) -> dict[str, Any]:
             }
         )
         cap_p_list.append(p_val)
-        cap_frac_stable_list.append(f_stable)
-        cap_frac_all_list.append(f_all)
 
     sel_n_fp = int(np.sum(fp_sel))
     worst_n_fp = int(np.sum(fp_worst))
@@ -710,35 +680,8 @@ def run(ctx: RunContext) -> dict[str, Any]:
     cap_df = pd.DataFrame(cap_rows)
     write_csv(ctx.artifact("capacity.csv"), cap_df)
 
-    # 2. 3-letter mixtures of the selected set
-    mix_order = min(3, n_store)
-    mix_items = mixture_states(P_sel, order=mix_order)
-    mix_rows: list[dict[str, Any]] = []
-    n_stable_mixtures = 0
-    for indices, signs, mix_state in mix_items:
-        letters_str = "".join(sel_letters[i] for i in indices)
-        signs_str = "".join(f"{'+' if s > 0 else '-'}{sel_letters[i]}" for i, s in zip(indices, signs, strict=True))
-        stable = bool(is_fixed_point(W_sel, mix_state[np.newaxis, :])[0])
-        cls_arr, _ = classify_states(mix_state[np.newaxis, :], P_sel)
-        cls_str = str(cls_arr[0])
-        if stable and cls_str == "spurious":
-            n_stable_mixtures += 1
-        mix_rows.append(
-            {
-                "letters": letters_str,
-                "signs": signs_str,
-                "stable": stable,
-                "class": cls_str,
-            }
-        )
-    write_csv(ctx.artifact("mixtures.csv"), pd.DataFrame(mix_rows))
-
-    # 3. Spurious analysis at spurious_noise (consumes sp_seed)
     sp_rng = np.random.default_rng(sp_seed)
     sp_flips = n_flips_for(spurious_noise, n_neurons)
-    sp_total_queries = 0
-    sp_count = 0
-    sp_inv_count = 0
     sp_found_info: dict[str, Any] | None = None
 
     for letter_pos, letter in enumerate(sel_letters):
@@ -747,37 +690,19 @@ def run(ctx: RunContext) -> dict[str, Any]:
         res_sp = recall(
             W_sel,
             q_sp,
-            HopfieldConfig(rule=rule, update="async", max_iter=max_iter),
+            HopfieldConfig(update="async", max_iter=max_iter),
             rng=sp_rng,
             trace=True,
         )
         cls_sp, _ = classify_states(res_sp.states, P_sel)
         for t_idx in range(trials):
-            sp_total_queries += 1
             c_str = str(cls_sp[t_idx])
-            if c_str == "inverted":
-                sp_inv_count += 1
-            elif c_str == "spurious":
-                sp_count += 1
+            if c_str == "spurious":
                 if sp_found_info is None and str(res_sp.status[t_idx]) == "converged":
                     st_vec = res_sp.states[t_idx]
                     ov_vec = overlaps(st_vec, P_sel)
                     near_idx = int(nearest_pattern(st_vec, P_sel)[0])
                     hamming_near = int(np.sum(st_vec != P_sel[near_idx]))
-                    mix_label: str | None = None
-                    for indices, signs, mix_state in mix_items:
-                        if np.array_equal(st_vec, mix_state):
-                            mix_label = "".join(
-                                f"{'+' if s > 0 else '-'}{sel_letters[i]}"
-                                for i, s in zip(indices, signs, strict=True)
-                            )
-                            break
-                        if np.array_equal(st_vec, -mix_state):
-                            mix_label = "".join(
-                                f"{'-' if s > 0 else '+'}{sel_letters[i]}"
-                                for i, s in zip(indices, signs, strict=True)
-                            )
-                            break
                     assert res_sp.update_energies is not None
                     sp_found_info = {
                         "letter": letter,
@@ -791,14 +716,9 @@ def run(ctx: RunContext) -> dict[str, Any]:
                         "nearest_letter": sel_letters[near_idx],
                         "hamming_to_nearest": hamming_near,
                         "energy": round(float(res_sp.energies[t_idx][-1]), 4),
-                        "mixture": mix_label,
                         "trace": res_sp.update_energies[t_idx].copy(),
                     }
 
-    spurious_rate_val = round(sp_count / sp_total_queries, 4)
-    inverted_rate_sp = round(sp_inv_count / sp_total_queries, 4)
-
-    # 4. Recall sweep across sets, letters, levels, and updates (consumes cell_seeds)
     recall_rows: list[dict[str, Any]] = []
     energy_rows: list[dict[str, Any]] = []
     trace_rows: list[dict[str, Any]] = []
@@ -826,7 +746,7 @@ def run(ctx: RunContext) -> dict[str, Any]:
                         res = recall(
                             W_set,
                             queries,
-                            HopfieldConfig(rule=rule, update="async", max_iter=max_iter),
+                            HopfieldConfig(update="async", max_iter=max_iter),
                             rng=cell_rng,
                             trace=is_example_cell,
                         )
@@ -834,7 +754,7 @@ def run(ctx: RunContext) -> dict[str, Any]:
                         res = recall(
                             W_set,
                             queries,
-                            HopfieldConfig(rule=rule, update="sync", max_iter=max_iter),
+                            HopfieldConfig(update="sync", max_iter=max_iter),
                         )
 
                     cls_arr, idx_arr = classify_states(res.states, P_set)
@@ -925,7 +845,6 @@ def run(ctx: RunContext) -> dict[str, Any]:
     trace_df = pd.DataFrame(trace_rows)
     write_csv(ctx.artifact("energy_trace.csv"), trace_df)
 
-    # 5. Aggregate recall_rates.csv
     rate_rows: list[dict[str, Any]] = []
     for set_name, _, _, _ in sets_spec:
         for upd in updates:
@@ -963,29 +882,55 @@ def run(ctx: RunContext) -> dict[str, Any]:
     rates_df = pd.DataFrame(rate_rows)
     write_csv(ctx.artifact("recall_rates.csv"), rates_df)
 
-    def _recovery_curve(s_name: str, u_name: str) -> list[float]:
-        if u_name not in updates:
-            return []
-        sub = rates_df[(rates_df["set"] == s_name) & (rates_df["update"] == u_name)]
-        return [round(float(x), 4) for x in sub["recovery_rate"].tolist()]
+    seeds = list(range(ctx.seed, ctx.seed + int(p["n_repeats"])))
+    repeat_levels = sorted(set(levels + [spurious_noise]))
+    by_seed, repeated = repeated_recall(
+        {"selected": [P_sel], "worst": [P_worst]}, repeat_levels, trials,
+        max_iter, seeds, updates)
+    write_csv(ctx.artifact("recall_by_seed.csv"), by_seed)
+    write_csv(ctx.artifact("recall_repetitions.csv"), repeated)
+    standard = repeated[repeated["level"].isin(levels)]
 
-    sel_async_rec = _recovery_curve("selected", "async")
-    sel_sync_rec = _recovery_curve("selected", "sync")
-    worst_async_rec = _recovery_curve("worst", "async")
-    worst_sync_rec = _recovery_curve("worst", "sync")
+    capacity_rows = []
+    for seed in seeds:
+        rng = np.random.default_rng(seed)
+        for count in range(1, capacity_max_p + 1):
+            fixed_counts = []
+            for _ in range(capacity_subsets):
+                stored = patterns[rng.choice(n_letters, count, replace=False)]
+                fixed_counts.append(int(is_fixed_point(hebbian_weights(stored), stored).sum()))
+            capacity_rows.append({"seed": seed, "p": count,
+                                  "n_subsets": capacity_subsets,
+                                  "frac_stable": float(np.mean(fixed_counts) / count),
+                                  "frac_sets_all_stable": float(np.mean(np.array(fixed_counts) == count))})
+    capacity_by_seed = pd.DataFrame(capacity_rows)
+    capacity_repeated = aggregate_repetitions(capacity_by_seed, ["p"],
+                                              ("frac_stable", "frac_sets_all_stable"))
+    write_csv(ctx.artifact("capacity_by_seed.csv"), capacity_by_seed)
+    write_csv(ctx.artifact("capacity_repetitions.csv"), capacity_repeated)
 
-    max_full_level: float | None = None
-    for lv, r_val in zip(levels, sel_async_rec, strict=False):
-        if r_val == 1.0:
-            max_full_level = lv
-        else:
+    def curve(name, update, suffix="mean"):
+        rows = standard[(standard["set"] == name) & (standard["update"] == update)]
+        return rows[f"recovery_rate_{suffix}"].tolist()
+
+    sel_async_rec, sel_sync_rec = curve("selected", "async"), curve("selected", "sync")
+    worst_async_rec, worst_sync_rec = curve("worst", "async"), curve("worst", "sync")
+    max_full_level = None
+    for level, rate in zip(levels, sel_async_rec):
+        if rate != 1.0:
             break
+        max_full_level = level
+    spurious_stats = repeated[(repeated["set"] == "selected") &
+                              (repeated["update"] == "async") &
+                              (repeated["level"] == spurious_noise)]
 
     if ctx.plots:
         _plot_alphabet(letters, patterns, shape, sel_letters, worst_letters, ctx.artifact("alphabet.png"))
         _plot_dot_products(letters, dots, sel_letters, ctx.artifact("dot_products.png"))
-        _plot_capacity(cap_df, n_neurons, n_store, sel_letters, worst_letters, ctx.artifact("capacity.png"))
-        _plot_recovery_vs_noise(rates_df, n_neurons, sel_letters, worst_letters, ctx.artifact("recovery_vs_noise.png"))
+        _plot_storage(sel_letters, P_sel, hebbian_weights(P_sel), ctx.artifact("storage.png"))
+        _plot_capacity(cap_df, n_neurons, n_store, sel_letters, worst_letters, ctx.artifact("capacity.png"), capacity_repeated)
+        _plot_recovery_vs_noise(standard, sel_letters, worst_letters, ctx.artifact("recovery_vs_noise.png"))
+        _plot_final_energy(standard, ctx.artifact("final_energy.png"))
         if examples_for_plot:
             _plot_recall_examples(
                 examples_for_plot,
@@ -997,12 +942,16 @@ def run(ctx: RunContext) -> dict[str, Any]:
         if sp_found_info is not None:
             _plot_spurious(sp_found_info, sel_letters, P_sel, energies_sel, shape, ctx.artifact("spurious.png"))
         if not trace_df.empty:
-            _plot_energy_traces(trace_df, n_neurons, ctx.artifact("energy.png"))
+            _plot_energy_traces(trace_df, n_neurons, ctx.artifact("energy.png"), ctx.seed)
 
-    cap_0138 = round(0.138 * n_neurons, 4)
     cap_015 = round(0.15 * n_neurons, 4)
 
     return {
+        "example_seed": ctx.seed, "n_repeats": len(seeds), "seeds": seeds,
+        "example_n_queries": len(recall_df),
+        "n_standard_queries": len(seeds) * len(recall_df),
+        "n_queries_per_seed": int(by_seed.loc[by_seed.seed == ctx.seed, "n_queries"].sum()),
+        "n_queries": int(by_seed.n_queries.sum()),
         "n_neurons": int(n_neurons),
         "n_letters": int(n_letters),
         "n_store": int(n_store),
@@ -1015,9 +964,8 @@ def run(ctx: RunContext) -> dict[str, Any]:
         "worst_max_abs_dot": int(worst_max_abs),
         "worst_mean_abs_dot": round(float(worst_mean_abs), 4),
         "n_subsets": int(len(ranked)),
-        "capacity_0138": cap_0138,
         "capacity_015": cap_015,
-        "n_store_exceeds_0138": bool(n_store > cap_0138),
+        "n_store_exceeds_015": bool(n_store > cap_015),
         "selected_n_fixed_points": sel_n_fp,
         "selected_stability_margins": margins_sel,
         "worst_n_fixed_points": worst_n_fp,
@@ -1026,20 +974,27 @@ def run(ctx: RunContext) -> dict[str, Any]:
         "n_flips": [n_flips_for(lv, n_neurons) for lv in levels],
         "trials": trials,
         "selected_async_recovery": sel_async_rec,
+        "selected_async_recovery_std": curve("selected", "async", "std"),
         "selected_sync_recovery": sel_sync_rec,
+        "selected_sync_recovery_std": curve("selected", "sync", "std"),
         "worst_async_recovery": worst_async_rec,
+        "worst_async_recovery_std": curve("worst", "async", "std"),
         "worst_sync_recovery": worst_sync_rec,
+        "worst_sync_recovery_std": curve("worst", "sync", "std"),
         "selected_max_level_full_recovery": max_full_level,
-        "n_async_cycles": int(n_async_cycles),
-        "n_sync_cycles": int(n_sync_cycles),
-        "energy_never_increased": bool(energy_never_increased),
+        "example_n_async_cycles": int(n_async_cycles),
+        "example_n_sync_cycles": int(n_sync_cycles),
+        "energy_never_increased": bool(energy_never_increased and
+                                        (by_seed.loc[by_seed["update"] == "async", "energy_increase_rate"] == 0).all()),
         "spurious_noise": spurious_noise,
         "spurious_n_flips": int(sp_flips),
         "spurious_found": sp_found_info is not None,
         "spurious_letter": sp_found_info["letter"] if sp_found_info else None,
         "spurious_trial": sp_found_info["trial"] if sp_found_info else None,
-        "spurious_rate": spurious_rate_val,
-        "inverted_rate_at_spurious_noise": inverted_rate_sp,
+        "spurious_rate": float(spurious_stats.spurious_rate_mean.iloc[0]) if not spurious_stats.empty else None,
+        "spurious_rate_std": float(spurious_stats.spurious_rate_std.iloc[0]) if not spurious_stats.empty else None,
+        "inverted_rate_at_spurious_noise": float(spurious_stats.inverted_rate_mean.iloc[0]) if not spurious_stats.empty else None,
+        "inverted_rate_at_spurious_noise_std": float(spurious_stats.inverted_rate_std.iloc[0]) if not spurious_stats.empty else None,
         "spurious_query": sp_found_info["query_rows"] if sp_found_info else [],
         "spurious_state": sp_found_info["state_rows"] if sp_found_info else [],
         "spurious_overlaps": sp_found_info["overlaps"] if sp_found_info else [],
@@ -1047,12 +1002,11 @@ def run(ctx: RunContext) -> dict[str, Any]:
         "spurious_hamming_to_nearest": sp_found_info["hamming_to_nearest"] if sp_found_info else None,
         "spurious_energy": sp_found_info["energy"] if sp_found_info else None,
         "stored_energies": energies_sel,
-        "spurious_mixture": sp_found_info["mixture"] if sp_found_info else None,
-        "n_stable_mixtures": int(n_stable_mixtures),
         "capacity_p": cap_p_list,
-        "capacity_frac_stable": cap_frac_stable_list,
-        "capacity_frac_sets_all_stable": cap_frac_all_list,
-        "backend_resolved": ctx.backend.name,
+        "capacity_frac_stable": capacity_repeated.frac_stable_mean.tolist(),
+        "capacity_frac_stable_std": capacity_repeated.frac_stable_std.tolist(),
+        "capacity_frac_sets_all_stable": capacity_repeated.frac_sets_all_stable_mean.tolist(),
+        "capacity_frac_sets_all_stable_std": capacity_repeated.frac_sets_all_stable_std.tolist(),
     }
 
 

@@ -1,7 +1,7 @@
 """The declared feature set: which numeric columns every Ej. 1 model trains on.
 
 `configs/feature_set.json` is the single decision (columns dropped, each with a
-reason). PCA, the Phase 2 SOM and the Phase 3 Oja index all go through
+reason). PCA, SOM and the Oja index all go through
 `select_features`/`load_design`, so they cannot drift apart.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -21,13 +21,12 @@ from .errors import ConfigError
 from .runs import resolve_project_path
 
 TOPIC_COLUMNS = ("topic_football_pct", "topic_makeup_pct", "topic_dogs_pct", "topic_art_pct")
-FEATURE_SET_KEYS = frozenset({"drop", "reconstruct"})
+FEATURE_SET_KEYS = frozenset({"drop"})
 
 
 @dataclass(frozen=True)
 class FeatureSet:
     drop: Mapping[str, str]
-    reconstruct: Mapping[str, str] = field(default_factory=dict)
     source: str = ""
 
 
@@ -65,15 +64,7 @@ def load_feature_set(path: str | Path) -> FeatureSet:
     for col, reason in drop.items():
         if not isinstance(reason, str) or not reason.strip():
             raise ConfigError(f"feature set {p.name}: drop[{col!r}] needs a non-empty reason string")
-    reconstruct = raw.get("reconstruct", {})
-    if not isinstance(reconstruct, dict):
-        raise ConfigError(f"feature set {p.name}: 'reconstruct' must be an object")
-    for col, formula in reconstruct.items():
-        if col not in drop:
-            raise ConfigError(f"feature set {p.name}: reconstruct key {col!r} is not in 'drop'")
-        if not isinstance(formula, str) or not formula.strip():
-            raise ConfigError(f"feature set {p.name}: reconstruct[{col!r}] must be a non-empty string")
-    return FeatureSet(drop=dict(drop), reconstruct=dict(reconstruct), source=str(path))
+    return FeatureSet(drop=dict(drop), source=str(path))
 
 
 def selected_columns(df: pd.DataFrame, fs: FeatureSet) -> list[str]:
@@ -88,13 +79,8 @@ def selected_columns(df: pd.DataFrame, fs: FeatureSet) -> list[str]:
 
 
 def select_features(df: pd.DataFrame, fs: FeatureSet) -> pd.DataFrame:
-    """The selected feature matrix as a new DataFrame (all rows kept).
-
-    This is the enforcement seam for PCA, the Phase 2 SOM and the Phase 3 Oja index:
-    a feature set that leaves a holding identity intact is refused with a ConfigError.
-    """
+    """Selected variables, preserving all rows and the CSV order."""
     columns = selected_columns(df, fs)
-    validate_feature_set(df, fs)
     return df[columns].copy()
 
 
@@ -104,12 +90,9 @@ def load_design(data_path: str | Path, feature_set_path: str | Path) -> Design:
     return Design(raw=df, X=select_features(df, fs), feature_set=fs)
 
 
-# --------------------------------------------------------------------------- identities
-
-
 @dataclass(frozen=True)
 class Identity:
-    """An exact (up to `tolerance`) relation between columns documented in the assignment."""
+    """An exact (up to `tolerance`) relation between columns, from the assignment or observed in the data."""
 
     name: str
     kind: str  # ratio | sum | product | sum_to_100
@@ -229,20 +212,6 @@ def near_redundant_pairs(corr: pd.DataFrame, threshold: float, selected: Sequenc
     out = pd.DataFrame(rows, columns=["column_a", "column_b", "r", "abs_r", "both_selected"])
     out = out.sort_values(["abs_r", "column_a", "column_b"], ascending=[False, True, True], kind="stable")
     return out.reset_index(drop=True)
-
-
-def validate_feature_set(df: pd.DataFrame, fs: FeatureSet) -> None:
-    """Refuse a feature set that leaves a holding identity intact (it would be rank deficient)."""
-    report = check_identities(df, fs)
-    problems = []
-    for _, row in report.iterrows():
-        if row["holds"] and not row["broken_by"]:
-            problems.append(
-                f"identity {row['name']!r} holds on the data ({row['formula']}) but no member "
-                f"({row['columns'].replace(';', ', ')}) is dropped; drop one of them"
-            )
-    if problems:
-        raise ConfigError(f"feature set {fs.source}: " + "; ".join(problems))
 
 
 def dominant_topic(raw: pd.DataFrame) -> pd.Series:

@@ -1,433 +1,697 @@
-"""Arma docs/presentacion/TP4-presentacion.pptx a partir de las figuras y números de docs/hallazgos/.
+"""Presentación técnica universitaria, guiada por resultados y notas del expositor.
 
-Uso (desde TP4/, con python-pptx y Pillow instalados):
-    python docs/presentacion/build_deck.py
-Los números de cada diapositiva son los del "Resumen para la presentación" de ej1.md y ej2.md.
+ENERGY 1 / RHYTHM 2 / MOTION 1: lectura calma, composición según la evidencia,
+sin animaciones. Blanco y Arial favorecen la proyección; el acento verde petróleo
+señala la condición elegida. Figuras grandes y espacio libre separan observación,
+comparación y decisión. La estructura sigue el orden del análisis, sin tarjetas.
 """
-from pathlib import Path
 
+from pathlib import Path
+import json
+import shutil
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import RegularPolygon
+import numpy as np
+import pandas as pd
 from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
-from pptx.util import Emu, Inches, Pt
+from pptx.enum.text import PP_ALIGN
+from pptx.util import Inches, Pt
 
 ROOT = Path(__file__).resolve().parents[2]
-FIG = ROOT / "docs" / "hallazgos" / "figuras"
-OUT = ROOT / "docs" / "presentacion" / "TP4-presentacion.pptx"
-
-BG = RGBColor(0x2A, 0x1F, 0x22)
-BAR = RGBColor(0xFF, 0x7F, 0x6E)
-TITLE = RGBColor(0xFF, 0xD9, 0xD0)
-GOLD = RGBColor(0xFF, 0x8A, 0x75)
-CARD = RGBColor(0x3D, 0x2B, 0x2F)
-TEXT = RGBColor(0xF6, 0xE9, 0xE6)
-MUTED = RGBColor(0xB5, 0x9A, 0x97)
-WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-FONT = "Calibri"
-GROUP = "Grupo 3"
-
-prs = Presentation()
-prs.slide_width = Inches(13.333)
-prs.slide_height = Inches(7.5)
-BLANK = prs.slide_layouts[6]
-W, H = 13.333, 7.5
-state = {"n": 0}
-
-
-def rect(slide, x, y, w, h, fill, shape=MSO_SHAPE.RECTANGLE, radius=None, line=None):
-    s = slide.shapes.add_shape(shape, Inches(x), Inches(y), Inches(w), Inches(h))
-    s.fill.solid()
-    s.fill.fore_color.rgb = fill
-    if line is None:
-        s.line.fill.background()
-    else:
-        s.line.color.rgb = line
-        s.line.width = Pt(1.25)
-    s.shadow.inherit = False
-    if radius is not None:
-        s.adjustments[0] = radius
-    return s
-
-
-def text(slide, x, y, w, h, runs, size=18, color=TEXT, bold=False, align=PP_ALIGN.LEFT,
-         anchor=MSO_ANCHOR.TOP, spacing=1.0, space_after=0):
-    """runs: str, o lista de párrafos; cada párrafo es str o lista de (texto, {bold,color,size})."""
-    tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
-    tf = tb.text_frame
-    tf.word_wrap = True
-    tf.vertical_anchor = anchor
-    tf.margin_left = tf.margin_right = Inches(0.05)
-    tf.margin_top = tf.margin_bottom = Inches(0.03)
-    paras = runs if isinstance(runs, list) else [runs]
-    for i, para in enumerate(paras):
-        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        p.alignment = align
-        p.line_spacing = spacing
-        p.space_after = Pt(space_after)
-        parts = para if isinstance(para, list) else [(para, {})]
-        for t, fmt in parts:
-            r = p.add_run()
-            r.text = t
-            r.font.name = FONT
-            r.font.size = Pt(fmt.get("size", size))
-            r.font.bold = fmt.get("bold", bold)
-            r.font.color.rgb = fmt.get("color", color)
-    return tb
-
-
-def base(title=None, section=None, number=True):
-    s = prs.slides.add_slide(BLANK)
-    state["n"] += 1
-    s.background.fill.solid()
-    s.background.fill.fore_color.rgb = BG
-    rect(s, 0, 0, 0.22, H, BAR)
-    ln = rect(s, 0.6, 7.0, W - 1.2, 0.015, MUTED)
-    text(s, 0.65, 7.05, 3, 0.35, GROUP, size=12, color=MUTED)
-    if number:
-        text(s, W - 1.6, 7.05, 1.0, 0.35, str(state["n"]), size=12, color=MUTED, align=PP_ALIGN.RIGHT)
-    text(s, W - 2.6, 0.25, 2.0, 0.4, "ITBA · SIA · TP4", size=12, color=MUTED, align=PP_ALIGN.RIGHT)
-    if title:
-        text(s, 0.75, 0.35, 10.3, 0.9, title, size=36, color=TITLE, bold=True)
-    if section:
-        text(s, 0.75, 1.15, 10, 0.5, section, size=20, color=GOLD, bold=True)
-    return s
-
-
-def divider(num, name):
-    s = base()
-    text(s, 1.2, 2.5, 10, 1.1, num, size=66, color=TITLE, bold=True)
-    text(s, 1.2, 3.55, 11, 1.3, name, size=60, color=GOLD, bold=True)
-    return s
-
-
-def picture(slide, path, x, y, w, h, pad=0.1):
-    """Panel blanco redondeado con la figura ajustada (sin deformar) al recuadro."""
-    iw, ih = Image.open(path).size
-    box_w, box_h = w - 2 * pad, h - 2 * pad
-    sc = min(box_w / iw, box_h / ih)
-    pw, ph = iw * sc, ih * sc
-    px, py = x + (w - pw) / 2 - pad, y + (h - ph) / 2 - pad
-    rect(slide, px, py, pw + 2 * pad, ph + 2 * pad, WHITE, MSO_SHAPE.ROUNDED_RECTANGLE, 0.03)
-    slide.shapes.add_picture(str(path), Inches(px + pad), Inches(py + pad), Inches(pw), Inches(ph))
-
-
-def bullets(slide, x, y, w, h, items, head=None, size=17):
-    rect(slide, x, y, w, h, CARD, MSO_SHAPE.ROUNDED_RECTANGLE, 0.05)
-    paras = []
-    if head:
-        paras.append([(head, {"bold": True, "color": GOLD, "size": size + 3})])
-    for it in items:
-        if isinstance(it, tuple):
-            paras.append([("•  ", {"color": GOLD}), (it[0], {"bold": True}), (it[1], {})])
-        else:
-            paras.append([("•  ", {"color": GOLD}), (it, {})])
-    text(slide, x + 0.2, y + 0.15, w - 0.4, h - 0.3, paras, size=size, space_after=9, spacing=1.05)
-
-
-def stat(slide, x, y, w, h, value, label, vsize=34):
-    rect(slide, x, y, w, h, CARD, MSO_SHAPE.ROUNDED_RECTANGLE, 0.1)
-    text(slide, x + 0.1, y + 0.1, w - 0.2, h * 0.5, value, size=vsize, color=GOLD, bold=True,
-         align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-    text(slide, x + 0.15, y + h * 0.55, w - 0.3, h * 0.42, label, size=13, color=TEXT,
-         align=PP_ALIGN.CENTER)
-
-
-def fig_side(title, section, fig, items, head=None, side="left", tw=4.6, size=17):
-    """Texto a un lado y figura al otro."""
-    s = base(title, section)
-    if side == "left":
-        bullets(s, 0.75, 1.85, tw, 4.9, items, head, size)
-        picture(s, FIG / fig, 0.75 + tw + 0.3, 1.8, W - 1.0 - tw - 0.3 - 0.75, 5.0)
-    else:
-        picture(s, FIG / fig, 0.75, 1.8, W - 1.5 - tw - 0.3, 5.0)
-        bullets(s, W - 0.75 - tw, 1.85, tw, 4.9, items, head, size)
-    return s
-
-
-def fig_wide(title, section, fig, caption, h_fig=4.35):
-    s = base(title, section)
-    picture(s, FIG / fig, 0.75, 1.75, W - 1.5, h_fig)
-    rect(s, 0.75, 1.75 + h_fig + 0.12, W - 1.5, 6.85 - (1.75 + h_fig + 0.12), CARD,
-         MSO_SHAPE.ROUNDED_RECTANGLE, 0.12)
-    text(s, 0.95, 1.75 + h_fig + 0.12, W - 1.9, 6.85 - (1.75 + h_fig + 0.12), caption, size=16,
-         anchor=MSO_ANCHOR.MIDDLE)
-    return s
-
-
-def table(slide, x, y, w, col_w, rows, header, row_h=0.5, size=15):
-    tbl = slide.shapes.add_table(len(rows) + 1, len(header), Inches(x), Inches(y), Inches(w),
-                                 Inches(row_h * (len(rows) + 1))).table
-    for j, cw in enumerate(col_w):
-        tbl.columns[j].width = Inches(cw)
-    for i, row in enumerate([header] + rows):
-        tbl.rows[i].height = Inches(row_h)
-        for j, val in enumerate(row):
-            c = tbl.cell(i, j)
-            c.fill.solid()
-            c.fill.fore_color.rgb = CARD if i else RGBColor(0x4A, 0x33, 0x38)
-            c.vertical_anchor = MSO_ANCHOR.MIDDLE
-            tf = c.text_frame
-            tf.word_wrap = True
-            p = tf.paragraphs[0]
-            p.alignment = PP_ALIGN.CENTER if j else PP_ALIGN.LEFT
-            r = p.add_run()
-            r.text = val
-            r.font.name = FONT
-            r.font.size = Pt(size)
-            r.font.bold = i == 0 or j == 0
-            r.font.color.rgb = GOLD if i == 0 else TEXT
-
-
-# ---------------------------------------------------------------- 1. portada
-s = base(number=True)
-text(s, 1.2, 2.0, 11, 1.2, "Aprendizaje No Supervisado", size=54, color=TITLE, bold=True)
-text(s, 1.2, 3.15, 11, 0.8, "Trabajo Práctico N°4", size=36, color=GOLD, bold=True)
-text(s, 1.2, 4.3, 11, 1.6,
-     ["Campañas de marketing (PCA, Kohonen y Oja)", "Memoria asociativa (Hopfield)",
-      "Integrantes: Di Candia, Lucas · [completar con el resto del grupo]"],
-     size=22, space_after=6)
-text(s, 1.2, 6.2, 5, 0.5, "2Q 2026", size=20, color=MUTED)
-
-# ---------------------------------------------------------------- 2. contenidos
-s = base("Tabla de Contenidos")
-items = [("01", "Datos, EDA y PCA"), ("02", "Red de Kohonen"), ("03", "Regla de Oja"),
-         ("04", "Decisión para las campañas"), ("05", "Memoria asociativa: Hopfield"),
-         ("06", "Conclusiones")]
-for i, (n, name) in enumerate(items):
-    x = 0.8 + (i % 3) * 4.05
-    y = 1.9 + (i // 3) * 2.45
-    rect(s, x, y, 3.8, 2.2, CARD, MSO_SHAPE.ROUNDED_RECTANGLE, 0.08)
-    text(s, x + 0.3, y + 0.35, 3.2, 0.8, n, size=36, color=GOLD, bold=True)
-    text(s, x + 0.3, y + 1.15, 3.3, 0.9, name, size=22, color=TITLE, bold=True)
-
-# ================================================================ 01 EDA + PCA
-divider("01", "Datos, EDA y PCA")
-
-s = base("Los datos: 50 creadores, 33 columnas", "01. Datos, EDA y PCA")
-stat(s, 0.75, 1.9, 2.9, 1.6, "50", "creadores de contenido")
-stat(s, 3.85, 1.9, 2.9, 1.6, "33", "columnas, ninguna celda faltante")
-stat(s, 6.95, 1.9, 2.9, 1.6, "25", "variables independientes seleccionadas")
-stat(s, 10.05, 1.9, 2.5, 1.6, "4", "clientes de la agencia")
-bullets(s, 0.75, 3.8, W - 1.5, 3.0, [
-    ("Perfil comercial: ", "seguidores, alcance, precio, publicaciones patrocinadas."),
-    ("Audiencia: ", "porcentaje argentino, alcance de no seguidores, interacción por mil cuentas."),
-    ("Contenido: ", "tópico (fútbol, maquillaje, perros, arte), tipo (tutorial, reseña, entretenimiento) y formato."),
-    ("Outliers: ", "33 celdas atípicas en 25 creadores (sobre todo especialistas en arte o maquillaje). Se reportan y se conservan: no son errores."),
-    ("Qué se descarta: ", "6 columnas que son combinaciones exactas de otras (precio en ARS, interacción total, alcance estimado, orgánico, arte y showcase). "
-     "El arte no desaparece: se reconstruye como 100 menos los otros tres tópicos."),
-], size=17)
-
-fig_side("Selección de variables", "01. Datos, EDA y PCA", "eda__correlation_heatmap_selected.png", [
-    "De 31 columnas numéricas se descartan 6 que son combinaciones exactas de otras.",
-    "El conjunto seleccionado tiene rango 25 de 25: ninguna combinación lineal exacta sobrevive.",
-    "Las escalas difieren unas 148 mil veces (followers vs comments_per_1000): hay que estandarizar.",
-], head="25 variables", side="left", tw=4.4)
-
-fig_side("PCA: varianza explicada", "01. Datos, EDA y PCA", "pca__scree.png", [
-    ("PC1: ", "53,2% de la varianza."),
-    ("PC1 + PC2: ", "61,1%."),
-    "Una componente concentra más de la mitad, pero con dos no alcanza para representar a los creadores.",
-], head="Scree plot", side="left", tw=4.4)
-
-fig_side("Interpretación de PC1 y PC2", "01. Datos, EDA y PCA", "pca__biplot.png", [
-    ("PC1: ", "de audiencia grande y video corto de tendencia a audiencia chica, epígrafes largos y contenido didáctico."),
-    ("PC2: ", "mezcla audiencia argentina y tópico."),
-    "PC1 separa tamaño y estilo, no tópicos.",
-], head="Biplot", side="right", tw=4.4, size=16)
-
-fig_side("¿Estandarizar? ¿Reducir dimensión?", "01. Datos, EDA y PCA", "pca_scaling_sweep__standardize-false__scree.png", [
-    "Sin estandarizar, la PCA solo mide la escala de cada variable.",
-    "Con dos componentes se explica apenas 61,1% de la varianza.",
-    ("Decisión: ", "Kohonen se entrena con las 25 variables estandarizadas, no con componentes principales."),
-], head="Entrada de Kohonen", side="left", tw=4.6)
-
-# ================================================================ 02 Kohonen
-divider("02", "Red de Kohonen")
-
-s = base("Configuración elegida por regla, no a mano", "02. Red de Kohonen")
-picture(s, FIG / "som_sweep__sweep_tradeoff.png", 0.75, 1.8, 6.1, 5.0)
-stat(s, 7.2, 1.85, 2.7, 1.5, "2,1214", "error de cuantización")
-stat(s, 10.1, 1.85, 2.5, 1.5, "0,0", "error topográfico")
-bullets(s, 7.2, 3.55, 5.4, 3.25, [
-    "Mapa hexagonal de 64 neuronas con vecindad escalón; una regla fija se aplica sobre dos barridos de hiperparámetros.",
-    "Cuidado: queda en el borde del umbral de neuronas vacías; con otro umbral la regla podría elegir otro mapa.",
-], size=15)
-
-fig_side("Entrenamiento", "02. Red de Kohonen", "som__training_curve.png", [
-    ("QE: ", "baja de 3,90 en la época 1 a 2,12 y se estabiliza en las últimas 100 épocas."),
-    ("Error topográfico: ", "llega a 0 y se queda ahí."),
-], head="Curvas de entrenamiento", side="left", tw=4.2)
-
-fig_side("Regiones del mapa", "02. Red de Kohonen", "som__region_map.png", [
-    ("Región 1 (21): ", "engagement profundo, audiencia chica."),
-    ("Región 2 (18): ", "intermedio y mezclado."),
-    ("Región 3 (11): ", "alcance masivo, video y entretenimiento."),
-    "La separación es real pero moderada: 32 de las 64 neuronas están vacías.",
-], head="3 regiones contiguas", side="left", tw=4.4, size=16)
-
-fig_side("Matriz U", "02. Red de Kohonen", "som__u_matrix.png", [
-    ("Distancia alta entre vecinas: ", "frontera entre grupos."),
-    ("Distancia baja: ", "zona homogénea de creadores parecidos."),
-    "Las fronteras de las regiones siguen las paredes más altas, pero no todas: la distancia a través de ellas es 1,57 veces la media interna.",
-], head="Lectura", side="left", tw=4.4)
-
-fig_wide("Perfil de cada región", "02. Red de Kohonen", "som__region_profiles.png",
-         "Media estandarizada de cada variable por región: la región 3 concentra alcance y video; "
-         "la región 1, engagement profundo y audiencia chica.", h_fig=3.9)
-
-fig_side("Planos de componentes", "02. Red de Kohonen", "som__component_planes.png", [
-    "Las variables de un bloque casi colineal dibujan el mismo plano.",
-    "Lo que ordena el mapa es el eje alcance y video contra engagement profundo: el mismo PC1 de 1.1.",
-], head="Una variable por plano", side="right", tw=4.2)
-
-fig_side("¿Coinciden las regiones con PC1 y PC2?", "02. Red de Kohonen", "som__biplot_regions.png", [
-    ("PC1: ", "explica 0,8314 de la diferencia entre regiones."),
-    ("PC2: ", "solo 0,2066."),
-    "Las regiones siguen el eje de tamaño y estilo, y casi nada el de tópico.",
-], head="Sí, con PC1", side="left", tw=4.4)
-
-fig_wide("Mapa de control sobre componentes principales", "02. Red de Kohonen",
-         "som_pca_control__control_region_maps.png",
-         "Entrenando con 6 componentes principales (83,0% de la varianza) en vez de las variables se obtienen casi las mismas regiones "
-         "(ARI = 0,748; 44 de 50 creadores quedan en la misma región): la conclusión de 1.1 no cambia.", h_fig=4.2)
-
-# ================================================================ 03 Oja
-divider("03", "Regla de Oja")
-
-fig_side("Oja converge al mismo eje que PC1", "03. Regla de Oja", "oja__weights_vs_pc1.png", [
-    ("Coseno con PC1: ", "0,999993."),
-    ("Correlación del índice con PC1: ", "0,999999."),
-    "La tasa η0 = 0,0005 salió de una regla registrada que no mira PC1.",
-], head="Pesos de Oja vs carga de PC1", side="left", tw=4.6, size=16)
-
-fig_side("¿Qué mide el índice?", "03. Regla de Oja", "oja__scores_vs_pc1.png", [
-    "Mide tamaño y estilo (el eje de PC1), no calidad ni encaje con un cliente.",
-    ("El primero del ranking, @mundoanimal.ar, ", "no lo eligió ningún cliente."),
-    ("Elegir al de mayor índice para cualquier campaña no es correcto.", ""),
-], head="Índice vs puntaje de PC1", side="right", tw=4.6, size=16)
-
-# ================================================================ 04 Campañas
-divider("04", "Decisión para las campañas")
-
-s = base("Cada cliente, su regla transparente", "04. Decisión para las campañas")
-table(s, 0.75, 1.9, W - 1.5, [2.3, 3.1, 3.1, 3.33],
-      [["Refugios de perros", "@ideasconhuella", "@huellasyconsejos", "@consejoscaninos"],
-       ["Ropa de fútbol", "@futbolcononda", "@golconmate", "@lookdecancha"],
-       ["Maquillaje", "@reelargentino", "@brochasymates", "@maquillajereal"],
-       ["Materiales de arte", "@colorenmovimiento", "@galeriacotidiana", "@rinconcreativo"]],
-      ["Cliente", "Creador 1", "Creador 2", "Creador 3"], row_h=0.62, size=17)
-bullets(s, 0.75, 5.2, W - 1.5, 1.6, [
-    "Filtro por tópico y puntaje ponderado propio de cada cliente.",
-    "Fútbol: los elegidos encarnan descubrimiento con alcance masivo, no profundidad educativa.",
-], size=16)
-
-fig_side("Regla vs. elegir solo por seguidores", "04. Decisión para las campañas", "campaigns__comparison.png", [
-    ("Audiencia argentina: ", "88,06% perros, 81,53% fútbol, 78,98% maquillaje y 68,94% arte, contra 63,48% de los más seguidos."),
-    ("USD por mil de alcance argentino: ", "19,91 fútbol, 19,96 maquillaje y 27,01 arte, contra 32,94."),
-    "Límites: llega a menos gente en total y son proxies (no hay datos de ventas).",
-], head="La regla gana en los 4 clientes", side="left", tw=5.0, size=15)
-
-# ================================================================ 05 Hopfield
-divider("05", "Memoria asociativa: Hopfield")
-
-fig_side("Red de Hopfield escrita a mano", "05. Hopfield · letras 5×5", "hopfield_letters__energy.png", [
-    "Pesos de Hebb con diagonal cero, energía y actualización asincrónica o sincrónica.",
-    ("La energía no sube en ninguna actualización.", ""),
-    "Es la misma red para las letras y para los códigos QR.",
-], head="Numpy, sin librerías de redes", side="left", tw=4.6)
-
-fig_side("Ortogonalidad: qué 4 letras guardar", "05. Hopfield · letras 5×5", "hopfield_letters__alphabet.png", [
-    ("G, R, T y V: ", "producto interno máximo 1 en valor absoluto."),
-    ("Peor conjunto: ", "21."),
-    "En el peor conjunto la red ya cambia píxeles de letras guardadas exactas.",
-], head="Las más ortogonales", side="left", tw=4.4, size=16)
-
-fig_side("Capacidad de almacenamiento", "05. Hopfield · letras 5×5", "hopfield_letters__capacity.png", [
-    ("Cota teórica de Hebb: ", "3,45 patrones."),
-    "Guardamos cuatro, por encima de la cota: funciona solo porque son casi ortogonales.",
-    "Cuántas letras caben depende de cuán correlacionadas estén, no solo de cuántas sean.",
-], head="Más allá de la cota", side="left", tw=4.6, size=16)
-
-fig_side("Recuperación con ruido", "05. Hopfield · letras 5×5", "hopfield_letters__recovery_vs_noise.png", [
-    ("Sin errores hasta ruido 0,12 ", "con el modo asincrónico, que siempre converge."),
-    "El conjunto peor queda muy por debajo.",
-], head="Letras elegidas vs peor conjunto", side="left", tw=4.0)
-
-fig_wide("Un patrón muy ruidoso y un estado espúreo", "05. Hopfield · letras 5×5", "hopfield_letters__spurious.png",
-         "Con ruido alto, 39,5% de las consultas termina en un estado espúreo: una mezcla de letras con signo. "
-         "Las 16 mezclas de tres letras con signo son puntos fijos.", h_fig=3.0)
-
-fig_side("Los cinco QR se parecen demasiado", "05. Hopfield · códigos QR 37×37", "hopfield_qr__overlaps.png", [
-    ("Superposición media: ", "0,6701."),
-    ("Módulos compartidos: ", "0,6976."),
-    "Son todo menos ortogonales: las letras elegidas estaban en el otro extremo.",
-], head="Matriz de superposiciones", side="left", tw=4.6)
-
-fig_side("Cómo deterioramos un código QR", "05. Hopfield · códigos QR 37×37", "hopfield_qr__damage_examples.png", [
-    ("Ruido aleatorio: ", "nivel p entre 0 y 0,5 → se invierten k = round(p · 1369) módulos distintos, elegidos al azar (±1 → ∓1). Ej.: p = 0,05 → 68; p = 0,35 → 479."),
-    ("Esquina rota: ", "triángulo blanco de tamaño 8 a 32 en una de las 4 esquinas."),
-    ("Mancha: ", "bloque negro cuadrado de lado 8 a 24 en una posición al azar."),
-    ("Recuperada ", "si el estado final es exactamente el código de origen. Semilla fija."),
-], head="Funciones de ruido", side="left", tw=5.6, size=15)
-
-fig_wide("Hebb no recupera ningún código QR", "05. Hopfield · códigos QR 37×37", "hopfield_qr__hebb_attractor.png",
-         "Ninguno de los 5 códigos es un punto fijo, y 97,47% de las consultas termina en el mismo \"QR promedio\". "
-         "Es la interferencia que las letras ortogonales evitaban.", h_fig=4.2)
-
-fig_wide("Con pseudoinversa: la misma red, sin interferencia", "05. Hopfield · códigos QR 37×37",
-         "hopfield_qr__recovery_vs_noise.png",
-         "Los 5 códigos pasan a ser puntos fijos y se recupera todo hasta 0,35 de ruido. No es la regla del curso: "
-         "prueba que lo que rompe a Hebb es la correlación, no la cantidad de patrones.", h_fig=3.9)
-
-fig_side("Iteraciones y energía en cada paso", "05. Hopfield · códigos QR 37×37", "hopfield_qr__energy_per_step.png", [
-    "La energía no sube en ningún paso.",
-    "Casi todas las consultas convergen en pocos barridos.",
-    "Pero la red baja al mínimo más cercano, que con Hebb es el equivocado.",
-], head="Convergencia", side="left", tw=4.4, size=16)
-
-fig_wide("Lectura con un decodificador QR", "05. Hopfield · códigos QR 37×37", "hopfield_qr__decode_vs_noise.png",
-         "El lector decodifica los 5 originales. Tras la pseudoinversa un código se lee igual de bien que se recupera; "
-         "tras Hebb no lee ninguno: el \"QR promedio\" falla de manera visible.", h_fig=3.9)
-
-s = base("Limitaciones del caso de uso", "05. Hopfield · códigos QR 37×37")
-lim = [("Correlación entre códigos", "Hebb no guarda ninguno aunque la cota (188,922 patrones) esté muy por encima de cinco."),
-       ("Estados espúreos", "Con mucho ruido la red termina en mezclas que no son ningún menú."),
-       ("Capacidad efectiva", "Mucho menor que la cota teórica cuando los patrones se parecen."),
-       ("Umbral de ruido", "El umbral de 0,35 es el de la pseudoinversa; una foto real no es una matriz limpia y alineada.")]
-for i, (h, b) in enumerate(lim):
-    x = 0.75 + (i % 2) * 6.05
-    y = 1.9 + (i // 2) * 2.5
-    rect(s, x, y, 5.85, 2.3, CARD, MSO_SHAPE.ROUNDED_RECTANGLE, 0.07)
-    text(s, x + 0.25, y + 0.2, 5.4, 0.6, h, size=22, color=GOLD, bold=True)
-    text(s, x + 0.25, y + 0.85, 5.4, 1.4, b, size=17)
-
-# ================================================================ 06 Conclusiones
-divider("06", "Conclusiones")
-
-s = base("Ejercicio 1: un eje domina", "06. Conclusiones")
-bullets(s, 0.75, 1.85, W - 1.5, 4.95, [
-    ("PC1 ordena a los creadores por tamaño y estilo ", "y concentra 53,2% de la varianza."),
-    ("Kohonen y Oja encuentran lo mismo: ", "las regiones siguen PC1 (0,8314 contra 0,2066) y Oja converge a PC1 (coseno 0,999993)."),
-    ("Por eso ningún índice único decide una campaña: ", "el primero del ranking no lo eligió ningún cliente."),
-    ("Reglas por cliente: ", "mejor audiencia argentina que elegir por seguidores en los 4 clientes, y menor costo por mil en fútbol, maquillaje y arte."),
-    ("Límite: ", "todo se argumenta con proxies, sin datos de ventas ni conversión; reglas y umbrales son criterios del grupo."),
-], size=19)
-
-s = base("Ejercicio 2: la ortogonalidad es el hilo", "06. Conclusiones")
-bullets(s, 0.75, 1.85, W - 1.5, 4.95, [
-    ("Letras: ", "G, R, T y V (producto interno máximo 1) se recuperan sin errores hasta ruido 0,12; con mucho ruido aparecen estados espúreos."),
-    ("QR: ", "comparten ~70% de sus módulos; con Hebb ninguno es punto fijo y 97,47% de las consultas cae en el mismo \"QR promedio\"."),
-    ("Pseudoinversa: ", "recupera todo hasta 0,35 de ruido, lo que confirma que la causa es la correlación y no la cantidad."),
-    ("Caso de uso: ", "limitado por correlación, estados espúreos, capacidad efectiva y umbral de ruido."),
-], size=19)
-
-s = base("¿Preguntas?")
-text(s, 1.2, 2.8, 11, 1.2, "¡Gracias!", size=60, color=GOLD, bold=True)
-text(s, 1.2, 4.2, 11, 1.0, "Todo el trabajo se regenera con un comando: python -m tp4.delivery verify",
-     size=20, color=MUTED)
-
-OUT.parent.mkdir(parents=True, exist_ok=True)
-prs.save(OUT)
-print(f"{OUT} ({state['n']} diapositivas)")
+HERE = Path(__file__).resolve().parent
+FIG = HERE / "figures"
+OUT = HERE / "TP4-presentacion.pptx"
+INK = "#18242C"
+TEAL = "#176B72"
+COPPER = "#A25D35"
+MUTED = "#5E6B73"
+LIGHT = "#DDE3E5"
+FONT = "Arial"
+TOPICS = {"football": "Fútbol", "makeup": "Belleza", "dogs": "Perros", "art": "Arte"}
+QR_NAMES = {"food": "Principal", "wine": "Vinos", "beverages": "Bebidas", "dessert": "Postres", "specials": "Especiales"}
+plt.rcParams.update({"font.family": FONT, "font.size": 15, "axes.labelsize": 16,
+                     "axes.titlesize": 17, "axes.spines.top": False, "axes.spines.right": False,
+                     "axes.edgecolor": MUTED, "axes.labelcolor": INK, "text.color": INK,
+                     "xtick.color": INK, "ytick.color": INK, "figure.facecolor": "white",
+                     "axes.facecolor": "white", "savefig.facecolor": "white"})
+
+
+def summary(name):
+    return json.loads((ROOT / "runs" / name / "summary.json").read_text())
+
+
+def data(name, filename):
+    return pd.read_csv(ROOT / "runs" / name / filename)
+
+
+def finish(fig, name):
+    fig.tight_layout(pad=1.2)
+    path = FIG / f"{name}.png"
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def axis(ax):
+    ax.grid(axis="y", color=LIGHT, linewidth=.7, zorder=0)
+    ax.set_axisbelow(True)
+
+
+def point_plot(ax, rows, metric, labels, ylabel, color=TEAL):
+    x = np.arange(len(rows))
+    ax.errorbar(x, rows[f"{metric}_mean"], yerr=rows[f"{metric}_std"], fmt="o-",
+                color=color, capsize=5, linewidth=2, markersize=8)
+    ax.set_xticks(x, labels=labels)
+    ax.set_ylabel(ylabel)
+    ax.margins(x=.16)
+    axis(ax)
+
+
+def charts():
+    FIG.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "runs/hopfield_letters/storage.png", FIG / "hopfield_letters__storage.png")
+    raw = pd.read_csv(ROOT / "datos/creadores.csv")
+    top = raw.nlargest(3, "followers").iloc[::-1]
+    fig, ax = plt.subplots(figsize=(11.6, 4.4))
+    left = np.zeros(3)
+    colors = [TEAL, COPPER, "#8A999F", "#B8C3C8"]
+    for (topic, label), color in zip(TOPICS.items(), colors):
+        values = top[f"topic_{topic}_pct"].to_numpy()
+        ax.barh(top["name"], values, left=left, color=color, label=label, height=.55)
+        for y, (start, width) in enumerate(zip(left, values)):
+            if width >= 15:
+                ax.text(start + width / 2, y, f"{width:.0f}%", ha="center", va="center",
+                        color="white" if color in [TEAL, COPPER] else INK, fontsize=17)
+        left += values
+    ax.set_xlim(0, 100)
+    ax.set_xlabel("Contenido de cada tópico (%)")
+    ax.legend(ncol=4, frameon=False, bbox_to_anchor=(.5, 1.18), loc="upper center")
+    ax.spines[["left", "bottom"]].set_visible(False)
+    finish(fig, "followers_topics")
+
+    fig, axes = plt.subplots(1, 3, figsize=(12.8, 4.3))
+    for ax, col, label in zip(axes, ["followers", "price_usd", "comments_per_1000"],
+                              ["Seguidores", "Precio por publicación (USD)", "Comentarios por 1000"]):
+        ax.hist(raw[col], bins=10, color=TEAL, edgecolor="white")
+        ax.set_xlabel(label)
+        axis(ax)
+    axes[0].set_ylabel("Creadores")
+    finish(fig, "distributions")
+
+    variance = data("pca", "explained_variance.csv")
+    ratios = variance["explained_variance_ratio"].to_numpy() * 100
+    fig, ax = plt.subplots(figsize=(11.6, 4.8))
+    x = np.arange(1, len(ratios) + 1)
+    ax.bar(x, ratios, color=LIGHT, label="Por componente")
+    ax.plot(x, np.cumsum(ratios), "o-", color=TEAL, markersize=4, linewidth=2, label="Acumulada")
+    for k in [2, 6, 10]:
+        value = np.cumsum(ratios)[k - 1]
+        label = f"{value:.1f}%".replace(".", ",")
+        ax.scatter([k], [value], s=65, color=TEAL)
+        ax.annotate(label, (k, value), (k + .8, value - 8), fontsize=18, color=TEAL)
+    ax.set(xlim=(.3, 27.7), ylim=(0, 105), xlabel="Componentes conservadas", ylabel="Varianza explicada (%)")
+    ax.set_xticks([1, 2, 6, 10, 15, 20, 27])
+    ax.legend(frameon=False, loc="lower right")
+    axis(ax)
+    finish(fig, "pca_variance")
+
+    scores = data("pca", "scores.csv")
+    loadings = data("pca", "loadings.csv").set_index("feature")
+    fig, ax = plt.subplots(figsize=(11.4, 5.8))
+    ax.scatter(scores.PC1, scores.PC2, color="#87959C", s=45, alpha=.8, zorder=2)
+    arrows = {"average_caption_words": "Epígrafe", "average_impressions": "Impresiones",
+              "content_showcase_pct": "Showcase", "topic_art_pct": "Arte",
+              "argentina_audience_pct": "Audiencia argentina"}
+    for feature, label in arrows.items():
+        xy = loadings.loc[feature, ["PC1", "PC2"]].to_numpy(dtype=float) * 9
+        ax.annotate("", xy, (0, 0), arrowprops={"arrowstyle": "->", "color": TEAL, "lw": 1.6})
+        ax.text(xy[0] * 1.12, xy[1] * 1.12, label, fontsize=14, color=TEAL,
+                ha="left" if xy[0] >= 0 else "right", va="center")
+    for creator in ["@mateconideas", "@mundoanimal.ar"]:
+        r = scores.loc[scores.name == creator].iloc[0]
+        ax.scatter([r.PC1], [r.PC2], s=70, color=COPPER)
+        ax.annotate(creator, (r.PC1, r.PC2), (7, 7), textcoords="offset points", fontsize=13)
+    ax.axhline(0, color=LIGHT, lw=1); ax.axvline(0, color=LIGHT, lw=1)
+    ax.set(xlabel="PC1 (49,7%)", ylabel="PC2 (9,2%)", xlim=(-8.5, 8.5), ylim=(-4.6, 5.4))
+    finish(fig, "pca_biplot")
+
+    neurons = data("som", "neurons.csv")
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for r in neurons.itertuples():
+        distance = np.hypot(r.x - neurons.loc[5, "x"], r.y - neurons.loc[5, "y"])
+        color = TEAL if r.neuron == 5 else "#C5DCDC" if distance <= 1.00001 else "white"
+        ax.add_patch(RegularPolygon((r.x, r.y), 6, radius=1 / np.sqrt(3), facecolor=color, edgecolor=MUTED))
+        ax.text(r.x, r.y, str(r.neuron), ha="center", va="center", fontsize=18,
+                color="white" if r.neuron == 5 else INK)
+    ax.set(xlim=(-.8, 4.2), ylim=(3.3, -.8), aspect="equal"); ax.axis("off")
+    finish(fig, "som_neighborhood")
+
+    table = data("som_sweep", "comparison.csv")
+    for parameter, name, metrics, ylabel in [
+        ("params.eta0", "som_eta", ["mean_bmu_distance", "u_mean"], ["Distancia al ganador", "U media"]),
+        ("params.radius0", "som_radius", ["mean_bmu_distance", "empty_neuron_frac"], ["Distancia al ganador", "Fracción vacía"]),
+        ("params.rows", "som_size", ["mean_bmu_distance", "n_empty_neurons"], ["Distancia al ganador", "Neuronas vacías"]),
+    ]:
+        rows = table.loc[table.varied_parameter == parameter]
+        labels = [f"{x:g}" for x in rows.parameter_value]
+        if parameter == "params.rows":
+            labels = [f"{x}×{x}" for x in labels]
+        fig, axes = plt.subplots(1, 2, figsize=(11.4, 4.9))
+        for ax, metric, label in zip(axes, metrics, ylabel):
+            point_plot(ax, rows, metric, labels, label)
+            ax.set_xlabel({"params.eta0": r"Tasa inicial $\eta_0$", "params.radius0": "Radio constante", "params.rows": "Grilla"}[parameter])
+        finish(fig, name)
+
+    design = data("som_design_sweep", "comparison.csv")
+    fig, axes = plt.subplots(1, 3, figsize=(12.8, 4.4))
+    for ax, frame, parameter, title in [(axes[0], table, "params.epochs", "Épocas"),
+                                      (axes[1], design, "params.topology", "Topología"),
+                                      (axes[2], design, "params.init", "Inicialización")]:
+        rows = frame.loc[frame.varied_parameter == parameter]
+        labels = [str(value) for value in rows.parameter_value]
+        labels = [{"50.0": "50", "200.0": "200", "sample": "Muestras", "random": "Uniforme"}.get(value, value) for value in labels]
+        point_plot(ax, rows, "mean_bmu_distance", labels, "Distancia al ganador" if ax == axes[0] else "")
+        ax.set_title(title)
+    finish(fig, "som_design")
+
+    for field, name in [("hits", "som_hits"), ("u_distance", "som_u")]:
+        fig, ax = plt.subplots(figsize=(8.4, 5.5))
+        cmap = LinearSegmentedColormap.from_list("map", ["#EFF4F4", TEAL])
+        lo, hi = neurons[field].min(), neurons[field].max()
+        for r in neurons.itertuples():
+            value = getattr(r, field)
+            normalized = (value - lo) / max(hi - lo, 1e-9)
+            ax.add_patch(RegularPolygon((r.x, r.y), 6, radius=1 / np.sqrt(3),
+                                        facecolor=cmap(normalized), edgecolor="white", linewidth=2))
+            label = str(int(value)) if field == "hits" else f"{value:.2f}"
+            ax.text(r.x, r.y, label, ha="center", va="center", fontsize=19,
+                    color="white" if normalized > .55 else INK, fontweight="bold")
+            ax.text(r.x, r.y + .33, f"{r.neuron}", ha="center", va="center", fontsize=10,
+                    color="white" if normalized > .55 else INK)
+        if field == "u_distance":
+            edge = data("som", "u_edges.csv").iloc[0]
+            a, b = neurons.iloc[int(edge.neuron_a)], neurons.iloc[int(edge.neuron_b)]
+            ax.plot([a.x, b.x], [a.y, b.y], color=COPPER, linewidth=4, zorder=4)
+        ax.set(xlim=(-.8, 4.2), ylim=(3.4, -.8), aspect="equal"); ax.axis("off")
+        finish(fig, name)
+
+    weight = data("oja", "weights_stats.csv").set_index("feature")
+    show = ["average_caption_words", "average_impressions", "average_reach", "saves_per_1000", "content_tutorial_pct", "price_usd"]
+    labels = ["Epígrafe", "Impresiones", "Alcance", "Guardados", "Tutoriales", "Precio"]
+    fig, ax = plt.subplots(figsize=(10.4, 5.4))
+    y = np.arange(len(show))
+    ax.errorbar(weight.loc[show, "oja_weight_mean"], y - .12,
+                xerr=weight.loc[show, "oja_weight_std"], fmt="o", color=TEAL, capsize=4, markersize=9, label="Oja, media ± DE")
+    ax.scatter(weight.loc[show, "pc1_loading"], y + .12, marker="x", s=85, linewidths=2, color=COPPER, label="PC1")
+    ax.set_yticks(y, labels=labels); ax.invert_yaxis()
+    ax.axvline(0, color=LIGHT); ax.set_xlabel("Coeficiente del vector normalizado")
+    ax.legend(frameon=False, loc="lower right")
+    finish(fig, "oja_weights")
+
+    index = data("oja", "index_stats.csv")
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    ax.errorbar(index.pc1_score, index.oja_index_mean, yerr=index.oja_index_std, fmt="o", ms=5,
+                color="#8F9CA2", alpha=.8, linewidth=.8, capsize=2)
+    stable = index.top5_count == index.n_repeats
+    ax.scatter(index.loc[stable, "pc1_score"], index.loc[stable, "oja_index_mean"], s=55, color=TEAL, zorder=3)
+    ax.plot([-7.5, 7.5], [-7.5, 7.5], color=INK, lw=1, ls=":")
+    ax.set(xlabel="PC1", ylabel="Índice de Oja, media ± DE")
+    axis(ax)
+    finish(fig, "oja_scores")
+
+    profiles = data("campaigns", "strategy_profiles.csv").query("client == 'football'")
+    compare = profiles.loc[profiles.som_bmu.isin([5, 13])].sort_values("som_bmu")
+    fig, axes = plt.subplots(1, 3, figsize=(12.2, 4.4))
+    for ax, column, label in zip(axes, ["mean_content_tutorial_pct", "mean_saves_per_1000", "mean_followers"],
+                                ["Tutoriales (%)", "Guardados por 1000", "Seguidores (miles)"]):
+        values = compare[column].to_numpy()
+        if column == "mean_followers": values = values / 1000
+        ax.bar(["Celda 5", "Celda 13"], values, color=[TEAL, COPPER], width=.55)
+        for i, value in enumerate(values): ax.text(i, value + max(values) * .04, f"{value:.1f}", ha="center", fontsize=17)
+        ax.set_ylim(0, max(values) * 1.25); ax.set_ylabel(label)
+        axis(ax)
+    finish(fig, "football_profiles")
+
+    dots = data("hopfield_letters", "dot_products.csv").set_index("letter")
+    letters = summary("hopfield_letters")
+    fig, axes = plt.subplots(1, 2, figsize=(10.8, 4.5))
+    for ax, selected, title in zip(axes, [letters["selected_letters"], letters["worst_letters"]], ["Elegidas", "Más correlacionadas"]):
+        matrix = dots.loc[selected, selected].to_numpy(dtype=float) / 25
+        ax.imshow(np.abs(matrix), cmap="Greys", vmin=0, vmax=1)
+        for i in range(4):
+            for j in range(4):
+                ax.text(j, i, f"{matrix[i,j]:.2f}", ha="center", va="center", fontsize=20,
+                        color="white" if abs(matrix[i, j]) > .56 else INK)
+        ax.set_xticks(range(4), selected); ax.set_yticks(range(4), selected); ax.set_title(title)
+    finish(fig, "letters_dots")
+
+    repeated = data("hopfield_letters", "recall_repetitions.csv")
+    fig, ax = plt.subplots(figsize=(11, 5.1))
+    for group, update, color, style, label in [("selected", "async", TEAL, "o-", "G,R,T,V asincrónica"),
+                                              ("selected", "sync", TEAL, "s--", "G,R,T,V sincrónica"),
+                                              ("worst", "async", COPPER, "o-", "H,M,N,W asincrónica")]:
+        rows = repeated[(repeated["set"] == group) & (repeated["update"] == update) & (repeated.level != .4)]
+        ax.errorbar(np.rint(rows.level * 25), rows.recovery_rate_mean * 100,
+                    yerr=rows.recovery_rate_std * 100, fmt=style, color=color, capsize=4, label=label)
+    ax.set(xlabel="Bits invertidos de 25", ylabel="Recuperación exacta (%)", ylim=(-3, 105))
+    ax.set_xticks([1, 2, 3, 4, 5, 7, 9, 11]); ax.legend(frameon=False, fontsize=13)
+    axis(ax)
+    finish(fig, "letters_noise")
+
+    sp = summary("hopfield_letters")
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4), gridspec_kw={"width_ratios": [1, 1, 1.5]})
+    for ax, rows, title in zip(axes[:2], [sp["spurious_query"], sp["spurious_state"]], ["Consulta", "Punto fijo alcanzado"]):
+        matrix = np.array([[char == "#" for char in row] for row in rows])
+        ax.imshow(matrix, cmap="binary", vmin=0, vmax=1); ax.set_title(title); ax.axis("off")
+    trace = data("hopfield_letters", "energy_trace.csv")
+    rows = trace.loc[trace.example == f"spurious_{sp['spurious_letter']}"]
+    axes[2].plot(rows.step, rows.energy, color=TEAL, lw=2)
+    axes[2].set(xlabel="Visitas a neuronas", ylabel="Energía")
+    axis(axes[2]); finish(fig, "letters_spurious")
+
+    cap = data("hopfield_letters", "capacity_repetitions.csv")
+    fig, ax = plt.subplots(figsize=(10.8, 4.8))
+    ax.errorbar(cap.p, cap.frac_sets_all_stable_mean * 100, yerr=cap.frac_sets_all_stable_std * 100,
+                fmt="o-", color=TEAL, capsize=4)
+    ax.axvline(3.75, color=COPPER, linestyle=":", linewidth=2, label="0,15 × 25 = 3,75")
+    ax.set(xlabel="Letras almacenadas por red", ylabel="Subconjuntos enteramente estables (%)", ylim=(-3, 105))
+    ax.set_xticks(cap.p); ax.legend(frameon=False); axis(ax)
+    finish(fig, "letters_capacity")
+
+    qr = summary("hopfield_qr")
+    fig, axes = plt.subplots(1, 5, figsize=(13, 3.1))
+    for ax, name in zip(axes, qr["pattern_names"]):
+        original = np.asarray(Image.open(ROOT / "datos/hopfield" / f"{name}_menu_qr.png").convert("L"))
+        ax.imshow(original, cmap="gray", vmin=0, vmax=255, interpolation="nearest")
+        ax.set_title(QR_NAMES[name]); ax.axis("off")
+    finish(fig, "qr_originals")
+
+    pairs = data("hopfield_qr", "pairwise_similarity.csv")
+    overlap = data("hopfield_qr", "overlaps.csv").set_index("pattern")
+    fig, ax = plt.subplots(figsize=(6.3, 5))
+    values = overlap.to_numpy()
+    ax.imshow(values, cmap=LinearSegmentedColormap.from_list("similarity", ["white", TEAL]), vmin=0, vmax=1)
+    for i in range(5):
+        for j in range(5):
+            ax.text(j, i, f"{values[i,j]:.2f}", ha="center", va="center", fontsize=18,
+                    color="white" if values[i,j] > .68 else INK)
+    ax.set_xticks(range(5), [QR_NAMES[name] for name in overlap.columns], rotation=25, ha="right")
+    ax.set_yticks(range(5), [QR_NAMES[name] for name in overlap.index])
+    finish(fig, "qr_similarity")
+
+    fig, axes = plt.subplots(1, 3, figsize=(12.8, 4.2), gridspec_kw={"width_ratios": [1, 1, 1.35]})
+    first = np.asarray(Image.open(ROOT / "datos/hopfield/food_menu_qr.png").convert("L"))
+    final = np.array([[char == "#" for char in row] for row in qr["spurious_state"]])
+    axes[0].imshow(first, cmap="gray", vmin=0, vmax=255, interpolation="nearest")
+    axes[1].imshow(final, cmap="binary", vmin=0, vmax=1, interpolation="nearest")
+    for ax, title in zip(axes[:2], ["Original sin ruido", "Estado final"]): ax.set_title(title); ax.axis("off")
+    repeated = data("hopfield_qr", "recall_repetitions.csv")
+    joint = repeated.loc[repeated["set"] == "joint"]
+    axes[2].errorbar(joint.level * 100, joint.mean_iterations_mean, yerr=joint.mean_iterations_std,
+                     fmt="o-", color=TEAL, capsize=3, markersize=5)
+    axes[2].set(xlabel="Módulos invertidos (%)", ylabel="Barridos que cambian el estado")
+    axis(axes[2]); finish(fig, "qr_failure")
+
+    storage = data("hopfield_qr", "storage_control.csv")
+    fig, axes = plt.subplots(1, 2, figsize=(11.8, 4.5))
+    counts = storage.groupby("n_stored").n_fixed_points.mean()
+    axes[0].bar(counts.index, counts.values, color=TEAL, width=.6)
+    for count, value in counts.items(): axes[0].text(count, value + .12, f"{value:.0f}/{count}", ha="center", fontsize=19)
+    axes[0].set(xlabel="QR almacenados por red", ylabel="Patrones estables", ylim=(0, 3))
+    axes[0].set_xticks(range(1, 6)); axis(axes[0])
+    for condition, color, label in [("single", TEAL, "Uno por red"), ("joint", COPPER, "Cinco juntos")]:
+        rows = repeated.loc[repeated["set"] == condition]
+        axes[1].errorbar(rows.level * 100, rows.recovery_rate_mean * 100,
+                         yerr=rows.recovery_rate_std * 100, fmt="o-", color=color, capsize=3, label=label)
+    axes[1].set(xlabel="Módulos invertidos (%)", ylabel="Recuperación exacta (%)", ylim=(-4, 105))
+    axes[1].legend(frameon=False, fontsize=13); axis(axes[1]); finish(fig, "qr_controls")
+
+    fig, ax = plt.subplots(figsize=(11, 4.7))
+    for metric, color, label in [("query_decode_rate", TEAL, "Lector directo"), ("final_decode_rate", COPPER, "Lector después de Hopfield")]:
+        ax.errorbar(joint.level * 100, joint[f"{metric}_mean"] * 100, yerr=joint[f"{metric}_std"] * 100,
+                    fmt="o-", color=color, capsize=4, label=label)
+    ax.set(xlabel="Módulos invertidos (%)", ylabel="URL objetivo decodificada (%)", ylim=(-3, 105))
+    ax.legend(frameon=False); axis(ax); finish(fig, "qr_reader")
+
+
+def rgb(value):
+    return RGBColor.from_string(value.lstrip("#"))
+
+
+def text(slide, value, x, y, w, h, size=26, color=INK, bold=False, align=None):
+    shape = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    frame = shape.text_frame
+    frame.clear(); frame.word_wrap = True
+    frame.margin_left = frame.margin_right = 0
+    frame.margin_top = frame.margin_bottom = 0
+    for i, line in enumerate(value.split("\n")):
+        paragraph = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
+        paragraph.text = line
+        paragraph.font.name = FONT; paragraph.font.size = Pt(size)
+        paragraph.font.bold = bold; paragraph.font.color.rgb = rgb(color)
+        paragraph.space_after = Pt(5)
+        if align is not None: paragraph.alignment = align
+    return shape
+
+
+def picture(slide, name, x=.8, y=1.55, w=14.4, h=6.7):
+    path = FIG / name
+    with Image.open(path) as image: iw, ih = image.size
+    factor = min(w / iw, h / ih)
+    nw, nh = iw * factor, ih * factor
+    return slide.shapes.add_picture(str(path), Inches(x + (w - nw) / 2), Inches(y + (h - nh) / 2), Inches(nw), Inches(nh))
+
+
+def new_slide(prs, title, reminders):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.background.fill.solid(); slide.background.fill.fore_color.rgb = rgb("#FFFFFF")
+    text(slide, title, .72, .45, 14.5, .9, size=32, bold=True)
+    text(slide, "TP4 · Grupo 3", .72, 8.55, 3, .25, size=12, color=MUTED)
+    text(slide, str(len(prs.slides)).zfill(2), 14.7, 8.5, .6, .3, size=13, color=MUTED, align=PP_ALIGN.RIGHT)
+    slide.notes_slide.notes_text_frame.text = "\n".join("• " + reminder for reminder in reminders)
+    return slide
+
+
+def caption(slide, value):
+    text(slide, value, .85, 7.95, 14.2, .45, size=20, color=MUTED)
+
+
+def build():
+    charts()
+    prs = Presentation(); prs.slide_width = Inches(16); prs.slide_height = Inches(9)
+    prs.core_properties.title = "TP4 · Aprendizaje no supervisado"
+    prs.core_properties.subject = "Creadores de contenido y memoria asociativa"
+    prs.core_properties.author = "Grupo 3 · SIA · ITBA"
+    pca, som, oja = (summary(name) for name in ["pca", "som", "oja"])
+    letters, qr, campaigns = (summary(name) for name in ["hopfield_letters", "hopfield_qr", "campaigns"])
+    source_pca = "Fuente: clase PCA, pp. 7-11, 20-32 y 43-46; runs/pca."
+    source_som = "Fuente: clase Kohonen, pp. 24-37; runs/som y barridos OAT."
+    source_hop = "Fuente: clase Hopfield, pp. 15, 20, 33-38; runs/hopfield_letters."
+
+    s = new_slide(prs, "", [
+        "Dos preguntas del enunciado: elegir creadores y recuperar patrones deteriorados.",
+        "Caso 1: adecuar creadores al objetivo, la audiencia y el contenido de cada campaña.",
+        "Caso 2: estudiar recuperación de patrones incompletos o ruidosos con memoria asociativa.",
+        "Recorrido: representar los datos, comparar configuraciones e interpretar resultados y limitaciones.",
+        "Fuente: SIATP42026.pdf, ejercicios 1 y 2; datos originales del TP."])
+    text(s, "Aprendizaje\nno supervisado", .85, 2.0, 13.8, 2, size=58, bold=True)
+    text(s, "Perfiles de creadores y memoria asociativa", .9, 4.65, 13.5, .7, size=29, color=TEAL)
+    text(s, "Trabajo Práctico 4 · SIA · ITBA · 2Q 2026", .9, 6.8, 13.5, .5, size=22, color=MUTED)
+
+    s = new_slide(prs, "Los más seguidos publican contenidos distintos", [
+        "La agencia elige principalmente por seguidores; necesita adecuación a cada campaña.",
+        "Esta figura usa los tres primeros por seguidores del catálogo original.",
+        "Los porcentajes corresponden al contenido publicado, no a conversiones ni composición temática de audiencia.",
+        "Clientes: refugios, ropa de fútbol, belleza y materiales de arte.",
+        "Fuente: enunciado 1, datos/creadores.csv; runs/campaigns/comparison.csv."])
+    picture(s, "followers_topics.png", y=2.0, h=5.4)
+
+    s = new_slide(prs, "Elegimos una representación de 27 variables", [
+        "50 creadores, 31 variables numéricas; nombres e ID solo identifican filas. Sin faltantes; conservamos los 50 registros.",
+        "price_ars duplica price_usd por conversión fija; organic_posts_pct complementa sponsored_posts_pct.",
+        "Engagement total suma cuatro interacciones; alcance argentino estimado combina alcance y porcentaje argentino. Conservamos sus componentes.",
+        "Retenemos completos los cuatro tópicos y los cuatro formatos para tratarlos simétricamente; las dependencias no impiden PCA.",
+        "Las cuatro columnas excluidas siguen en el CSV para interpretar campañas.",
+        "Fuente: enunciado pp. 1-4; configs/feature_set.json; runs/eda/identities.csv y feature_set.json."])
+    text(s, "31", 1.1, 2.1, 3.8, 1.8, size=112, color=MUTED)
+    text(s, "variables numéricas", 1.15, 4.2, 4.7, .7, size=28)
+    text(s, "→", 6.05, 2.45, 2, 1.4, size=70, color=MUTED)
+    text(s, "27", 9.2, 2.1, 4, 1.8, size=112, color=TEAL)
+    text(s, "variables de entrada", 9.25, 4.2, 5.5, .7, size=28)
+    text(s, "50 creadores conservados", 1.15, 6.5, 12, .7, size=30)
+
+    s = new_slide(prs, "Estandarizamos antes de comparar perfiles", [
+        "EDA: inspeccionamos distribuciones, correlaciones y boxplots en las 31 variables; aquí tres escalas ilustrativas.",
+        "Boxplots: 33 celdas en 25 creadores fuera de bigotes de 1,5 RIC. Se señalan, sin quitar ni recortar filas.",
+        "Media y desvío se calculan en el catálogo. Z-score con ddof=0, consistente con StandardScaler.",
+        "Sin escalar, PC1 explica 96% y predomina seguidores; las unidades dominan la varianza.",
+        "Fuente: clase Kohonen p. 19; PCA pp. 25-27; runs/eda; runs/pca_scaling_sweep/standardize-false."])
+    picture(s, "distributions.png", y=1.75, h=4.8)
+    text(s, "z = (x − μ) / σ", .95, 7.0, 8, .65, size=34, color=TEAL)
+
+    s = new_slide(prs, "Dos componentes conservan el 58,9% de la varianza", [
+        "PC1 explica 49,7% y PC2 9,2%; seis componentes superan 80% y diez superan 90%.",
+        "80% y 90% son referencias descriptivas elegidas, no umbrales de selección automática.",
+        "El biplot omite 41,1%. Mantenemos las 27 variables estandarizadas para SOM y Oja.",
+        "El enunciado pide agrupar considerando el conjunto de variables; PCA ayuda a interpretar la representación.",
+        source_pca])
+    picture(s, "pca_variance.png", y=1.55, h=5.8)
+    caption(s, "Kohonen y Oja reciben las 27 variables estandarizadas")
+
+    s = new_slide(prs, "PC1 contrapone volumen y profundidad", [
+        "PC1: epígrafe +0,256; impresiones -0,251; video -0,249; alcance -0,248; tendencias -0,246.",
+        "PC2: showcase +0,419 y arte +0,401 frente a audiencia argentina -0,361 y perros -0,261.",
+        "Las flechas muestran cinco variables interpretables, con un factor común de escala visual; no son predictores comerciales.",
+        "El signo del autovector es una convención. Los puntos cercanos en dos PC pueden diferir en las restantes.",
+        source_pca])
+    picture(s, "pca_biplot.png", y=1.4, h=6.8)
+
+    s = new_slide(prs, "Kohonen organiza perfiles por semejanza", [
+        "Entrada: las mismas 27 variables estandarizadas. Ganadora: menor distancia euclídea.",
+        "Actualizamos la ganadora y vecinas del radio binario; el dibujo destaca una ganadora y su vecindad.",
+        "Grilla hexagonal, pesos iniciales con muestras; η(i)=0,9/(1+i), i cuenta presentaciones; R=1 constante.",
+        "Incluimos el borde d<=R para que R=1 alcance vecinas pegadas, como los ejemplos de clase pp. 15 y 31.",
+        "Los nombres y el tópico dominante solo rotulan resultados; los porcentajes de tópicos sí son variables de entrada.",
+        source_som])
+    picture(s, "som_neighborhood.png", x=.9, y=1.5, w=8.2, h=6.3)
+    text(s, "27 variables", 10.0, 2.0, 4.9, .7, size=32)
+    text(s, "w ← w + η(x − w)", 9.3, 3.6, 6.0, 1.2, size=32, color=TEAL)
+    text(s, "Ganadora y vecinas", 9.8, 5.35, 5.2, .7, size=26)
+
+    for title, filename, reminders in [
+        ("Una tasa pequeña deja vecinas menos parecidas", "som_eta.png", [
+            "Variamos solo η₀: 0,1, 0,5, 0,9; resto fijo en la base común.",
+            "η₀=0,1 da menor distancia al ganador, pero U media mucho mayor: prototipos vecinos menos parecidos.",
+            "η₀=0,9 equilibra distancia y continuidad frente a 0,5. La elección es manual y condicional a esta base."]),
+        ("Un radio mayor mezcla más los perfiles", "som_radius.png", [
+            "Variamos solo el radio constante: 1, 2 y 3; mantenemos tamaño, η y épocas.",
+            "Al aumentar el radio suben la distancia media al ganador y la fracción de neuronas vacías.",
+            "U cae, pero esa caída no prueba calidad: actualizaciones amplias acercan los prototipos entre sí."]),
+        ("Más neuronas reducen la agregación", "som_size.png", [
+            "Variamos solo k de la grilla k×k: 3,4,5,6; cols=null acompaña el tamaño cuadrado.",
+            "Las grillas grandes reducen distancia al ganador, pero tienen más neuronas vacías y menor agregación de creadores.",
+            "4×4 mantiene grupos legibles. El tamaño no tiene un criterio demostrado en la clase; no afirmamos óptimo global."]),
+    ]:
+        s = new_slide(prs, title, reminders + [
+            "Cada valor usa 30 semillas, 42 a 71. Barras: media ± desvío muestral entre entrenamientos, ddof=1.",
+            "Diseño OAT: cambia un parámetro por vez; las semillas y las demás condiciones son comunes.",
+            source_som + " Fuente numérica: runs/som_sweep/comparison.csv."])
+        picture(s, filename, y=1.7, h=5.8)
+        caption(s, "Un parámetro por vez · 30 semillas · media ± DE")
+
+    s = new_slide(prs, "Contrastamos duración, topología e inicialización", [
+        "Cada panel varía un único parámetro sobre la misma base, no combina los factores.",
+        "200 épocas cambian poco la distancia frente a 50; el descenso de η limita ajustes tardíos.",
+        "Rectangular aproxima algo mejor las entradas; hexagonal tiene menor U media y menos vacías en este análisis.",
+        "Muestras supera la inicialización uniforme en distancia y ocupación; preserva representantes próximos a datos.",
+        "Final: 4×4 hexagonal, muestras, η₀=0,9, R=1, 200 épocas. Distancia 3,45829±0,07037; vacías 0,9±0,8847 de 16.",
+        source_som + " Datos: runs/som_sweep/comparison.csv y som_design_sweep/comparison.csv."])
+    picture(s, "som_design.png", y=1.7, h=5.5)
+    caption(s, "4×4 · hexagonal · muestras · η₀=0,9 · R=1 · 200 épocas")
+
+    profiles = data("som", "creator_profiles.csv").set_index("bmu")
+    s = new_slide(prs, "La grilla reúne perfiles comerciales distintos", [
+        "Este mapa ilustra la semilla 42; las coordenadas no identifican perfiles permanentes entre entrenamientos.",
+        "BMU 5 reúne 10 creadores de mayor profundidad; BMU 13 reúne 9 de mayor volumen. Revisar medias del cuadro.",
+        "BMU 1 reúne dos creadores con 54,47% de arte y PC2 media positiva; el biplot permite interpretar el contraste.",
+        "El número grande es cantidad de creadores; el pequeño es índice de neurona, desde cero.",
+        "Los perfiles son medias reales de los asignados; los pesos prototipo no tienen por qué coincidir con esas medias.",
+        source_som + " Datos: runs/som/{neurons,creator_profiles,bmus}.csv."])
+    picture(s, "som_hits.png", x=.7, y=1.5, w=8.7, h=6.5)
+    for y, cell, label in [(2.0, 5, "Profundidad"), (3.8, 13, "Volumen"), (5.6, 1, "Arte")]:
+        r = profiles.loc[cell]
+        text(s, f"Celda {cell} · {label}", 10, y, 5.2, .6, size=28, bold=True)
+        component, score = ("PC2", r.pc2) if cell == 1 else ("PC1", r.pc1)
+        text(s, f"{int(r.n_creators)} creadores · {component} {score:+.2f}", 10, y + .65, 5.2, .6, size=23, color=TEAL)
+    caption(s, "Ejemplo: semilla 42")
+
+    edge = data("som", "u_edges.csv").iloc[0]
+    s = new_slide(prs, "La matriz U localiza transiciones de perfil", [
+        "Cada número grande es la distancia media del prototipo a sus vecinos; el pequeño es el índice de neurona.",
+        f"En la semilla 42 la mayor arista une {int(edge.neuron_a)} y {int(edge.neuron_b)}; distancia {edge.distance:.4f}. Revisar top_diff en u_edges.csv.",
+        "La arista resaltada es una distancia entre dos prototipos; no confundirla con la media U de una celda.",
+        "U media entre 30 entrenamientos: 2,10844±0,19310. No promediamos pesos ni celdas que pueden rotarse.",
+        "Distancia alta sugiere cambio de perfil; no establece una frontera estadística ni calidad comercial.",
+        source_som + " Datos: runs/som/{neurons,u_edges,per_seed}.csv."])
+    picture(s, "som_u.png", x=.9, y=1.5, w=9.5, h=6.4)
+    text(s, "Uᵢ = media de ‖wᵢ − wⱼ‖", 10.0, 3.0, 5.0, 1.4, size=29, color=TEAL)
+    text(s, "j: vecinas de i", 10.0, 4.8, 4.8, .7, size=23)
+    caption(s, "Mapa de ejemplo: semilla 42")
+
+    s = new_slide(prs, "Oja aproxima la primera componente", [
+        "Una neurona: y=w·x; actualización Δw=ηy(x−yw); pesos iniciales uniformes [0,1], η=0,001, 200 épocas.",
+        "Mostramos seis coeficientes interpretables; pesos completos y dispersiones en weights_stats.csv.",
+        "Coseno absoluto con PC1: media 0,999891, DE 0,000039 en 30 entrenamientos.",
+        "PC1 solo permite comparar y orientar el informe. No interviene en actualización ni parada.",
+        "Norma cerca de uno no prueba dirección convergida. Con η constante persiste variación del vector.",
+        "Fuente: clase Oja y Sanger pp. 12-16; runs/oja/{repeats,weights_stats,history_stats}.csv."])
+    picture(s, "oja_weights.png", x=.7, y=1.6, w=10.5, h=6.4)
+    text(s, "0,999891", 11.5, 2.55, 4, .9, size=43, color=TEAL, bold=True)
+    text(s, "± 0,000039", 11.5, 3.6, 4, .7, size=26)
+    text(s, "Coseno con PC1\n30 semillas", 11.5, 4.8, 4, 1.4, size=23, color=MUTED)
+
+    s = new_slide(prs, "El índice ordena un eje de variación", [
+        "Cada punto es un creador; eje Y muestra media y DE del índice entre semillas.",
+        "Normalizamos y alineamos el signo de los vectores aprendidos para informar; nunca renormalizamos durante el entrenamiento.",
+        "Los cinco primeros aparecen en top5 en los 30 entrenamientos; las cinco cuentas corresponden al extremo positivo de PC1.",
+        "Índice alto no mide ventas, adopciones ni adecuación universal. Invertir el signo invierte el ranking.",
+        "La decisión necesita el objetivo de campaña y las variables observadas, no el máximo automático.",
+        "Fuente: clase PCA p.46; Oja pp.12-16; runs/oja/index_stats.csv y ranking.csv."])
+    picture(s, "oja_scores.png", x=.8, y=1.65, w=10.8, h=6.1)
+    text(s, "Top 5 estable", 11.7, 2.65, 3.7, .8, size=29, bold=True)
+    text(s, "30/30", 11.7, 3.75, 3.7, .9, size=44, color=TEAL)
+    text(s, "entrenamientos", 11.7, 4.9, 3.7, .7, size=23)
+
+    s = new_slide(prs, "Para fútbol priorizamos profundidad", [
+        "Supuesto: explicar ropa de entrenamiento; filtro de contenido de fútbol >=40%, orden por guardados por 1000.",
+        "Comparamos solo candidatos de fútbol de cada celda. No usar medias de toda la celda como si fueran ese subconjunto.",
+        "Celda 5 agrupa los tres elegidos de fútbol; celda 13 concentra más volumen y menos profundidad educativa.",
+        "Una campaña de reconocimiento podría priorizar alcance o descubrimiento; el objetivo cambia la decisión.",
+        "No hay ventas, conversiones ni adopciones en el catálogo: estos proxies no prueban rentabilidad.",
+        "Fuente: enunciado 1.4; configs/campaigns.json; runs/campaigns/strategy_profiles.csv."])
+    picture(s, "football_profiles.png", y=1.7, h=5.7)
+    caption(s, "Candidatos con ≥40% de fútbol · ejemplo de la semilla 42")
+
+    s = new_slide(prs, "Cada campaña exige su propia selección", [
+        "Supuestos comunes: una publicación por creador, tres creadores y contenido del tópico >=40%.",
+        "Perros ordena por visitas al perfil; fútbol por guardados; belleza y arte por proporción de tutoriales.",
+        "Comparación: solo seguidores globales y seguidores dentro del tópico. El control temático separa el efecto del filtro.",
+        "La selección propuesta pierde alcance y a veces especialización; en estos datos obtiene menor precio y más profundidad según el criterio.",
+        "La suma de alcances puede repetir audiencia. Los supuestos comerciales se revisan con resultados reales.",
+        "Fuente: runs/campaigns/{picks,baselines,comparison,evidence}.csv; configs/campaigns.json."])
+    for y, client in zip([2.0, 3.35, 4.7, 6.05], ["dogs", "football", "makeup", "art"]):
+        text(s, TOPICS[client], .9, y, 2.4, .65, size=29, color=TEAL, bold=True)
+        handles = campaigns[f"{client}_picks"]
+        for x, handle in zip([3.6, 7.6, 11.6], handles):
+            text(s, handle, x, y + .08, 4.0, .75, size=19)
+
+    s = new_slide(prs, "Los cambios de datos obligan a revisar el análisis", [
+        "Campaña nueva con mismo catálogo: definir objetivo y revisar evidencia; puede cambiar la elección comercial sin cambiar los modelos.",
+        "Datos mensuales o más creadores: revisar distribuciones, escalas, entrenamientos, grilla e interpretaciones.",
+        "Variables nuevas cambian distancias y componentes: repetir representación, estandarización y modelos.",
+        "Puede proyectarse un creador nuevo con la transformación existente si sigue siendo representativa; el repositorio regenera todo al actualizar el CSV.",
+        "Guardar versión de datos, fecha, semillas y parámetros; celdas y signos no son etiquetas permanentes.",
+        "Fuente: enunciado 1.4; modelo de Kohonen y proyección PCA; configs y runs."])
+    for y, left, right in [(2.4, "Campaña nueva", "Revisar objetivo y criterios"),
+                           (4.1, "Datos actualizados", "Revisar escalas y entrenamientos"),
+                           (5.8, "Variables nuevas", "Repetir representación y modelos")]:
+        text(s, left, .95, y, 5.2, .8, size=30, bold=True)
+        text(s, "→", 6.45, y, 1, .8, size=34, color=MUTED)
+        text(s, right, 8.0, y, 7, 1.0, size=28, color=TEAL)
+
+    s = new_slide(prs, "Primero almacenamos cuatro letras", [
+        "Cada letra 5×5 se recorre por filas: 25 estados bipolares. Negro=+1, blanco=-1.",
+        "G, R, T, V forman cuatro filas de P: matriz 4×25. Cada posición corresponde a una neurona.",
+        "Hebb: W=PᵀP/25; W es 25×25 y su diagonal se fija en cero. Los cuatro patrones se almacenan juntos.",
+        "Un patrón está almacenado por construcción de W; estar estable y recuperar desde ruido se comprueba después.",
+        "Ejemplo introductorio antes del caso QR; fuente de patrones: datos/letras_5x5.json.",
+        source_hop + " Figura original de esta corrida: runs/hopfield_letters/storage.png."])
+    picture(s, "hopfield_letters__storage.png", x=.65, y=1.6, w=14.8, h=6.35)
+
+    s = new_slide(prs, "La semejanza entre recuerdos cambia su estabilidad", [
+        "Productos internos normalizados: (ξᵘ·ξᵛ)/(5×5), antes de agregar ruido. Norma de cada letra: 5.",
+        "N=25 es impar: el producto interno de dos vectores bipolares no puede ser cero; mínimo absoluto posible: 1.",
+        "Elegimos G, R, T, V minimizando máximo |producto|, luego promedio; producto bruto absoluto 1, normalizado 0,04.",
+        "H, M, N, W tienen máximo absoluto 21/25=0,84 y solo una letra estable, almacenando la misma cantidad.",
+        "La diagonal normalizada 1 se excluye del resumen entre patrones distintos; la figura conserva el signo.",
+        source_hop + " Datos: dot_products.csv, orthogonality.csv, stored.csv."])
+    picture(s, "letters_dots.png", y=1.55, h=6.1)
+    caption(s, "G,R,T,V: 4/4 estables · H,M,N,W: 1/4")
+
+    s = new_slide(prs, "La recuperación cae al aumentar el ruido", [
+        "Cada semilla contiene 50 consultas por letra y nivel. Se invierten posiciones distintas dentro de cada consulta.",
+        "G, R, T, V asincrónica: 3 bits, 99,833% ± 0,240 pp; 5 bits, 93,417% ± 2,060 pp; 9 bits, 31,917% ± 2,910 pp.",
+        "Media y DE muestral entre 30 tasas por semilla. Las consultas de una corrida se agregan antes de calcular dispersión.",
+        "192.000 consultas de la grilla estándar; 24.000 adicionales para nivel 0,4: 216.000 consultas totales.",
+        "Actualización sincrónica puede formar ciclos; asincrónica tiene energía no creciente. No prometer recuperación para toda consulta.",
+        source_hop + " Datos: recall_by_seed.csv y recall_repetitions.csv."])
+    picture(s, "letters_noise.png", y=1.65, h=6.0)
+    caption(s, "30 semillas · media ± DE · 50 consultas por letra y nivel")
+
+    s = new_slide(prs, "La energía puede bajar hacia un espurio", [
+        "Ejemplo de la semilla 42: consulta de G con 10/25 bits invertidos.",
+        "El estado final es un punto fijo ajeno a las cuatro letras y sus inversas.",
+        "Energía final -7,68; distancia mínima a una letra: 6 bits. Los recuerdos guardados tienen energía -10,56.",
+        "La curva registra visitas individuales a neuronas, incluida la comprobación final. Un espurio puede tener energía estable.",
+        "Distinguir convergencia a un punto fijo de recuperación del patrón objetivo.",
+        source_hop + " Datos: summary.json y energy_trace.csv, ejemplo spurious."])
+    picture(s, "letters_spurious.png", y=2.0, h=5.6)
+    caption(s, "Consulta de G con 10 bits invertidos · semilla 42")
+
+    s = new_slide(prs, "La capacidad depende también de los patrones", [
+        "Se prueban 200 subconjuntos aleatorios del alfabeto por cantidad, en 30 semillas.",
+        "La curva muestra proporción de subconjuntos enteramente estables, con media ± DE entre semillas.",
+        "Para 4 letras al azar: 48,35% ± 3,57 pp de conjuntos enteramente estables; la fracción de letras estables es 75,575%.",
+        "0,15N=3,75 es una aproximación para patrones poco correlacionados, sin garantía para cada conjunto de 25 neuronas.",
+        "Las cuatro letras elegidas son estables pese a superar 3,75; compatible con una capacidad aproximada.",
+        source_hop + " Datos: capacity_by_seed.csv y capacity_repetitions.csv."])
+    picture(s, "letters_capacity.png", y=1.6, h=6.0)
+    caption(s, "200 subconjuntos por cantidad · 30 semillas · media ± DE")
+
+    s = new_slide(prs, "Usamos los cinco QR originales de 37×37", [
+        "Las cinco imágenes coinciden byte a byte con el ZIP suministrado; inputs.csv registra SHA256, dimensiones y norma.",
+        "Cada imagen 37×37 se recorre por filas. Negro=+1, blanco=-1; se conservan todos sus módulos.",
+        "Cada vector tiene 1369 estados y norma √1369=37. P es 5×1369 y W es 1369×1369, con diagonal cero.",
+        "La comparación usa coseno normalizado; la red utiliza estados bipolares ±1.",
+        "El render de esta diapositiva solo amplía píxeles por vecino más próximo; no altera los archivos originales.",
+        "Fuente: enunciado 2.1; datos/hopfield/*.png; runs/hopfield_qr/inputs.csv."])
+    picture(s, "qr_originals.png", y=1.75, h=4.7)
+    text(s, "37×37 → 1369 estados ±1", .95, 6.65, 14.2, .7, size=36, color=TEAL)
+    text(s, "P: 5×1369     W: 1369×1369", 1, 7.65, 14, .6, size=25)
+
+    pairs = data("hopfield_qr", "pairwise_similarity.csv")
+    cosine = float(pairs.normalized_dot.mean())
+    s = new_slide(prs, "Los QR comparten una similitud alta", [
+        f"Coseno medio entre los 10 pares distintos: {cosine:.6f}; rango {pairs.normalized_dot.min():.6f} a {pairs.normalized_dot.max():.6f}.",
+        "Para ±1 y N=1369, cada norma es 37: el denominador es 37×37=1369.",
+        f"1−coseno medio={1-cosine:.6f}; 0,3299 es disimilitud complementaria, una cantidad diferente del producto normalizado.",
+        "La fracción de bits distintos es (1−coseno)/2: aproximadamente 16,49% en promedio.",
+        "955/1369 módulos son iguales en los cinco QR simultáneamente; esa proporción, 69,76%, es otra cantidad.",
+        "Fuente: runs/hopfield_qr/{pairwise_similarity,overlaps,inputs}.csv; clase Hopfield p.33."])
+    picture(s, "qr_similarity.png", x=.8, y=1.5, w=8.5, h=6.6)
+    text(s, f"{cosine:.4f}".replace(".", ","), 10, 2.45, 5, 1.1, size=62, color=TEAL, bold=True)
+    text(s, "Similitud media", 10, 3.9, 5, .7, size=27)
+    text(s, "sᵘᵛ = (ξᵘ·ξᵛ) / (37·37)", 9.4, 5.45, 6, 1.2, size=27)
+
+    s = new_slide(prs, "Cinco QR juntos pierden el recuerdo consultado", [
+        "Con los cinco juntos, ningún original es punto fijo: 71, 91, 225, 225 y 103 módulos inestables.",
+        "33.000 consultas conjuntas: 5 QR × 11 niveles × 20 consultas × 30 semillas. Recuperación exacta: 0% en todos los niveles.",
+        "Ejemplo de la semilla 42: original principal sin ruido y estado final espurio. La curva de barridos usa 30 semillas.",
+        "Máximo 2 barridos que cambian el estado; la comprobación final no cuenta como otro cambio.",
+        "Energía asincrónica no creciente no garantiza recuerdo correcto. El fracaso aparece ya en estabilidad, antes del ruido.",
+        "Fuente: clase Hopfield pp.34-38; runs/hopfield_qr/{stored,recall_repetitions,queries}.csv."])
+    picture(s, "qr_failure.png", y=1.7, h=5.5)
+    caption(s, "0% de recuperación exacta · 33.000 consultas conjuntas")
+
+    s = new_slide(prs, "Al reducir la carga, estos QR sí se recuperan", [
+        "Controles de estabilidad exhaustivos: 5 redes con un QR y 10 parejas; todos sus patrones son estables.",
+        "Los 10 tríos, 5 cuartetos y la red de cinco tienen cero patrones originales estables.",
+        "Un QR por red: 33.000 consultas adicionales; recuperación 100% hasta 684/1369 bits invertidos (49,963%), con DE 0 entre semillas.",
+        "El fallo no es universal para QR ni atribuible solo a su tamaño. Estos patrones correlacionados interfieren cuando se almacenan juntos.",
+        "El control cambia la matriz de pesos. No comparar energías absolutas entre redes como si fueran una misma función.",
+        "Fuente: runs/hopfield_qr/{storage_control,single_pattern_control,recall_repetitions}.csv."])
+    picture(s, "qr_controls.png", y=1.75, h=5.9)
+    caption(s, "Mismos originales, distinta cantidad almacenada por red")
+
+    s = new_slide(prs, "Recuperar el patrón y leer la URL son pruebas distintas", [
+        "El lector opcional decodifica 5/5 originales. Se compara la URL con la del patrón objetivo.",
+        "En esta prueba el lector directo logra 100% sin ruido y 0% desde 5%; la salida conjunta de Hopfield obtiene 0%.",
+        "Los porcentajes son medias sobre 30 semillas; las barras DE 0 reflejan estos resultados observados, no una garantía.",
+        "Las entradas ya son matrices alineadas 37×37. Fotografías reales agregarían localización, perspectiva y binarización.",
+        "Una carta o QR nuevos requieren actualizar memorias y volver a comprobar estabilidad e interferencia.",
+        "Fuente: enunciado 2.1; runs/hopfield_qr/recall_repetitions.csv y summary.json; lector zxing-cpp."])
+    picture(s, "qr_reader.png", y=1.6, h=6.2)
+    caption(s, "Matrices alineadas de 37×37; fotografías reales quedan fuera de esta prueba")
+
+    prs.save(OUT)
+    print(f"{OUT}: {len(prs.slides)} diapositivas, {sum(bool(s.notes_slide.notes_text_frame.text.strip()) for s in prs.slides)} con notas")
+
+
+if __name__ == "__main__":
+    build()

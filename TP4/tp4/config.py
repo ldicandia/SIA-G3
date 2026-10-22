@@ -16,8 +16,7 @@ from typing import Any
 from .errors import ConfigError
 
 EXPERIMENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-COMMON_KEYS = ("experiment", "kind", "seed", "backend", "plots")
-SUPPORTED_BACKENDS = ("numpy", "cupy")
+COMMON_KEYS = ("experiment", "kind", "seed", "plots")
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -60,11 +59,6 @@ def validate_common(raw: Mapping[str, Any]) -> dict[str, Any]:
     seed = out["seed"]
     if type(seed) is not int or seed < 0:
         raise ConfigError(f"seed must be an integer >= 0, got {seed!r}")
-
-    backend = out.get("backend", "numpy")
-    if backend not in SUPPORTED_BACKENDS:
-        raise ConfigError(f"backend must be one of {list(SUPPORTED_BACKENDS)}, got {backend!r}")
-    out["backend"] = backend
 
     plots = out.get("plots", True)
     if type(plots) is not bool:

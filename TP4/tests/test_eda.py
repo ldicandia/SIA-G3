@@ -45,9 +45,6 @@ def tiny_feature_set(tmp_path):
     return str(path)
 
 
-# --- tukey_fences / iqr_outliers ------------------------------------------------
-
-
 def test_tukey_fences_linear_interpolation():
     lo, hi = tukey_fences(pd.Series([1, 2, 3, 4, 5]), 1.5)
     assert (lo, hi) == (-1.0, 7.0)
@@ -127,9 +124,6 @@ def test_analysis_functions_do_not_modify_the_input():
     pd.testing.assert_frame_equal(df, before)
 
 
-# --- describe / correlation -----------------------------------------------------
-
-
 def test_describe_columns_covers_every_csv_column(csv_rows):
     df = load_creators(DATA)
     desc = describe_columns(df, 1.5)
@@ -140,7 +134,7 @@ def test_describe_columns_covers_every_csv_column(csv_rows):
     assert ids.loc["name", "n_unique"] == csv_rows(DATA)
     for col in (
         "n_missing", "n_unique", "mean", "std", "min", "q1", "median", "q3", "max",
-        "iqr", "lower_fence", "upper_fence", "n_outliers", "skew",
+        "iqr", "lower_fence", "upper_fence", "n_outliers",
     ):
         assert col in desc.columns
     assert pd.isna(ids.loc["creator_id", "mean"])
@@ -153,9 +147,6 @@ def test_correlation_matrix_is_square_ordered_with_unit_diagonal():
     assert corr.shape == (len(cols), len(cols))
     assert list(corr.index) == cols and list(corr.columns) == cols
     assert (np.diag(corr.to_numpy()) == 1.0).all()
-
-
-# --- loader ---------------------------------------------------------------------
 
 
 def test_zero_row_csv_is_rejected_before_any_run_is_published(tmp_path, out_root, write_config, capsys):
@@ -172,9 +163,6 @@ def test_non_numeric_column_is_rejected_naming_column_and_creator(tmp_path, out_
     assert main(["run", str(write_config(data=str(bad))), "--out-root", str(out_root)]) == 2
     err = capsys.readouterr().err
     assert "'a'" in err and "C2" in err
-
-
-# --- end-to-end runs ------------------------------------------------------------
 
 
 def test_header_only_outliers_csv_and_missing_values_reported(tmp_path, out_root, write_config):
@@ -216,7 +204,7 @@ def test_real_data_run_writes_all_artifacts_and_keeps_every_creator(out_root, cs
 
     columns_lines = (run_dir / "columns.csv").read_text(encoding="utf-8").splitlines()
     assert len(columns_lines) == 1 + pd.read_csv(DATA).shape[1]
-    for col in ("n_missing", "n_unique", "q1", "q3", "iqr", "lower_fence", "upper_fence", "n_outliers", "skew"):
+    for col in ("n_missing", "n_unique", "q1", "q3", "iqr", "lower_fence", "upper_fence", "n_outliers"):
         assert col in columns_lines[0].split(",")
 
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))

@@ -1,4 +1,4 @@
-"""Pure EDA functions. They never drop or modify rows (EDA-01 prohibition)."""
+"""Pure EDA functions. They never drop or modify rows."""
 
 from __future__ import annotations
 
@@ -40,16 +40,15 @@ def describe_columns(df: pd.DataFrame, outlier_k: float = 1.5) -> pd.DataFrame:
         }
         stats = dict.fromkeys(
             ["mean", "std", "min", "q1", "median", "q3", "max", "iqr",
-             "lower_fence", "upper_fence", "n_outliers", "skew"],
+             "lower_fence", "upper_fence", "n_outliers"],
             np.nan,
         )
         if _is_stats_column(df, col):
             values = s.dropna()
             lo, hi = tukey_fences(values, outlier_k)
-            std = values.std(ddof=1)
             stats.update(
                 mean=values.mean(),
-                std=std,
+                std=values.std(ddof=1),
                 min=values.min(),
                 q1=values.quantile(0.25),
                 median=values.median(),
@@ -59,7 +58,6 @@ def describe_columns(df: pd.DataFrame, outlier_k: float = 1.5) -> pd.DataFrame:
                 lower_fence=lo,
                 upper_fence=hi,
                 n_outliers=int(((values < lo) | (values > hi)).sum()),
-                skew=values.skew() if len(values) >= 3 and std > 0 else np.nan,
             )
         row.update(stats)
         rows.append(row)

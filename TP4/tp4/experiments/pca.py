@@ -21,9 +21,7 @@ from ..analysis.pca import (
     PcaResult,
     center,
     components_for_threshold,
-    eigen_crosscheck,
     fit_pca,
-    kaiser_count,
     loadings_frame,
     standardize,
     top_loadings,
@@ -92,7 +90,7 @@ def _plot_scree(result: PcaResult, thresholds: list[float], path) -> None:
         n_k = components_for_threshold(result.cumulative_ratio, t)
         ax.axhline(t * 100, color="gray", linestyle="--", linewidth=1)
         ax.annotate(
-            f"{t * 100:g}%: {n_k} componentes",
+            f"{t * 100:g}%: {n_k} componentes" if n_k is not None else f"{t * 100:g}%: no alcanzado",
             xy=(k, t * 100),
             xytext=(-4, 4),
             textcoords="offset points",
@@ -249,12 +247,10 @@ def run(ctx: RunContext) -> dict:
         "pc1_explained_variance_pct": _pct(ratio[0]),
         "pc2_explained_variance_pct": _pct(ratio[1]) if k > 1 else None,
         "cumulative_pc2_pct": _pct(result.cumulative_ratio[min(1, k - 1)]),
-        "backend_resolved": ctx.backend.name,
-        "eigen_crosscheck_max_abs_diff": eigen_crosscheck(Z, ratio, ctx.backend.xp),
+
     }
     for t in thresholds:
         summary[f"k_cum_{round(t * 100)}"] = components_for_threshold(result.cumulative_ratio, t)
-    summary["kaiser_k"] = kaiser_count(result) if do_standardize else None
     top_n = int(params["top_n"])
     for pc in (0, 1):
         label = f"pc{pc + 1}"

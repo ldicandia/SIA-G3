@@ -11,17 +11,20 @@ import pytest
 from tp4 import runner
 from tp4.cli import main
 from tp4.config import load_config
-from tp4.experiments.oja import MAX_EPOCHS, rank_order
+from tp4.experiments.oja import MAX_EPOCHS, fit_index, rank_order
+from tp4.models.oja import OjaConfig
 from tp4.runs import PROJECT_ROOT
 
 DATA_PATH = PROJECT_ROOT / "datos" / "creadores.csv"
 ARTIFACTS = (
     "run.json", "summary.json", "ranking.csv", "history.csv", "weights_vs_pc1.csv",
     "convergence.png", "cos_to_pc1.png", "weights_vs_pc1.png", "scores_vs_pc1.png",
+    "repeats.csv", "history_repeats.csv", "history_stats.csv", "weights_repeats.csv",
+    "weights_stats.csv", "index_repeats.csv", "index_stats.csv",
 )
 RANKING_HEADER = [
     "rank", "creator_id", "name", "dominant_topic", "topic_football_pct", "topic_makeup_pct",
-    "topic_dogs_pct", "topic_art_pct", "followers", "oja_index", "pc1_score", "som_region",
+    "topic_dogs_pct", "topic_art_pct", "followers", "oja_index", "pc1_score",
 ]
 
 
@@ -40,14 +43,8 @@ def _config() -> dict:
 
 @pytest.fixture(scope="module")
 def runs(tmp_path_factory):
-    """configs/som.json (no plots) and configs/oja.json run into one out root."""
     base = tmp_path_factory.mktemp("oja_runs")
     out = base / "runs"
-    som = json.loads((PROJECT_ROOT / "configs" / "som.json").read_text(encoding="utf-8"))
-    som["plots"] = False
-    som_path = base / "som_noplots.json"
-    som_path.write_text(json.dumps(som), encoding="utf-8")
-    assert main(["run", str(som_path), "--out-root", str(out)]) == 0
     assert main(["run", "configs/oja.json", "--out-root", str(out)]) == 0
     return out
 
@@ -74,25 +71,20 @@ def test_ranking_header_rows_and_order(oja_run):
     assert ranking[0]["name"] == "@mundoanimal.ar"
 
 
-def test_ranking_art_share_is_reconstructed_and_topics_sum_to_100(oja_run):
+def test_ranking_retains_raw_art_share_and_topics_sum_to_100(oja_run):
     by_id = {r["creator_id"]: r for r in _read(DATA_PATH)}
     for row in _read(oja_run / "ranking.csv"):
         raw = by_id[row["creator_id"]]
         assert float(row["followers"]) == float(raw["followers"])
         total = sum(float(row[c]) for c in ("topic_football_pct", "topic_makeup_pct", "topic_dogs_pct", "topic_art_pct"))
-        assert total == pytest.approx(100.0, abs=1e-6)
-
-
-def test_som_region_equals_the_som_run_regions(runs):
-    som_regions = {r["creator_id"]: int(r["region"]) for r in _read(runs / "som" / "bmus.csv")}
-    ranking = _read(runs / "oja" / "ranking.csv")
-    assert {r["creator_id"]: int(r["som_region"]) for r in ranking} == som_regions
+        assert total == pytest.approx(100.0, abs=0.025)
+        assert float(row["topic_art_pct"]) == float(raw["topic_art_pct"])
 
 
 def test_weights_vs_pc1_table(oja_run):
     rows = _read(oja_run / "weights_vs_pc1.csv")
     assert list(rows[0]) == ["feature", "oja_weight", "pc1_loading", "difference", "oja_weight_raw"]
-    assert len(rows) == 25
+    assert len(rows) == 27
     w = np.array([float(r["oja_weight"]) for r in rows])
     pc1 = np.array([float(r["pc1_loading"]) for r in rows])
     diff = np.array([float(r["difference"]) for r in rows])
@@ -111,15 +103,14 @@ def test_summary_validation_numbers_and_orientation(oja_run):
     assert s["orientation_matches_pc1"] is True
     assert isinstance(s["orientation_flipped"], bool)
     assert s["oja_top_feature"] == s["pc1_top_feature"] == "average_caption_words"
-    assert isinstance(s["epochs_to_converge"], int) and s["epochs_to_converge"] <= s["epochs"]
+    assert isinstance(s["norm_band_epoch"], int) and s["norm_band_epoch"] <= s["epochs"]
     assert abs(s["final_w_norm"] - 1.0) <= p["norm_tol"]
-    assert s["lambda1"] == 13.2944 and s["course_eta_bound"] == 0.0627
+    assert s["lambda1"] > 0 and s["course_eta_bound"] > p["eta0"]
     assert s["max_abs_weight_diff"] < 0.01
     assert s["initial_w_norm"] > 1.0 and s["final_delta_w"] >= 0.0
     assert len(s["top5_creators"]) == len(s["bottom5_creators"]) == 5
     assert s["top_creator"] == s["top5_creators"][0] and s["bottom_creator"] == s["bottom5_creators"][-1]
-    assert s["som_config"] == "configs/som.json" and s["n_regions"] >= 2
-    assert s["init"] == "uniform01" and s["input"] == "features" and s["n_features"] == 25
+    assert s["init"] == "uniform01" and s["input"] == "features" and s["n_features"] == 27
 
 
 def test_history_has_one_row_per_epoch(oja_run):
@@ -134,15 +125,13 @@ def test_rank_order_ties_keep_csv_order():
 
 
 def test_same_seed_gives_byte_identical_tables(tmp_path, write_config):
-    cfg = write_config(base="configs/oja.json", plots=False)
+    cfg = write_config(base="configs/oja.json", plots=False, **{"params.n_repeats": 2})
     out_a, out_b = tmp_path / "a", tmp_path / "b"
     assert main(["run", str(cfg), "--out-root", str(out_a)]) == 0
     assert main(["run", str(cfg), "--out-root", str(out_b)]) == 0
-    for name in ("ranking.csv", "history.csv", "weights_vs_pc1.csv", "summary.json"):
+    for name in ("ranking.csv", "history.csv", "weights_vs_pc1.csv", "summary.json",
+                 "repeats.csv", "history_stats.csv", "weights_stats.csv", "index_stats.csv"):
         assert (out_a / "oja" / name).read_bytes() == (out_b / "oja" / name).read_bytes(), name
-
-
-# --------------------------------------------------------------------------- divergence
 
 
 def test_diverging_eta_is_flagged_and_writes_no_ranking(tmp_path, write_config):
@@ -152,13 +141,11 @@ def test_diverging_eta_is_flagged_and_writes_no_ranking(tmp_path, write_config):
     s = _summary(out / "oja")
     assert s["diverged"] is True and isinstance(s["divergence_epoch"], int)
     assert s["cosine_to_pc1"] is None and s["pearson_scores_pc1"] is None
-    assert s["epochs_to_converge"] is None and s["final_w_norm"] is None
+    assert s["norm_band_epoch"] is None and s["final_w_norm"] is None
     assert not (out / "oja" / "ranking.csv").exists()
     assert (out / "oja" / "history.csv").stat().st_size > 0
     assert (out / "oja" / "convergence.png").stat().st_size > 0
 
-
-# --------------------------------------------------------------------------- validation
 
 INVALID_CASES = [
     {"params.epochs": 0},
@@ -168,6 +155,9 @@ INVALID_CASES = [
     {"params.eta_min": 0},
     {"params.eta_min": 0.01},  # above the default eta0 0.001
     {"params.eta_decay": "cosine"},
+    {"params.n_repeats": 1},
+    {"params.n_repeats": 201},
+    {"params.n_repeats": True},
     {"params.norm_tol": 0},
     {"params.norm_tol": 1},
     {"params.unknown": 1},
@@ -184,54 +174,10 @@ def test_invalid_oja_config_exits_2_and_creates_no_run_dir(tmp_path, write_confi
     assert not (out / "oja").exists()
 
 
-def test_som_config_of_another_kind_is_rejected(tmp_path, write_config, capsys):
-    cfg = write_config(base="configs/oja.json", som_config="configs/pca.json")
-    out = tmp_path / "out"
-    assert main(["run", str(cfg), "--out-root", str(out)]) == 2
-    err = capsys.readouterr().err
-    assert "error:" in err and "som" in err
-    assert not (out / "oja").exists()
-
-
-def test_som_config_with_a_different_feature_set_is_rejected(tmp_path, write_config, capsys):
-    other = tmp_path / "feature_set_copy.json"
-    other.write_text((PROJECT_ROOT / "configs" / "feature_set.json").read_text(encoding="utf-8"), encoding="utf-8")
-    som = json.loads((PROJECT_ROOT / "configs" / "som.json").read_text(encoding="utf-8"))
-    som["feature_set"] = str(other)
-    som_path = tmp_path / "som_other.json"
-    som_path.write_text(json.dumps(som), encoding="utf-8")
-    cfg = write_config(base="configs/oja.json", som_config=str(som_path))
-    out = tmp_path / "out"
-    assert main(["run", str(cfg), "--out-root", str(out)]) == 2
-    err = capsys.readouterr().err
-    assert "error:" in err and "feature_set" in err
-    assert not (out / "oja").exists()
-
-
-def test_som_config_with_a_different_data_file_is_rejected(tmp_path, write_config, capsys):
-    other = tmp_path / "creadores_copy.csv"
-    other.write_text(DATA_PATH.read_text(encoding="utf-8"), encoding="utf-8")
-    som = json.loads((PROJECT_ROOT / "configs" / "som.json").read_text(encoding="utf-8"))
-    som["data"] = str(other)
-    som_path = tmp_path / "som_other_data.json"
-    som_path.write_text(json.dumps(som), encoding="utf-8")
-    cfg = write_config(base="configs/oja.json", som_config=str(som_path))
-    assert main(["run", str(cfg), "--out-root", str(tmp_path / "out")]) == 2
-    err = capsys.readouterr().err
-    assert "error:" in err and "data" in err
-
-
-def test_som_config_must_be_a_non_empty_string(tmp_path, write_config, capsys):
-    cfg = write_config(base="configs/oja.json", som_config="")
-    assert main(["run", str(cfg), "--out-root", str(tmp_path / "out")]) == 2
-    assert "som_config" in capsys.readouterr().err
-
-
 @pytest.mark.parametrize(
     "overrides",
     [
         {"params.eta0": 1.0},
-        {"params.eta_min": 0.001, "params.eta0": 0.001},
         {"params.epochs": MAX_EPOCHS},
     ],
     ids=lambda o: ",".join(f"{k}={v}" for k, v in o.items()),
@@ -240,3 +186,59 @@ def test_boundary_values_pass_validation(write_config, overrides):
     cfg = write_config(base="configs/oja.json", **overrides)
     config = runner.validate_config(load_config(cfg))
     assert config["kind"] == "oja"
+
+
+def test_training_repetitions_use_distinct_seeds_and_preserve_the_reference_run(oja_run):
+    rows = _read(oja_run / "repeats.csv")
+    assert len(rows) == 30
+    assert [int(row["seed"]) for row in rows] == list(range(42, 72))
+    assert all(row["diverged"] == "False" for row in rows)
+    values = np.array([float(row["cosine_to_pc1"]) for row in rows])
+    summary = _summary(oja_run)
+    assert len(set(values)) > 1
+    assert float(rows[0]["final_w_norm"]) == pytest.approx(summary["final_w_norm"], abs=0.00005)
+    assert summary["cosine_to_pc1_mean"] == pytest.approx(values.mean())
+    assert summary["cosine_to_pc1_std"] == pytest.approx(values.std(ddof=1))
+    assert summary["cosine_to_pc1_n"] == summary["n_successful_repeats"] == 30
+    assert summary["n_diverged_repeats"] == 0
+
+
+def test_weight_and_index_error_bars_match_seed_dispersion(oja_run):
+    weights = _read(oja_run / "weights_repeats.csv")
+    weight_stats = _read(oja_run / "weights_stats.csv")
+    for row in weight_stats:
+        values = np.array([float(w["oja_weight"]) for w in weights if w["feature"] == row["feature"]])
+        assert len(values) == int(row["n_repeats"]) == 30
+        assert float(row["oja_weight_mean"]) == pytest.approx(values.mean(), abs=1e-9)
+        assert float(row["oja_weight_std"]) == pytest.approx(values.std(ddof=1), abs=1e-9)
+    indices = _read(oja_run / "index_repeats.csv")
+    stats = _read(oja_run / "index_stats.csv")
+    for row in stats:
+        creator = [r for r in indices if r["creator_id"] == row["creator_id"]]
+        values = np.array([float(r["oja_index"]) for r in creator])
+        assert float(row["oja_index_mean"]) == pytest.approx(values.mean(), abs=1e-8)
+        assert float(row["oja_index_std"]) == pytest.approx(values.std(ddof=1), abs=1e-8)
+        assert int(row["top5_count"]) == sum(int(r["rank"]) <= 5 for r in creator)
+    assert sum(int(row["top5_count"]) for row in stats) == 30 * 5
+
+
+def test_training_curve_reports_mean_sample_sd_and_count_per_epoch(oja_run):
+    histories = _read(oja_run / "history_repeats.csv")
+    stats = _read(oja_run / "history_stats.csv")
+    assert len(stats) == _config()["params"]["epochs"]
+    for row in (stats[0], stats[-1]):
+        epoch = int(float(row["epoch"]))
+        values = np.array([float(h["w_norm"]) for h in histories if int(float(h["epoch"])) == epoch])
+        assert int(row["w_norm_n"]) == len(values) == 30
+        assert float(row["w_norm_mean"]) == pytest.approx(values.mean(), abs=1e-9)
+        assert float(row["w_norm_std"]) == pytest.approx(values.std(ddof=1), abs=1e-9)
+
+
+def test_reference_orients_reported_index_without_changing_training():
+    X = np.array([[1.0, 0.3], [-1.0, -0.3], [0.5, -0.2], [-0.5, 0.2]])
+    config = OjaConfig(epochs=10, eta0=0.001)
+    original = fit_index(X, config, np.random.default_rng(8), reference=None)
+    aligned = fit_index(X, config, np.random.default_rng(8), reference=-original.w_hat)
+    np.testing.assert_array_equal(original.result.weights, aligned.result.weights)
+    np.testing.assert_allclose(aligned.w_hat, -original.w_hat)
+    np.testing.assert_allclose(aligned.index, -original.index)

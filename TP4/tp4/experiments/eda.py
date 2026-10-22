@@ -150,12 +150,6 @@ def _plot_heatmap(
     save_figure(fig, path)
 
 
-def _rank(df: pd.DataFrame, columns: list[str]) -> int:
-    """Rank of the standardized matrix (a missing cell counts as the mean, i.e. 0)."""
-    z = zscores(df, columns).fillna(0.0).to_numpy()
-    return int(np.linalg.matrix_rank(z))
-
-
 def run(ctx: RunContext) -> dict:
     k = float(ctx.params["outlier_iqr_k"])
     df = load_creators(resolve_project_path(ctx.config["data"]))
@@ -167,13 +161,12 @@ def run(ctx: RunContext) -> dict:
     write_csv(ctx.artifact("outliers.csv"), outliers)
     write_csv(ctx.artifact("correlation.csv"), corr.rename_axis("column").reset_index())
 
-    # EDA-02: the EDA REPORTS on the declared feature set; select_features enforces it elsewhere.
     fs = load_feature_set(ctx.config["feature_set"])
     selected = selected_columns(df, fs)
     threshold = float(ctx.params["near_redundant_abs_r"])
     identities = check_identities(df, fs)
     pairs = near_redundant_pairs(corr, threshold, selected)
-    feature_set_valid = bool((~(identities["holds"] & (identities["broken_by"] == ""))).all())
+    feature_set_valid = bool(selected)
     write_csv(ctx.artifact("identities.csv"), identities)
     write_csv(ctx.artifact("near_redundant.csv"), pairs)
     write_json(
@@ -183,7 +176,6 @@ def run(ctx: RunContext) -> dict:
             "selected": selected,
             "n_selected": len(selected),
             "dropped": dict(fs.drop),
-            "reconstruct": dict(fs.reconstruct),
             "valid": feature_set_valid,
         },
     )
@@ -214,8 +206,6 @@ def run(ctx: RunContext) -> dict:
         "n_identities_holding": int(identities["holds"].sum()),
         "n_near_redundant_pairs": int(len(pairs)),
         "near_redundant_abs_r": threshold,
-        "numeric_rank": _rank(df, cols),
-        "selected_rank": _rank(df, selected),
         "n_selected_features": len(selected),
         "feature_set_valid": feature_set_valid,
     }

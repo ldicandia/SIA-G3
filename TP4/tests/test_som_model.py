@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import re
-import types
 
 import numpy as np
 import pytest
@@ -14,53 +13,39 @@ from tp4.models.som import (
     ADJACENCY_TOL,
     SomConfig,
     best_matching_unit,
-    best_two_units,
+    matching_units,
     decay,
-    distance_preservation,
     init_weights,
     make_grid,
     neighborhood,
-    quantization_error,
     squared_distances,
-    topographic_error,
     train_som,
 )
 from tp4.runs import PROJECT_ROOT
-
-
-def _fake_cupy() -> types.ModuleType:
-    """A stand-in `cupy` that delegates every array function to numpy."""
-    fake = types.ModuleType("cupy")
-    fake.__getattr__ = lambda name: getattr(np, name)  # PEP 562 module __getattr__
-    return fake
 
 
 def _data(n=30, d=4, seed=3):
     return np.random.default_rng(seed).normal(size=(n, d))
 
 
-# --------------------------------------------------------------------------- BMU
-
-
 def test_bmu_matches_brute_force_euclidean():
     rng = np.random.default_rng(0)
     X = rng.normal(size=(20, 5))
     W = rng.normal(size=(12, 5))
-    bmu, second, dist = best_two_units(X, W)
+    bmu, dist = matching_units(X, W)
     for i, x in enumerate(X):
         norms = [np.linalg.norm(x - w) for w in W]
         order = np.argsort(norms, kind="stable")
         assert bmu[i] == order[0] == best_matching_unit(W, x)
-        assert second[i] == order[1]
         assert dist[i] == pytest.approx(norms[order[0]], abs=1e-12)
 
 
-def test_bmu_tie_goes_to_lowest_index_and_other_is_second():
+def test_bmu_tie_goes_to_lowest_index():
     W = np.array([[5.0, 5.0], [1.0, 1.0], [9.0, 9.0], [1.0, 1.0]])
     x = np.array([[1.2, 0.9]])
     assert best_matching_unit(W, x[0]) == 1
-    bmu, second, _ = best_two_units(x, W)
-    assert (bmu[0], second[0]) == (1, 3)
+    bmu, _ = matching_units(x, W)
+    assert bmu[0] == 1
 
 
 def test_identical_vectors_tie_exactly():
@@ -69,21 +54,8 @@ def test_identical_vectors_tie_exactly():
     assert d2[0, 0] == d2[0, 1]
 
 
-# --------------------------------------------------------------------------- neighborhood
-
-
-def test_gaussian_is_one_at_winner_and_decreases_with_distance_and_shrinking_radius():
-    d = np.array([0.0, 1.0, 2.0, 3.0])
-    h = neighborhood(d, 2.0, "gaussian")
-    assert h[0] == 1.0
-    assert np.all(np.diff(h) < 0)
-    assert np.all((h > 0) & (h <= 1))
-    at_two = [float(neighborhood(np.array([2.0]), r, "gaussian")[0]) for r in (1.0, 2.0, 3.0)]
-    assert at_two[0] < at_two[1] < at_two[2]
-
-
 def test_step_includes_the_boundary_and_excludes_beyond():
-    one = lambda d, r: float(neighborhood(np.array([d]), r, "step")[0])  # noqa: E731
+    one = lambda d, r: float(neighborhood(np.array([d]), r)[0])  # noqa: E731
     for d in (0.0, 0.5, 1.0, 1.0000000000000002):
         assert one(d, 1.0) == 1.0
     assert one(1.01, 1.0) == 0.0
@@ -92,52 +64,38 @@ def test_step_includes_the_boundary_and_excludes_beyond():
 
 def test_step_is_non_increasing_in_distance_and_radius():
     d = np.linspace(0, 4, 41)
-    h = neighborhood(d, 1.5, "step")
+    h = neighborhood(d, 1.5)
     assert np.all(np.diff(h) <= 0)
     radii = [3.0, 2.0, 1.0, 0.5, 0.1]
-    values = np.array([neighborhood(d, r, "step") for r in radii])
+    values = np.array([neighborhood(d, r) for r in radii])
     assert np.all(np.diff(values, axis=0) <= 0)
 
 
-@pytest.mark.parametrize("kind", ["gaussian", "step"])
-def test_winner_always_has_full_influence_at_any_positive_radius(kind):
+def test_winner_always_has_full_influence_at_any_positive_radius():
     for r in (1e-6, 0.1, 1.0, 50.0):
-        assert neighborhood(np.array([0.0]), r, kind)[0] == 1.0
+        assert neighborhood(np.array([0.0]), r)[0] == 1.0
 
 
-def test_neighborhood_rejects_bad_radius_and_kind():
+def test_neighborhood_rejects_bad_radius():
     for r in (0.0, -1.0):
         with pytest.raises(ValueError):
-            neighborhood(np.array([0.0, 1.0]), r, "gaussian")
-    with pytest.raises(ValueError):
-        neighborhood(np.array([0.0]), 1.0, "mexican")
+            neighborhood(np.array([0.0, 1.0]), r)
 
 
-# --------------------------------------------------------------------------- decay
-
-
-@pytest.mark.parametrize("kind", ["exponential", "linear", "inverse"])
-def test_decay_hits_start_and_end_and_never_increases(kind):
+@pytest.mark.parametrize("kind", ["inverse"])
+def test_inverse_decay_is_start_over_iteration_and_never_increases(kind):
     total = 50
-    values = [decay(0.5, 0.01, s, total, kind) for s in range(total)]
+    values = [decay(0.5, s, kind) for s in range(total)]
     assert values[0] == 0.5
-    assert abs(values[-1] - 0.01) < 1e-12
+    assert values[-1] == pytest.approx(0.5 / total)
     assert all(b <= a + 1e-15 for a, b in zip(values, values[1:]))
-    assert decay(0.5, 0.01, 0, 1, kind) == 0.5
+    assert decay(0.5, 0, kind) == 0.5
 
 
 def test_decay_constant_and_errors():
-    assert all(decay(0.3, 0.01, s, 20, "constant") == 0.3 for s in range(20))
-    for kind in ("exponential", "inverse"):
-        with pytest.raises(ValueError):
-            decay(1.0, 0.0, 3, 10, kind)
-        with pytest.raises(ValueError):
-            decay(1.0, -0.1, 3, 10, kind)
+    assert all(decay(0.3, s, "constant") == 0.3 for s in range(20))
     with pytest.raises(ValueError):
-        decay(1.0, 0.1, 3, 10, "cosine")
-
-
-# --------------------------------------------------------------------------- grid
+        decay(1.0, 3, "cosine")
 
 
 def test_rect_grid_neighbors():
@@ -181,34 +139,6 @@ def test_grid_distances_are_symmetric_and_index_is_row_major():
     assert all(b in g.neighbors(a) for a, b in pairs)
 
 
-# --------------------------------------------------------------------------- metrics
-
-
-def test_quantization_error_is_zero_when_weights_contain_the_samples():
-    X = _data(10, 3)
-    assert quantization_error(X, X.copy()) == 0.0
-
-
-def test_topographic_error_counts_non_adjacent_second_winners():
-    g = make_grid(1, 3, "rect")
-    W = np.array([[0.0], [10.0], [1.0]])
-    # 0.4 -> bmu 0, second 2 (grid distance 2: not adjacent); 10 and 10.5 -> bmu 1, second 2 (adjacent)
-    X = np.array([[0.4], [10.0], [10.5]])
-    assert topographic_error(X, W, g) == pytest.approx(1 / 3)
-
-
-def test_distance_preservation_perfect_and_undefined():
-    g = make_grid(1, 5, "rect")
-    X = np.arange(5, dtype=float)[:, None]
-    assert distance_preservation(X, X.copy(), g) == pytest.approx(1.0, abs=1e-12)
-    g2 = make_grid(1, 2, "rect")
-    W = np.array([[0.0], [100.0]])
-    assert np.isnan(distance_preservation(X, W, g2))
-
-
-# --------------------------------------------------------------------------- init
-
-
 def test_sample_init_uses_distinct_rows_or_rows_with_replacement():
     X = _data(10, 3)
     W = init_weights(X, 6, "sample", np.random.default_rng(1))
@@ -226,11 +156,8 @@ def test_random_init_lies_in_the_feature_ranges():
         init_weights(X, 4, "pca", np.random.default_rng(2))
 
 
-# --------------------------------------------------------------------------- training
-
-
 def _cfg(**kw):
-    base = dict(rows=3, cols=3, epochs=6, eta0=0.5, eta_min=0.05, radius0=2.0, radius_min=1.0)
+    base = dict(rows=3, cols=3, epochs=6, eta0=0.5, radius0=2.0)
     base.update(kw)
     return SomConfig(**base)
 
@@ -252,34 +179,22 @@ def test_history_shape_and_schedule_endpoints():
     assert np.all(np.diff(res.history["eta"]) <= 1e-15)
     assert np.all(np.diff(res.history["radius"]) <= 1e-15)
     assert abs(res.history["radius"][-1] - 1.0) < 1e-12
-    assert abs(res.history["eta"][-1] - 0.05) < 1e-12
+    assert res.history["eta"][-1] == pytest.approx(0.5 / (8 * len(_data())))
 
 
-def test_constant_radius_when_min_equals_start():
-    res = train_som(_data(), _cfg(radius0=2.0, radius_min=2.0), np.random.default_rng(0))
+def test_constant_radius():
+    res = train_som(_data(), _cfg(radius0=2.0, radius_decay="constant"), np.random.default_rng(0))
     assert np.all(res.history["radius"] == 2.0)
     res = train_som(_data(), _cfg(radius_decay="constant"), np.random.default_rng(0))
     assert np.all(res.history["radius"] == 2.0)
 
 
 @pytest.mark.parametrize("init", ["sample", "random"])
-@pytest.mark.parametrize("neigh", ["gaussian", "step"])
-def test_weights_stay_in_the_convex_hull_of_the_data(init, neigh):
+def test_weights_stay_in_the_convex_hull_of_the_data(init):
     X = _data()
-    res = train_som(X, _cfg(init=init, neighborhood=neigh, eta0=1.0), np.random.default_rng(4))
+    res = train_som(X, _cfg(init=init, eta0=0.9), np.random.default_rng(4))
     assert np.all(res.weights >= X.min(axis=0) - 1e-9)
     assert np.all(res.weights <= X.max(axis=0) + 1e-9)
-
-
-def test_all_options_train_without_error():
-    X = _data(12, 3)
-    for topology in ("hex", "rect"):
-        for eta_decay in ("exponential", "linear", "inverse", "constant"):
-            res = train_som(
-                X, _cfg(topology=topology, eta_decay=eta_decay, radius_decay="inverse", epochs=3),
-                np.random.default_rng(0),
-            )
-            assert np.all(np.isfinite(res.weights))
 
 
 def test_one_by_n_grid_trains():
@@ -290,18 +205,6 @@ def test_one_by_n_grid_trains():
 def test_train_rejects_unknown_options():
     with pytest.raises(ValueError):
         train_som(_data(), _cfg(topology="tri"), np.random.default_rng(0))
-    with pytest.raises(ValueError):
-        train_som(_data(), _cfg(neighborhood="mexican"), np.random.default_rng(0))
-
-
-def test_fake_cupy_gives_the_same_weights_as_numpy():
-    X = _data()
-    base = train_som(X, _cfg(), np.random.default_rng(5))
-    fake = train_som(X, _cfg(), np.random.default_rng(5), xp=_fake_cupy())
-    assert np.array_equal(base.weights, fake.weights)
-
-
-# --------------------------------------------------------------------------- no SOM library
 
 
 ALLOWED_TOP_LEVEL = {"__future__", "math", "dataclasses", "types", "typing", "collections", "numpy", "tp4"}

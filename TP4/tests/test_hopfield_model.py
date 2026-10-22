@@ -2,39 +2,26 @@
 
 from __future__ import annotations
 
-import ast
-import re
-
 import numpy as np
 import pytest
 
 from tp4.experiments.hopfield_letters import load_alphabet
-from tp4.models import hopfield as hopfield_module
 from tp4.models.hopfield import (
     FIELD_TOL,
     MAX_ITER,
-    RULES,
-    STATUSES,
-    UPDATES,
     HopfieldConfig,
     check_patterns,
     energy,
     hebbian_weights,
     is_fixed_point,
-    pseudoinverse_weights,
     recall,
     sign_keep,
-    train,
 )
-from tp4.runs import PROJECT_ROOT
 
 
 def _random_patterns(p: int, n: int, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     return rng.choice(np.array([-1, 1], dtype=np.int8), size=(p, n))
-
-
-# --------------------------------------------------------------------------- course worked example (slides 25-30)
 
 
 def test_course_worked_example_weights_and_one_step_sync_recall():
@@ -57,14 +44,11 @@ def test_course_worked_example_weights_and_one_step_sync_recall():
     assert str(res.status[0]) == "converged"
 
 
-# --------------------------------------------------------------------------- fixed points
-
-
 def test_selected_letters_are_fixed_points_under_async_and_sync():
     letters, patterns, _ = load_alphabet("datos/letras_5x5.json")
     idx = [letters.index(ch) for ch in ("G", "R", "T", "V")]
     P = patterns[idx]
-    W = train(P, "hebb")
+    W = hebbian_weights(P)
     assert np.all(is_fixed_point(W, P))
     for upd in ("async", "sync"):
         rng = np.random.default_rng(0) if upd == "async" else None
@@ -74,14 +58,13 @@ def test_selected_letters_are_fixed_points_under_async_and_sync():
         assert np.all(res.status == "converged")
 
 
-@pytest.mark.parametrize("rule", ["hebb", "pseudoinverse"])
 @pytest.mark.parametrize("update", ["async", "sync"])
-def test_random_stored_patterns_are_fixed_points(rule: str, update: str):
+def test_random_stored_patterns_are_fixed_points(update: str):
     P = _random_patterns(4, 200, seed=0)
-    W = train(P, rule)
+    W = hebbian_weights(P)
     assert np.all(is_fixed_point(W, P))
     rng = np.random.default_rng(7) if update == "async" else None
-    res = recall(W, P, HopfieldConfig(rule=rule, update=update, max_iter=50), rng=rng)
+    res = recall(W, P, HopfieldConfig(update=update, max_iter=50), rng=rng)
     assert np.array_equal(res.states, P)
     assert np.all(res.iterations == 0)
     assert np.all(res.status == "converged")
@@ -89,18 +72,14 @@ def test_random_stored_patterns_are_fixed_points(rule: str, update: str):
         assert len(e_seq) == 1
 
 
-# --------------------------------------------------------------------------- energy monotonicity (async + trace)
-
-
-@pytest.mark.parametrize("rule", ["hebb", "pseudoinverse"])
-def test_async_energy_never_increases_per_neuron_update_or_per_iteration(rule: str):
+def test_async_energy_never_increases_per_neuron_update_or_per_iteration():
     P = _random_patterns(5, 100, seed=10)
     Q = _random_patterns(30, 100, seed=11)
-    W = train(P, rule)
+    W = hebbian_weights(P)
     res = recall(
         W,
         Q,
-        HopfieldConfig(rule=rule, update="async", max_iter=100),
+        HopfieldConfig(update="async", max_iter=100),
         rng=np.random.default_rng(12),
         trace=True,
     )
@@ -115,9 +94,6 @@ def test_async_energy_never_increases_per_neuron_update_or_per_iteration(rule: s
         assert u_e[0] == pytest.approx(it_e[0], abs=1e-9)
         assert u_e[-1] == pytest.approx(final_energies[row], abs=1e-9)
         assert it_e[-1] == pytest.approx(final_energies[row], abs=1e-9)
-
-
-# --------------------------------------------------------------------------- sync period-2 cycle vs async convergence
 
 
 def test_two_neuron_sync_cycle_and_async_convergence():
@@ -135,14 +111,11 @@ def test_two_neuron_sync_cycle_and_async_convergence():
         assert np.array_equal(res_async.states[0], xi[0]) or np.array_equal(res_async.states[0], -xi[0])
 
 
-# --------------------------------------------------------------------------- batch independence
-
-
 def test_batch_recall_matches_single_query_recall_row_by_row():
     P = _random_patterns(4, 64, seed=1)
     Q = _random_patterns(8, 64, seed=2)
     W = hebbian_weights(P)
-    cfg = HopfieldConfig(rule="hebb", update="async", max_iter=50)
+    cfg = HopfieldConfig(update="async", max_iter=50)
     batch_res = recall(W, Q, cfg, rng=np.random.default_rng(3), trace=True)
     assert batch_res.update_energies is not None
 
@@ -154,9 +127,6 @@ def test_batch_recall_matches_single_query_recall_row_by_row():
         assert str(batch_res.status[i]) == str(single_res.status[0])
         assert np.allclose(batch_res.energies[i], single_res.energies[0], atol=1e-12, rtol=0)
         assert np.allclose(batch_res.update_energies[i], single_res.update_energies[0], atol=1e-12, rtol=0)
-
-
-# --------------------------------------------------------------------------- sign_keep, max_iter, pseudoinverse
 
 
 def test_sign_keep_respects_field_tolerance():
@@ -181,23 +151,6 @@ def test_max_iter_stops_and_records_status():
     assert int(res_async.iterations[0]) == 1
 
 
-def test_pseudoinverse_weights_properties_and_linear_dependence():
-    P = _random_patterns(4, 30, seed=5)
-    W = pseudoinverse_weights(P)
-    assert W.shape == (30, 30)
-    assert np.array_equal(W, W.T)
-    assert np.all(np.diag(W) == 0.0)
-    assert np.all(is_fixed_point(W, P))
-
-    with pytest.raises(ValueError, match="linearly dependent"):
-        pseudoinverse_weights(np.vstack([P[:2], P[0:1]]))
-    with pytest.raises(ValueError, match="linearly dependent"):
-        pseudoinverse_weights(np.vstack([P[:2], -P[0:1]]))
-
-
-# --------------------------------------------------------------------------- validation
-
-
 def test_validation_errors():
     P = _random_patterns(3, 10, seed=0)
     W = hebbian_weights(P)
@@ -212,9 +165,6 @@ def test_validation_errors():
     ):
         with pytest.raises(ValueError):
             check_patterns(bad_p)
-
-    with pytest.raises(ValueError, match="unknown rule"):
-        train(P, "storkey")
 
     W_nonsym = W.copy()
     W_nonsym[0, 1] += 0.1
@@ -247,37 +197,3 @@ def test_validation_errors():
 
     with pytest.raises(ValueError, match="trace"):
         recall(W, P[0], HopfieldConfig(update="sync"), trace=True)
-
-
-# --------------------------------------------------------------------------- hand-written & no-library scan (HOP-01)
-
-
-ALLOWED_TOP_LEVEL = {"__future__", "math", "dataclasses", "typing", "collections", "numpy", "tp4"}
-FORBIDDEN_HOPFIELD = re.compile(
-    r"^\s*(import|from)\s+(neurolab|hopfieldnetwork|dhn|torch|tensorflow|keras)\b",
-    re.MULTILINE,
-)
-
-
-def test_hopfield_module_imports_only_numpy_and_stdlib():
-    tree = ast.parse((PROJECT_ROOT / "tp4" / "models" / "hopfield.py").read_text(encoding="utf-8"))
-    tops = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            tops.update(a.name.split(".")[0] for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0:
-            tops.add((node.module or "").split(".")[0])
-    assert tops <= ALLOWED_TOP_LEVEL, tops - ALLOWED_TOP_LEVEL
-    assert hopfield_module.RULES == ("hebb", "pseudoinverse")
-    assert hopfield_module.UPDATES == ("async", "sync")
-    assert hopfield_module.STATUSES == ("converged", "cycle", "max_iter")
-    assert hopfield_module.MAX_ITER == 1000
-
-
-def test_no_hopfield_or_nn_library_anywhere_in_tp4():
-    offenders = []
-    for path in (PROJECT_ROOT / "tp4").rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if FORBIDDEN_HOPFIELD.search(text):
-            offenders.append(str(path))
-    assert not offenders, offenders

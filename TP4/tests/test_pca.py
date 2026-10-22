@@ -20,7 +20,6 @@ from tp4.runs import PROJECT_ROOT
 DATA_PATH = PROJECT_ROOT / "datos" / "creadores.csv"
 
 
-
 @pytest.fixture(scope="module")
 def pca_run(tmp_path_factory):
     out = tmp_path_factory.mktemp("pca_run") / "runs"
@@ -43,20 +42,19 @@ def test_cli_end_to_end_writes_explained_variance_and_scree(pca_run):
     assert list(rows[0]) == ["component", "eigenvalue", "explained_variance_ratio", "cumulative_ratio"]
 
 
-def test_real_data_summary_matches_planning_facts(pca_run):
+def test_real_data_summary_matches_selected_features(pca_run):
     summary = json.loads((pca_run / "summary.json").read_text(encoding="utf-8"))
-    assert summary["n_features"] == 25
+    assert summary["n_features"] == 27
     assert summary["n_samples"] == 50
-    assert summary["pc1_explained_variance_pct"] == 53.2
-    assert summary["pc2_explained_variance_pct"] == 8.0
+    assert summary["pc1_explained_variance_pct"] == 49.7
+    assert summary["pc2_explained_variance_pct"] == 9.2
     assert summary["k_cum_80"] == 6
-    assert summary["k_cum_90"] == 9
-    assert summary["kaiser_k"] == 6
+    assert summary["k_cum_90"] == 10
 
 
 def test_eigenvalues_match_correlation_matrix(pca_run):
     rows = pd.read_csv(pca_run / "explained_variance.csv")
-    assert rows["eigenvalue"].sum() == pytest.approx(25.0, abs=1e-6)  # trace of a 25x25 correlation matrix
+    assert rows["eigenvalue"].sum() == pytest.approx(27.0, abs=1e-6)  # trace of a 27x27 correlation matrix
 
 
 def test_orientation_rule_holds_on_fit_pca():
@@ -100,7 +98,7 @@ def test_components_for_threshold_exact_equality_edge():
     cum = np.array([0.5, 0.79, 0.8, 1.0])
     assert components_for_threshold(cum, 0.8) == 3
     assert components_for_threshold(cum, 0.81) == 4
-    assert components_for_threshold(np.array([0.5, 0.6]), 0.99) == 2
+    assert components_for_threshold(np.array([0.5, 0.6]), 0.99) is None
 
 
 def test_two_runs_give_identical_explained_variance(tmp_path, write_config):
@@ -130,13 +128,10 @@ def test_invalid_pca_configs_exit_2(tmp_path, write_config, override, capsys):
     assert not (tmp_path / "runs" / "pca").exists()
 
 
-def test_n_components_above_rank_is_a_config_error(tmp_path, write_config, capsys):
+def test_n_components_above_dimension_is_a_config_error(tmp_path, write_config, capsys):
     cfg = write_config("configs/pca.json", plots=False, **{"params.n_components": 99})
     assert main(["run", str(cfg), "--out-root", str(tmp_path / "runs")]) == 2
     assert "error:" in capsys.readouterr().err
-
-
-# --- Task 3: loadings, scores, biplot -------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -150,7 +145,7 @@ def real_fit():
 
 def test_components_are_orthonormal_and_scores_are_projections(real_fit):
     _, Z, result = real_fit
-    np.testing.assert_allclose(result.components @ result.components.T, np.eye(25), atol=1e-10)
+    np.testing.assert_allclose(result.components @ result.components.T, np.eye(27), atol=1e-10)
     np.testing.assert_allclose(result.scores, Z @ result.components.T, atol=1e-10)
 
 
@@ -160,7 +155,7 @@ def test_loadings_frame_rows_follow_csv_order(real_fit):
     design, _, result = real_fit
     full = loadings_frame(result)
     assert list(full.index) == list(design.X.columns)
-    assert list(full.columns) == [f"PC{i}" for i in range(1, 26)]
+    assert list(full.columns) == [f"PC{i}" for i in range(1, 28)]
     assert list(loadings_frame(result, 3).columns) == ["PC1", "PC2", "PC3"]
     np.testing.assert_allclose(full.to_numpy(), result.components.T)
 
@@ -217,8 +212,8 @@ def test_pca_run_writes_loadings_scores_and_plots(pca_run, csv_rows):
     assert list(scores.columns[:5]) == ["creator_id", "name", "dominant_topic", "PC1", "PC2"]
     assert set(scores["dominant_topic"]) <= {"football", "makeup", "dogs", "art"}
     loadings = pd.read_csv(pca_run / "loadings.csv")
-    assert loadings.shape == (25, 26) and loadings.columns[0] == "feature"
-    assert "topic_art_pct" not in set(loadings["feature"])
+    assert loadings.shape == (27, 28) and loadings.columns[0] == "feature"
+    assert "topic_art_pct" in set(loadings["feature"])
 
 
 def test_pca_summary_has_top_loadings(pca_run):
@@ -246,5 +241,5 @@ def test_biplot_max_arrows_and_loadings_pcs_are_respected(tmp_path, write_config
     )
     assert main(["run", str(cfg), "--out-root", str(tmp_path / "r")]) == 0
     run = tmp_path / "r" / "pca"
-    assert pd.read_csv(run / "loadings.csv").shape == (25, 5)
+    assert pd.read_csv(run / "loadings.csv").shape == (27, 5)
     assert (run / "biplot.png").stat().st_size > 0 and (run / "loadings_heatmap.png").stat().st_size > 0

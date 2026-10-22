@@ -2,15 +2,30 @@
   "experiment": "som_sweep",
   "kind": "sweep",
   "seed": 42,
-  "backend": "numpy",
   "plots": true,
   "base": "configs/som.json",
   "grid": {
-    "params.rows": [4, 5, 6, 7, 8, 10],
-    "params.eta0": [0.1, 0.5, 0.9],
-    "params.radius0": [1, 2, 3, 5],
-    "params.epochs": [50, 200, 500]
+    "params.rows": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "params.eta0": [
+      0.1,
+      0.5,
+      0.9
+    ],
+    "params.radius0": [
+      1,
+      2,
+      3
+    ],
+    "params.epochs": [
+      50,
+      200
+    ]
   },
-  "workers": 8,
+  "workers": 4,
   "child_plots": false
 }
