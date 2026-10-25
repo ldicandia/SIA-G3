@@ -15,6 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import RegularPolygon
+from matplotlib.ticker import FuncFormatter
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -22,6 +23,8 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
+
+from check_deck import check_u_matrix
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -34,7 +37,22 @@ MUTED = "#5E6B73"
 LIGHT = "#DDE3E5"
 FONT = "Arial"
 TOPICS = {"football": "Fútbol", "makeup": "Belleza", "dogs": "Perros", "art": "Arte"}
+# Un tópico conserva su color y su marcador en las diapositivas 3, 7, 13 y 17.
+TOPIC_COLORS = {"football": "#176B72", "makeup": "#A8467C", "dogs": "#9A6A00", "art": "#6B4C9A"}
+TOPIC_MARKERS = {"football": "o", "makeup": "s", "dogs": "^", "art": "D"}
+HEX_R = 1 / np.sqrt(3)
 QR_NAMES = {"food": "Principal", "wine": "Vinos", "beverages": "Bebidas", "dessert": "Postres", "specials": "Especiales"}
+def register_arial():
+    """WSL no trae Arial; se toma la de Windows para que las figuras coincidan con el resto del mazo."""
+    from matplotlib import font_manager
+    if any(f.name == FONT for f in font_manager.fontManager.ttflist):
+        return
+    for folder in (Path("/mnt/c/Windows/Fonts"), Path("C:/Windows/Fonts"), Path("/usr/share/fonts/truetype/msttcorefonts")):
+        for file in folder.glob("arial*.ttf"):
+            font_manager.fontManager.addfont(str(file))
+
+
+register_arial()
 plt.rcParams.update({"font.family": FONT, "font.size": 15, "axes.labelsize": 16,
                      "axes.titlesize": 17, "axes.spines.top": False, "axes.spines.right": False,
                      "axes.edgecolor": MUTED, "axes.labelcolor": INK, "text.color": INK,
@@ -50,8 +68,9 @@ def data(name, filename):
     return pd.read_csv(ROOT / "runs" / name / filename)
 
 
-def finish(fig, name):
-    fig.tight_layout(pad=1.2)
+def finish(fig, name, tight=True):
+    if tight:
+        fig.tight_layout(pad=1.2)
     path = FIG / f"{name}.png"
     fig.savefig(path, dpi=180, bbox_inches="tight")
     plt.close(fig)
@@ -61,6 +80,37 @@ def finish(fig, name):
 def axis(ax):
     ax.grid(axis="y", color=LIGHT, linewidth=.7, zorder=0)
     ax.set_axisbelow(True)
+
+
+def es(value, digits=0):
+    """Número con coma decimal y punto de miles."""
+    text = f"{value:,.{digits}f}"
+    return text.replace(",", "\0").replace(".", ",").replace("\0", ".")
+
+
+def signed(value, digits=2):
+    return ("+" if value >= 0 else "−") + es(abs(value), digits)
+
+
+def hex_patch(ax, x, y, face, edge="white", linewidth=2):
+    ax.add_patch(RegularPolygon((x, y), 6, radius=HEX_R, facecolor=face, edgecolor=edge,
+                                linewidth=linewidth, zorder=1))
+
+
+def hex_frame(ax, bottom=3.23):
+    ax.set(xlim=(-.55, 4.05), ylim=(bottom, -.63), aspect="equal")
+    ax.axis("off")
+
+
+def shared_border(a, b):
+    """Extremos del lado que comparten dos hexágonos vecinos."""
+    ax_, ay_, bx_, by_ = a[0], a[1], b[0], b[1]
+    mx, my = (ax_ + bx_) / 2, (ay_ + by_) / 2
+    dx, dy = bx_ - ax_, by_ - ay_
+    norm = np.hypot(dx, dy)
+    px, py = -dy / norm, dx / norm
+    half = HEX_R / 2
+    return [mx - px * half, mx + px * half], [my - py * half, my + py * half]
 
 
 def point_plot(ax, rows, metric, labels, ylabel, color=TEAL):
@@ -73,6 +123,162 @@ def point_plot(ax, rows, metric, labels, ylabel, color=TEAL):
     axis(ax)
 
 
+def pca_biplot():
+    """Diapositiva 7: creadores por tópico dominante, 27 flechas y cuatro flechas de tópico."""
+    scores = data("pca", "scores.csv")
+    loadings = data("pca", "loadings.csv").set_index("feature")
+    variance = data("pca", "explained_variance.csv").set_index("component")["explained_variance_ratio"] * 100
+    # Un único factor visual para todas las flechas: la más larga llega al 85% del rango de puntajes.
+    scale = .85 * min(scores.PC1.abs().max() / loadings.PC1.abs().max(),
+                      scores.PC2.abs().max() / loadings.PC2.abs().max())
+    fig, ax = plt.subplots(figsize=(13.4, 6.7))
+    for topic, label in TOPICS.items():
+        rows = scores.loc[scores.dominant_topic == topic]
+        ax.scatter(rows.PC1, rows.PC2, s=82, color=TOPIC_COLORS[topic], marker=TOPIC_MARKERS[topic],
+                   edgecolor="white", linewidth=.8, alpha=.95, zorder=3, label=f"{label} ({len(rows)})")
+    for feature in loadings.index:
+        xy = loadings.loc[feature, ["PC1", "PC2"]].to_numpy(dtype=float) * scale
+        ax.annotate("", xy, (0, 0), arrowprops={"arrowstyle": "-", "color": "#C3CDD1", "lw": 1.0}, zorder=1)
+    topic_labels = {"football": ("Fútbol", (-4, 10), "right"), "makeup": ("Belleza", (-8, -6), "right"),
+                    "dogs": ("Perros", (8, -4), "left"), "art": ("Arte", (9, 3), "left")}
+    for topic, (label, offset, ha) in topic_labels.items():
+        xy = loadings.loc[f"topic_{topic}_pct", ["PC1", "PC2"]].to_numpy(dtype=float) * scale
+        ax.annotate("", xy, (0, 0), arrowprops={"arrowstyle": "-|>", "color": TOPIC_COLORS[topic], "lw": 3.0,
+                                                "mutation_scale": 20}, zorder=4)
+        ax.annotate(label, xy, offset, textcoords="offset points", fontsize=14, fontweight="bold",
+                    color=TOPIC_COLORS[topic], ha=ha, zorder=6)
+    others = {"average_caption_words": ("Epígrafe", (6, 2), "left"),
+              "average_impressions": ("Impresiones", (-6, 4), "right"),
+              "content_showcase_pct": ("Showcase", (6, 2), "left"),
+              "argentina_audience_pct": ("Audiencia argentina", (-6, -4), "right")}
+    for feature, (label, offset, ha) in others.items():
+        xy = loadings.loc[feature, ["PC1", "PC2"]].to_numpy(dtype=float) * scale
+        ax.annotate("", xy, (0, 0), arrowprops={"arrowstyle": "->", "color": MUTED, "lw": 1.8}, zorder=2)
+        ax.annotate(label, xy, offset, textcoords="offset points", fontsize=13, color=MUTED, ha=ha, zorder=6)
+    for creator, offset, ha in [("@mateconideas", (8, -14), "left"), ("@mundoanimal.ar", (-8, 6), "right")]:
+        r = scores.loc[scores.name == creator].iloc[0]
+        ax.scatter([r.PC1], [r.PC2], s=190, facecolor="none", edgecolor=INK, linewidth=1.6, zorder=5)
+        ax.annotate(creator, (r.PC1, r.PC2), offset, textcoords="offset points", fontsize=13, ha=ha, zorder=6)
+    ax.axhline(0, color=LIGHT, lw=1, zorder=0); ax.axvline(0, color=LIGHT, lw=1, zorder=0)
+    ax.set(xlabel=f"PC1 ({es(variance['PC1'], 1)}%)", ylabel=f"PC2 ({es(variance['PC2'], 1)}%)")
+    ax.margins(.06)
+    ax.legend(ncol=4, frameon=False, loc="lower center", bbox_to_anchor=(.5, 1.0), fontsize=15,
+              handletextpad=.3, columnspacing=1.6)
+    finish(fig, "pca_biplot")
+
+
+def som_size_stats(table):
+    """Métricas por tamaño de grilla k×k, con medias y desvíos entre las 30 semillas."""
+    rows = table.loc[table.varied_parameter == "params.rows"].sort_values("parameter_value")
+    k = rows.parameter_value.astype(int).to_numpy()
+    n_creators = len(pd.read_csv(ROOT / "datos/creadores.csv"))
+    return pd.DataFrame({
+        "k": k,
+        "distance": rows.mean_bmu_distance_mean.to_numpy(), "distance_std": rows.mean_bmu_distance_std.to_numpy(),
+        "n_empty": rows.n_empty_neurons_mean.to_numpy(),
+        "empty_pct": rows.n_empty_neurons_mean.to_numpy() / k ** 2 * 100,
+        "empty_pct_std": rows.n_empty_neurons_std.to_numpy() / k ** 2 * 100,
+        "u": rows.u_mean_mean.to_numpy(), "u_std": rows.u_mean_std.to_numpy(),
+        "per_cell": n_creators / k ** 2})
+
+
+def som_size_fig(table):
+    """Diapositiva 11: por qué 4×4, con las tres medidas del barrido de tamaño."""
+    stats = som_size_stats(table)
+    chosen = stats.index[stats.k == 4][0]
+    panels = [("distance", "distance_std", "Distancia al ganador"),
+              ("empty_pct", "empty_pct_std", "Neuronas vacías (%)"),
+              ("u", "u_std", "U media")]
+    fig, axes = plt.subplots(1, 3, figsize=(14.4, 5.3))
+    x = np.arange(len(stats))
+    for ax, (column, error, label) in zip(axes, panels):
+        ax.errorbar(x, stats[column], yerr=stats[error], fmt="o-", color=TEAL, capsize=5,
+                    linewidth=2, markersize=8, zorder=3)
+        ax.scatter([chosen], [stats.loc[chosen, column]], s=210, color=COPPER, zorder=4)
+        side = 1 if column == "distance" else -1
+        ax.annotate("elegida", (chosen, stats.loc[chosen, column]), (14 * side, 14), textcoords="offset points",
+                    ha="left" if side > 0 else "right", fontsize=14, color=COPPER, fontweight="bold")
+        digits = 0 if column == "empty_pct" else 1
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _, d=digits: es(value, d)))
+        ax.set_xticks(x, labels=[f"{k}×{k}" for k in stats.k])
+        ax.set_ylabel(label)
+        ax.set_xlabel("Grilla")
+        ax.margins(x=.16, y=.25)
+        if column == "empty_pct":
+            ax.set_ylim(bottom=0)
+        axis(ax)
+    finish(fig, "som_size")
+
+
+def som_hits_fig(neurons):
+    """Diapositiva 13: cada celda lista a sus creadores, coloreados por tópico dominante."""
+    topic_of = data("som", "bmus.csv").set_index("name")["dominant_topic"]
+    cmap = LinearSegmentedColormap.from_list("hits", ["#FFFFFF", "#D2E5E6"])
+    fig, ax = plt.subplots(figsize=(8.6, 6.6))
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    hex_frame(ax, bottom=3.62)
+    fig.canvas.draw()
+    p0, p1 = ax.transData.transform((0, 0)), ax.transData.transform((1, 0))
+    points_per_unit = (p1[0] - p0[0]) * 72 / fig.dpi
+    top = neurons.hits.max()
+    for r in neurons.itertuples():
+        hex_patch(ax, r.x, r.y, cmap(r.hits / top), edge="#B8C3C8", linewidth=1.4)
+        names = [name for name in str(r.creators).split(";") if name and name != "nan"]
+        size = 9 if len(names) >= 8 else 10.5 if len(names) >= 5 else 12 if len(names) >= 3 else 13
+        size = max(9, min(size, 195 / max(len(name) for name in names)))  # el nombre más largo debe caber en la celda
+        pitch = size * 1.22
+        crowded = len(names) >= 8
+        for i, name in enumerate(names):
+            offset = ((len(names) - 1) / 2 - i) * pitch - (0 if crowded else 3)
+            ax.annotate(name, (r.x, r.y), (0, offset), textcoords="offset points", ha="center", va="center",
+                        fontsize=size, color=TOPIC_COLORS[topic_of[name]], zorder=3)
+        ax.annotate(str(r.neuron), (r.x, r.y), (0, HEX_R * points_per_unit * (.93 if crowded else .86)), textcoords="offset points",
+                    ha="center", va="center", fontsize=10, color=MUTED, zorder=3)
+    for i, (topic, label) in enumerate(TOPICS.items()):
+        x = .15 + i * 1.12
+        ax.scatter([x], [3.42], s=120, marker="s", color=TOPIC_COLORS[topic], zorder=3)
+        ax.text(x + .11, 3.42, label, va="center", fontsize=14, color=TOPIC_COLORS[topic], fontweight="bold")
+    finish(fig, "som_hits", tight=False)
+
+
+def som_u_fig(neurons):
+    """Diapositiva 14: matriz U; la arista de mayor distancia se dibuja sobre el borde compartido."""
+    cmap = LinearSegmentedColormap.from_list("map", ["#EFF4F4", TEAL])
+    lo, hi = neurons.u_distance.min(), neurons.u_distance.max()
+    fig, ax = plt.subplots(figsize=(8.6, 6.1))
+    for r in neurons.itertuples():
+        normalized = (r.u_distance - lo) / max(hi - lo, 1e-9)
+        hex_patch(ax, r.x, r.y, cmap(normalized))
+        ink = "white" if normalized > .55 else INK
+        ax.text(r.x, r.y, es(r.u_distance, 2), ha="center", va="center", fontsize=19, color=ink, fontweight="bold", zorder=3)
+        ax.text(r.x, r.y + .33, str(r.neuron), ha="center", va="center", fontsize=11, color=ink, zorder=3)
+    edge = data("som", "u_edges.csv").iloc[0]
+    a, b = neurons.iloc[int(edge.neuron_a)], neurons.iloc[int(edge.neuron_b)]
+    xs, ys = shared_border((a.x, a.y), (b.x, b.y))
+    ax.plot(xs, ys, color=COPPER, linewidth=7, solid_capstyle="round", zorder=5)
+    hex_frame(ax)
+    finish(fig, "som_u")
+
+
+def som_vs_pca_fig(neurons):
+    """Diapositiva 15: PC1 y PC2 de cada prototipo sobre la grilla."""
+    cmap = LinearSegmentedColormap.from_list("copper_teal", [COPPER, "#FFFFFF", TEAL])
+    fig, axes = plt.subplots(1, 2, figsize=(14.4, 5.4))
+    for ax, column, title in zip(axes, ["pc1", "pc2"], ["PC1 del prototipo", "PC2 del prototipo"]):
+        limit = neurons[column].abs().max()
+        for r in neurons.itertuples():
+            value = getattr(r, column)
+            fill = (value + limit) / (2 * limit)
+            hex_patch(ax, r.x, r.y, cmap(fill))
+            ax.text(r.x, r.y - .04, signed(value, 2), ha="center", va="center", fontsize=16, fontweight="bold",
+                    color="white" if abs(value) / limit > .72 else INK, zorder=3)
+            ax.text(r.x, r.y + .31, str(r.neuron), ha="center", va="center", fontsize=10,
+                    color="white" if abs(value) / limit > .72 else MUTED, zorder=3)
+        ax.set_title(title, fontsize=17)
+        hex_frame(ax)
+    finish(fig, "som_vs_pca")
+
+
 def charts():
     FIG.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "runs/hopfield_letters/storage.png", FIG / "hopfield_letters__storage.png")
@@ -80,14 +286,14 @@ def charts():
     top = raw.nlargest(3, "followers").iloc[::-1]
     fig, ax = plt.subplots(figsize=(11.6, 4.4))
     left = np.zeros(3)
-    colors = [TEAL, COPPER, "#8A999F", "#B8C3C8"]
-    for (topic, label), color in zip(TOPICS.items(), colors):
+    for topic, label in TOPICS.items():
+        color = TOPIC_COLORS[topic]
         values = top[f"topic_{topic}_pct"].to_numpy()
         ax.barh(top["name"], values, left=left, color=color, label=label, height=.55)
         for y, (start, width) in enumerate(zip(left, values)):
             if width >= 15:
                 ax.text(start + width / 2, y, f"{width:.0f}%", ha="center", va="center",
-                        color="white" if color in [TEAL, COPPER] else INK, fontsize=17)
+                        color="white", fontsize=17)
         left += values
     ax.set_xlim(0, 100)
     ax.set_xlabel("Contenido de cada tópico (%)")
@@ -121,25 +327,7 @@ def charts():
     axis(ax)
     finish(fig, "pca_variance")
 
-    scores = data("pca", "scores.csv")
-    loadings = data("pca", "loadings.csv").set_index("feature")
-    fig, ax = plt.subplots(figsize=(11.4, 5.8))
-    ax.scatter(scores.PC1, scores.PC2, color="#87959C", s=45, alpha=.8, zorder=2)
-    arrows = {"average_caption_words": "Epígrafe", "average_impressions": "Impresiones",
-              "content_showcase_pct": "Showcase", "topic_art_pct": "Arte",
-              "argentina_audience_pct": "Audiencia argentina"}
-    for feature, label in arrows.items():
-        xy = loadings.loc[feature, ["PC1", "PC2"]].to_numpy(dtype=float) * 9
-        ax.annotate("", xy, (0, 0), arrowprops={"arrowstyle": "->", "color": TEAL, "lw": 1.6})
-        ax.text(xy[0] * 1.12, xy[1] * 1.12, label, fontsize=14, color=TEAL,
-                ha="left" if xy[0] >= 0 else "right", va="center")
-    for creator in ["@mateconideas", "@mundoanimal.ar"]:
-        r = scores.loc[scores.name == creator].iloc[0]
-        ax.scatter([r.PC1], [r.PC2], s=70, color=COPPER)
-        ax.annotate(creator, (r.PC1, r.PC2), (7, 7), textcoords="offset points", fontsize=13)
-    ax.axhline(0, color=LIGHT, lw=1); ax.axvline(0, color=LIGHT, lw=1)
-    ax.set(xlabel="PC1 (49,7%)", ylabel="PC2 (9,2%)", xlim=(-8.5, 8.5), ylim=(-4.6, 5.4))
-    finish(fig, "pca_biplot")
+    pca_biplot()
 
     neurons = data("som", "neurons.csv")
     fig, ax = plt.subplots(figsize=(7, 5))
@@ -156,17 +344,15 @@ def charts():
     for parameter, name, metrics, ylabel in [
         ("params.eta0", "som_eta", ["mean_bmu_distance", "u_mean"], ["Distancia al ganador", "U media"]),
         ("params.radius0", "som_radius", ["mean_bmu_distance", "empty_neuron_frac"], ["Distancia al ganador", "Fracción vacía"]),
-        ("params.rows", "som_size", ["mean_bmu_distance", "n_empty_neurons"], ["Distancia al ganador", "Neuronas vacías"]),
     ]:
         rows = table.loc[table.varied_parameter == parameter]
         labels = [f"{x:g}" for x in rows.parameter_value]
-        if parameter == "params.rows":
-            labels = [f"{x}×{x}" for x in labels]
         fig, axes = plt.subplots(1, 2, figsize=(11.4, 4.9))
         for ax, metric, label in zip(axes, metrics, ylabel):
             point_plot(ax, rows, metric, labels, label)
-            ax.set_xlabel({"params.eta0": r"Tasa inicial $\eta_0$", "params.radius0": "Radio constante", "params.rows": "Grilla"}[parameter])
+            ax.set_xlabel({"params.eta0": r"Tasa inicial $\eta_0$", "params.radius0": "Radio constante"}[parameter])
         finish(fig, name)
+    som_size_fig(table)
 
     design = data("som_design_sweep", "comparison.csv")
     fig, axes = plt.subplots(1, 3, figsize=(12.8, 4.4))
@@ -180,26 +366,9 @@ def charts():
         ax.set_title(title)
     finish(fig, "som_design")
 
-    for field, name in [("hits", "som_hits"), ("u_distance", "som_u")]:
-        fig, ax = plt.subplots(figsize=(8.4, 5.5))
-        cmap = LinearSegmentedColormap.from_list("map", ["#EFF4F4", TEAL])
-        lo, hi = neurons[field].min(), neurons[field].max()
-        for r in neurons.itertuples():
-            value = getattr(r, field)
-            normalized = (value - lo) / max(hi - lo, 1e-9)
-            ax.add_patch(RegularPolygon((r.x, r.y), 6, radius=1 / np.sqrt(3),
-                                        facecolor=cmap(normalized), edgecolor="white", linewidth=2))
-            label = str(int(value)) if field == "hits" else f"{value:.2f}"
-            ax.text(r.x, r.y, label, ha="center", va="center", fontsize=19,
-                    color="white" if normalized > .55 else INK, fontweight="bold")
-            ax.text(r.x, r.y + .33, f"{r.neuron}", ha="center", va="center", fontsize=10,
-                    color="white" if normalized > .55 else INK)
-        if field == "u_distance":
-            edge = data("som", "u_edges.csv").iloc[0]
-            a, b = neurons.iloc[int(edge.neuron_a)], neurons.iloc[int(edge.neuron_b)]
-            ax.plot([a.x, b.x], [a.y, b.y], color=COPPER, linewidth=4, zorder=4)
-        ax.set(xlim=(-.8, 4.2), ylim=(3.4, -.8), aspect="equal"); ax.axis("off")
-        finish(fig, name)
+    som_hits_fig(neurons)
+    som_u_fig(neurons)
+    som_vs_pca_fig(neurons)
 
     weight = data("oja", "weights_stats.csv").set_index("feature")
     show = ["average_caption_words", "average_impressions", "average_reach", "saves_per_1000", "content_tutorial_pct", "price_usd"]
@@ -355,6 +524,9 @@ def text(slide, value, x, y, w, h, size=26, color=INK, bold=False, align=None):
         paragraph.text = line
         paragraph.font.name = FONT; paragraph.font.size = Pt(size)
         paragraph.font.bold = bold; paragraph.font.color.rgb = rgb(color)
+        for run in paragraph.runs:  # PowerPoint ignora el tipo de letra de párrafo; se fija también en cada texto
+            run.font.name = FONT; run.font.size = Pt(size)
+            run.font.bold = bold; run.font.color.rgb = rgb(color)
         paragraph.space_after = Pt(5)
         if align is not None: paragraph.alignment = align
     return shape
@@ -416,7 +588,8 @@ def build():
     text(s, "Trabajo Práctico 4 · SIA · ITBA · 2Q 2026", .9, 6.8, 13.5, .5, size=22, color=MUTED)
 
     SECTION = ""
-    s = new_slide(prs, "Índice", ["Ejercicio 1: creadores de contenido. Ejercicio 2: memoria asociativa de Hopfield."])
+    s = new_slide(prs, "Índice", ["Ejercicio 1: creadores de contenido. Ejercicio 2: memoria asociativa de Hopfield.",
+                                  "Fuente: SIATP42026.pdf, ejercicios 1 y 2."])
     for x, head, items in [
         (.9, "Ejercicio 1 · Creadores de contenido", [
             ("1.1", "Representación, estandarización y PCA"),
@@ -440,19 +613,36 @@ def build():
     picture(s, "followers_topics.png", y=2.0, h=5.4)
 
     SECTION = "1.1"
-    s = new_slide(prs, "Elegimos una representación de 27 variables", [
+    dropped = json.loads((ROOT / "configs/feature_set.json").read_text())["drop"]
+    short_reasons = {"price_ars": "price_usd × 1500",
+                     "total_engagement_per_1000": "likes + comentarios + guardados + compartidos",
+                     "estimated_argentina_reach": "alcance × % argentino",
+                     "organic_posts_pct": "100 − patrocinadas"}
+    assert set(short_reasons) == set(dropped), "feature_set.json cambió: revisar las razones de la diapositiva 4"
+    raw = pd.read_csv(ROOT / "datos/creadores.csv")
+    topic_sum = raw[[f"topic_{t}_pct" for t in TOPICS]].sum(axis=1)
+    content_sum = raw[[f"content_{c}_pct" for c in ["tutorial", "review", "entertainment", "showcase"]]].sum(axis=1)
+    deviation = max((topic_sum - 100).abs().max(), (content_sum - 100).abs().max())
+    hundred = "100%" if deviation < 1e-6 else "cerca de 100%"
+    s = new_slide(prs, "Quitamos 4 variables redundantes y quedan 27", [
         "50 creadores, 31 variables numéricas; nombres e ID solo identifican filas. Sin faltantes; conservamos los 50 registros.",
-        "price_ars duplica price_usd por conversión fija; organic_posts_pct complementa sponsored_posts_pct.",
-        "Engagement total suma cuatro interacciones; alcance argentino estimado combina alcance y porcentaje argentino. Conservamos sus componentes.",
-        "Retenemos completos los cuatro tópicos y los cuatro formatos para tratarlos simétricamente; las dependencias no impiden PCA.",
-        "Las cuatro columnas excluidas siguen en el CSV para interpretar campañas.",
-        "Fuente: enunciado pp. 1-4; configs/feature_set.json; runs/eda/identities.csv y feature_set.json."])
-    text(s, "31", 1.1, 2.1, 3.8, 1.8, size=112, color=MUTED)
-    text(s, "variables numéricas", 1.15, 4.2, 4.7, .7, size=28)
-    text(s, "→", 6.05, 2.45, 2, 1.4, size=70, color=MUTED)
-    text(s, "27", 9.2, 2.1, 4, 1.8, size=112, color=TEAL)
-    text(s, "variables de entrada", 9.25, 4.2, 5.5, .7, size=28)
-    text(s, "50 creadores conservados", 1.15, 6.5, 12, .7, size=30)
+        "Quitamos cuatro columnas porque se calculan a partir de otras que ya están. " + " ".join(
+            f"{name}: {reason}." for name, reason in dropped.items()),
+        "Siguen en el CSV: price_ars, el engagement total y el alcance argentino estimado sirven para interpretar campañas, no para entrenar.",
+        f"Conservamos completos los cuatro tópicos y los cuatro formatos de contenido. Cada grupo es un conjunto de porcentajes que suma {hundred} "
+        f"en los 50 creadores (desvío máximo {deviation:.1e}). Son variables dependientes, pero PCA admite esa dependencia, "
+        "y así todas las categorías pesan igual en las distancias de Kohonen y Oja. Cambiar columnas o pesos obliga a repetir el análisis.",
+        "Fuente: enunciado pp. 1-4; configs/feature_set.json; datos/creadores.csv; runs/eda/identities.csv y feature_set.json."])
+    text(s, "31", .9, 2.0, 2.2, 1.6, size=96, color=MUTED)
+    text(s, "→", 3.05, 2.2, 1.3, 1.3, size=60, color=MUTED)
+    text(s, "27", 4.3, 2.0, 2.2, 1.6, size=96, color=TEAL)
+    text(s, "numéricas", .95, 3.85, 2.6, .5, size=22, color=MUTED)
+    text(s, "de entrada", 4.35, 3.85, 2.6, .5, size=22, color=TEAL)
+    for i, (name, reason) in enumerate(short_reasons.items()):
+        y = 2.1 + i * 1.0
+        text(s, name, 7.3, y, 4.3, .5, size=19, bold=True)
+        text(s, reason, 11.0, y, 4.3, .9, size=19, color=COPPER)
+    text(s, f"Tópicos y formatos quedan completos: suman {hundred} y pesan igual", .9, 6.7, 14.2, .9, size=24, color=TEAL)
 
     s = new_slide(prs, "Estandarizamos antes de comparar perfiles", [
         "EDA: inspeccionamos distribuciones, correlaciones y boxplots en las 31 variables; aquí tres escalas ilustrativas.",
@@ -472,11 +662,20 @@ def build():
     picture(s, "pca_variance.png", y=1.55, h=5.8)
     caption(s, "Kohonen y Oja reciben las 27 variables estandarizadas")
 
+    scores = data("pca", "scores.csv")
+    counts = scores.dominant_topic.value_counts()
     s = new_slide(prs, "PC1 contrapone volumen y profundidad", [
         "PC1: epígrafe +0,256; impresiones -0,251; video -0,249; alcance -0,248; tendencias -0,246.",
         "PC2: showcase +0,419 y arte +0,401 frente a audiencia argentina -0,361 y perros -0,261.",
-        "Las flechas muestran cinco variables interpretables, con un factor común de escala visual; no son predictores comerciales.",
-        "El signo del autovector es una convención. Los puntos cercanos en dos PC pueden diferir en las restantes.",
+        "Color y marcador de cada punto: tópico dominante del creador (" + ", ".join(
+            f"{label} {counts[topic]}" for topic, label in TOPICS.items()) + "). Es un rótulo; no entra en PCA.",
+        "Las 27 flechas son los coeficientes de PC1 y PC2 multiplicados por un único factor visual. Las finas y grises no se rotulan; "
+        "las rotuladas en gris oscuro son las que interpretamos.",
+        "Las cuatro flechas gruesas de color son los tópicos y muestran hacia dónde tira cada uno: Perros hacia PC1 positiva (+0,133) y PC2 negativa, "
+        "Arte hacia PC2 positiva (+0,401), Belleza hacia abajo y a la izquierda. La flecha de Fútbol es corta (−0,066; +0,051): este plano explica poco de ese tópico.",
+        "Los dos creadores rotulados son ejemplos de cada extremo. No son predictores comerciales.",
+        "El plano de dos componentes omite 41,1% de la varianza y el signo del autovector es una convención. "
+        "Los puntos cercanos en dos PC pueden diferir en las restantes.",
         source_pca])
     picture(s, "pca_biplot.png", y=1.4, h=6.8)
 
@@ -502,10 +701,6 @@ def build():
             "Variamos solo el radio constante: 1, 2 y 3; mantenemos tamaño, η y épocas.",
             "Al aumentar el radio suben la distancia media al ganador y la fracción de neuronas vacías.",
             "U cae, pero esa caída no prueba calidad: actualizaciones amplias acercan los prototipos entre sí."]),
-        ("Más neuronas reducen la agregación", "som_size.png", [
-            "Variamos solo k de la grilla k×k: 3,4,5,6; cols=null acompaña el tamaño cuadrado.",
-            "Las grillas grandes reducen distancia al ganador, pero tienen más neuronas vacías y menor agregación de creadores.",
-            "4×4 mantiene grupos legibles. El tamaño no tiene un criterio demostrado en la clase; no afirmamos óptimo global."]),
     ]:
         s = new_slide(prs, title, reminders + [
             "Cada valor usa 30 semillas, 42 a 71. Barras: media ± desvío muestral entre entrenamientos, ddof=1.",
@@ -513,6 +708,27 @@ def build():
             source_som + " Fuente numérica: runs/som_sweep/comparison.csv."])
         picture(s, filename, y=1.7, h=5.8)
         caption(s, "Un parámetro por vez · 30 semillas · media ± DE")
+
+    size = som_size_stats(data("som_sweep", "comparison.csv")).set_index("k")
+    assert size.u.idxmin() == 4 and size.u[5] > size.u[4] and size.u[6] > size.u[5], "la U media ya no es mínima en 4×4"
+    assert size.empty_pct.is_monotonic_increasing and size.distance.is_monotonic_decreasing
+    line_chosen = (f"4×4: {es(size.n_empty[4], 1)} de 16 neuronas vacías ({es(size.empty_pct[4], 1)}%), U media mínima "
+                   f"({es(size.u[4], 3)}), unos {es(round(size.per_cell[4]))} creadores por celda")
+    line_others = (f"3×3 mezcla {es(size.per_cell[3], 1)} por celda; 5×5 y 6×6 dejan {es(size.empty_pct[5], 1)}% "
+                   f"y {es(size.empty_pct[6], 1)}% vacías y la U sube")
+    s = new_slide(prs, "Elegimos 4×4: casi sin vacías y con la U más baja", [
+        "Variamos solo k de la grilla k×k: 3, 4, 5 y 6; cols=null acompaña el tamaño cuadrado. Resto fijo en la base común.",
+        f"Distancia al ganador: {', '.join(f'{k}×{k} {es(size.distance[k], 3)}' for k in size.index)}. Baja siempre al agrandar la grilla, "
+        "pero eso solo refleja más prototipos para ajustar las mismas entradas.",
+        f"Neuronas vacías (de k²): {', '.join(f'{k}×{k} {es(size.n_empty[k], 2)} ({es(size.empty_pct[k], 1)}%)' for k in size.index)}.",
+        f"U media: {', '.join(f'{k}×{k} {es(size.u[k], 3)}' for k in size.index)}. Es mínima en 4×4.",
+        f"Creadores por celda con 50 creadores: {', '.join(f'{k}×{k} {es(size.per_cell[k], 1)}' for k in size.index)}. "
+        "3×3 mezcla perfiles; las grillas grandes dejan celdas vacías o con un solo creador.",
+        "Es un compromiso descriptivo: la clase no da un criterio de tamaño y no afirmamos un óptimo global ni significación estadística.",
+        "Cada valor usa 30 semillas, 42 a 71. Barras: media ± desvío muestral entre entrenamientos, ddof=1. Las vacías se expresan como % de k².",
+        source_som + " Fuente numérica: runs/som_sweep/comparison.csv (varied_parameter = params.rows); ej1.md 1.2."])
+    picture(s, "som_size.png", y=1.55, h=5.6)
+    text(s, line_chosen + "\n" + line_others, .85, 7.3, 14.3, 1.1, size=19, color=MUTED)
 
     s = new_slide(prs, "Contrastamos duración, topología e inicialización", [
         "Cada panel varía un único parámetro sobre la misma base, no combina los factores.",
@@ -529,29 +745,70 @@ def build():
         "Este mapa ilustra la semilla 42; las coordenadas no identifican perfiles permanentes entre entrenamientos.",
         "BMU 5 reúne 10 creadores de mayor profundidad; BMU 13 reúne 9 de mayor volumen. Revisar medias del cuadro.",
         "BMU 1 reúne dos creadores con 54,47% de arte y PC2 media positiva; el biplot permite interpretar el contraste.",
-        "El número grande es cantidad de creadores; el pequeño es índice de neurona, desde cero.",
+        "Cada celda lista los nombres de sus creadores, con el color de su tópico dominante; el número pequeño es el índice de neurona, desde cero.",
+        "Los nombres y el tópico dominante son solo rótulos: nunca entran al entrenamiento. La semilla 42 es un ejemplo; otras semillas rotan las celdas.",
         "Los perfiles son medias reales de los asignados; los pesos prototipo no tienen por qué coincidir con esas medias.",
-        source_som + " Datos: runs/som/{neurons,creator_profiles,bmus}.csv."])
-    picture(s, "som_hits.png", x=.7, y=1.5, w=8.7, h=6.5)
+        source_som + " Datos: runs/som/{neurons,creator_profiles,bmus}.csv; figura equivalente en docs/hallazgos/figuras/som__hit_map.png."])
+    picture(s, "som_hits.png", x=.5, y=1.5, w=9.9, h=6.4)
     for y, cell, label in [(2.0, 5, "Profundidad"), (3.8, 13, "Volumen"), (5.6, 1, "Arte")]:
         r = profiles.loc[cell]
-        text(s, f"Celda {cell} · {label}", 10, y, 5.2, .6, size=28, bold=True)
+        text(s, f"Celda {cell} · {label}", 10.7, y, 4.9, .6, size=28, bold=True)
         component, score = ("PC2", r.pc2) if cell == 1 else ("PC1", r.pc1)
-        text(s, f"{int(r.n_creators)} creadores · {component} {score:+.2f}", 10, y + .65, 5.2, .6, size=23, color=TEAL)
-    caption(s, "Ejemplo: semilla 42")
+        text(s, f"{int(r.n_creators)} creadores · {component} {signed(score)}", 10.7, y + .65, 4.9, .6, size=23, color=TEAL)
+    caption(s, "Ejemplo: semilla 42 · el color es el tópico dominante")
 
+    neurons = data("som", "neurons.csv")
     edge = data("som", "u_edges.csv").iloc[0]
+    u_deviation = check_u_matrix()
+    top_two = neurons.nlargest(2, "u_distance")
+    border = {}
+    for r in top_two.itertuples():
+        near = neurons[(np.hypot(neurons.x - r.x, neurons.y - r.y) <= 1.00001) & (neurons.neuron != r.neuron)]
+        border[r.neuron] = (int((np.sign(near.pc1) != np.sign(r.pc1)).sum()), len(near))
+    assert all(2 * opposite > total for opposite, total in border.values()), \
+        "las celdas de mayor U ya no tienen PC1 opuesta a la mayoría de sus vecinas"
+    cell_a, cell_b = sorted(border)
     s = new_slide(prs, "La matriz U localiza transiciones de perfil", [
         "Cada número grande es la distancia media del prototipo a sus vecinos; el pequeño es el índice de neurona.",
-        f"En la semilla 42 la mayor arista une {int(edge.neuron_a)} y {int(edge.neuron_b)}; distancia {edge.distance:.4f}. Revisar top_diff en u_edges.csv.",
-        "La arista resaltada es una distancia entre dos prototipos; no confundirla con la media U de una celda.",
+        f"Revisión de la matriz: recomputamos U desde los 27 pesos de cada prototipo en runs/som/weights.csv (vecinas a distancia de grilla ≤ 1) "
+        f"y coincide con neurons.csv; desvío máximo {u_deviation:.1e}. No hay error de cálculo.",
+        "docs/hallazgos/figuras/som__u_matrix.png usa otra paleta e imprime dentro de cada celda la cantidad de creadores; esta diapositiva imprime U. "
+        "Ambas colorean por U, y por eso parecían distintas.",
+        f"En la semilla 42 la mayor arista une {int(edge.neuron_a)} y {int(edge.neuron_b)}; distancia {es(edge.distance, 4)}. Se dibuja sobre el borde compartido "
+        "de las dos celdas. Es una distancia entre dos prototipos; no confundirla con la media U de una celda.",
+        f"Las dos celdas de mayor U ({cell_a} con {es(neurons.u_distance[cell_a], 2)} y {cell_b} con {es(neurons.u_distance[cell_b], 2)}) tienen PC1 de prototipo de signo "
+        f"opuesto al de la mayoría de sus vecinas ({border[cell_a][0]} de {border[cell_a][1]} y {border[cell_b][0]} de {border[cell_b][1]}): U marca el borde entre perfiles de volumen y de profundidad.",
         "U media entre 30 entrenamientos: 2,10844±0,19310. No promediamos pesos ni celdas que pueden rotarse.",
         "Distancia alta sugiere cambio de perfil; no establece una frontera estadística ni calidad comercial.",
-        source_som + " Datos: runs/som/{neurons,u_edges,per_seed}.csv."])
+        source_som + " Datos: runs/som/{neurons,weights,u_edges,per_seed}.csv."])
     picture(s, "som_u.png", x=.9, y=1.5, w=9.5, h=6.4)
-    text(s, "Uᵢ = media de ‖wᵢ − wⱼ‖", 10.0, 3.0, 5.0, 1.4, size=29, color=TEAL)
-    text(s, "j: vecinas de i", 10.0, 4.8, 4.8, .7, size=23)
-    caption(s, "Mapa de ejemplo: semilla 42")
+    text(s, "Uᵢ = media de ‖wᵢ − wⱼ‖", 10.3, 2.4, 5.0, 1.0, size=27, color=TEAL)
+    text(s, "j: vecinas de i", 10.3, 3.5, 4.8, .6, size=22)
+    text(s, f"Celdas {cell_a} y {cell_b}: mayor U y PC1 de signo opuesto al de sus vecinas", 10.3, 4.6, 5.0, 1.6, size=22, color=COPPER)
+    caption(s, "Número grande: U, no cantidad de creadores · semilla 42")
+
+    row_means = neurons.groupby("row")[["pc1", "pc2"]].mean()
+    pc1_rows, pc2_rows = row_means.pc1.tolist(), row_means.pc2.tolist()
+    assert all(a > b for a, b in zip(pc2_rows, pc2_rows[1:])), "PC2 ya no baja fila a fila"
+    assert min(pc1_rows[:2]) > 0 > max(pc1_rows[2:]), "PC1 ya no separa filas superiores de inferiores"
+    cells = profiles
+    s = new_slide(prs, "El mapa de Kohonen ordena a los creadores como PCA", [
+        "Cada hexágono muestra la PC1 (izquierda) o la PC2 (derecha) del prototipo de la celda, con rango simétrico por panel: cobre negativo, blanco cero, verde petróleo positivo.",
+        "Medias por fila de la grilla, de arriba abajo. PC1: " + ", ".join(signed(v) for v in pc1_rows)
+        + ". PC2: " + ", ".join(signed(v) for v in pc2_rows) + ".",
+        "PC1 es positiva en las dos filas de arriba y negativa en las dos de abajo; no es estrictamente monótona entre la primera y la segunda fila. PC2 baja de fila en fila.",
+        f"Celda 5, profundidad: la media de PC1 de sus creadores es {signed(cells.pc1[5])} y su prototipo {signed(neurons.pc1[5])}. "
+        f"Celda 13, volumen: {signed(cells.pc1[13])} y {signed(neurons.pc1[13])}. Celda 1, arte: PC2 media {signed(cells.pc2[1])} (ej1.md 1.2). "
+        "Las diapositivas muestran la proyección del prototipo; los valores de ej1.md son medias de los creadores asignados.",
+        "El mapa se entrena con las 27 variables estandarizadas, no con componentes. Que ordene a los creadores como PCA es una confirmación independiente.",
+        "Dos creadores cercanos en el biplot pueden caer en celdas distintas porque otras componentes también cuentan (ej1.md 1.2).",
+        "Versiones de la nota de hallazgos: som__biplot_cells.png y som__pc_planes.png.",
+        source_som + " Datos: runs/som/{neurons,creator_profiles}.csv; runs/pca/loadings.csv."])
+    picture(s, "som_vs_pca.png", y=1.5, h=5.1)
+    text(s, f"PC1 por fila, de arriba abajo: {'  '.join(signed(v, 1) for v in pc1_rows)}\n"
+            f"PC2: {'  '.join(signed(v, 1) for v in pc2_rows)}", .9, 6.75, 14.2, .9, size=19, color=INK)
+    text(s, "Entrenado con 27 variables, no con PC: confirmación independiente; otras componentes también cuentan",
+         .9, 7.85, 14.2, .4, size=18, color=MUTED)
 
     SECTION = "1.3"
     s = new_slide(prs, "Oja aproxima la primera componente", [
