@@ -416,6 +416,108 @@ def followers_vs_selection_fig():
     plt.close(fig)
 
 
+def letters_alphabet_fig():
+    """Diapositiva 22: las 26 letras 5×5, el conjunto elegido y el más correlacionado."""
+    alphabet = json.loads((ROOT / "datos/letras_5x5.json").read_text())
+    found = summary("hopfield_letters")
+    selected, worst = found["selected_letters"], found["worst_letters"]
+    columns, pitch_x, pitch_y = 7, 6.6, 8.0
+    fig, ax = plt.subplots(figsize=(9.6, 6.4))
+    for i, letter in enumerate(alphabet):
+        row, column = divmod(i, columns)
+        x0, y0 = column * pitch_x, row * pitch_y + 1.6
+        matrix = np.array([[char == "#" for char in line] for line in alphabet[letter]])
+        ax.imshow(matrix, cmap="binary", vmin=0, vmax=1, interpolation="nearest", extent=(x0, x0 + 5, y0 + 5, y0))
+        color = TEAL if letter in selected else COPPER if letter in worst else "#B8C3C8"
+        ax.add_patch(plt.Rectangle((x0 - .3, y0 - .3), 5.6, 5.6, fill=False, edgecolor=color,
+                                   linewidth=1 if color == "#B8C3C8" else 4))
+        ax.text(x0 + 2.5, y0 - .75, letter, ha="center", va="bottom", fontsize=18,
+                fontweight="bold" if color != "#B8C3C8" else "normal", color=color if color != "#B8C3C8" else INK)
+    ax.set(xlim=(-.8, columns * pitch_x - .8), ylim=(4 * pitch_y + .1, -.2), aspect="equal")
+    ax.axis("off")
+    finish(fig, "letters_alphabet")
+
+
+def qr_noise_fig():
+    """Diapositiva 30: ilustración del procedimiento de ruido sobre el QR principal."""
+    pixels = np.asarray(Image.open(ROOT / "datos/hopfield/food_menu_qr.png").convert("L"))
+    assert pixels.shape == (37, 37)
+    state = np.where(pixels < 128, 1, -1).ravel()
+    rng = np.random.default_rng(42)
+    panels = [("Original", state)]
+    for share in (.15, .30, .45):
+        k = round(share * state.size)
+        flipped = state.copy()
+        flipped[rng.choice(state.size, k, replace=False)] *= -1
+        panels.append((f"p = {es(share * 100)}%: {es(k)} módulos", flipped))
+    fig, axes = plt.subplots(1, 4, figsize=(13.6, 4.0))
+    for ax, (title, values) in zip(axes, panels):
+        ax.imshow(values.reshape(37, 37), cmap="binary", vmin=-1, vmax=1, interpolation="nearest")
+        ax.set_title(title, fontsize=16)
+        ax.axis("off")
+    finish(fig, "qr_noise")
+
+
+def qr_iterations_fig():
+    """Diapositiva 32: barridos que cambian el estado según el ruido."""
+    repeated = data("hopfield_qr", "recall_repetitions.csv")
+    found = summary("hopfield_qr")
+    fig, ax = plt.subplots(figsize=(14.4, 5.3))
+    series = {}
+    for group, color, label, marker in [("joint", COPPER, "Cinco QR juntos", "o"), ("single", TEAL, "Un QR por red", "s")]:
+        rows = repeated.loc[repeated["set"] == group].sort_values("level")
+        series[group] = rows
+        ax.errorbar(rows.level * 100, rows.mean_iterations_mean, yerr=rows.mean_iterations_std, fmt=f"{marker}-",
+                    color=color, capsize=4, linewidth=2.2, markersize=8, label=label, zorder=3)
+    joint, single = series["joint"], series["single"]
+    ax.annotate(es(joint.mean_iterations_mean.iloc[0], 3), (0, joint.mean_iterations_mean.iloc[0]), (10, 12),
+                textcoords="offset points", fontsize=16, color=COPPER, fontweight="bold")
+    ax.annotate(es(joint.mean_iterations_mean.iloc[-1], 3), (50, joint.mean_iterations_mean.iloc[-1]), (-12, 12),
+                textcoords="offset points", fontsize=16, color=COPPER, fontweight="bold", ha="right")
+    ax.annotate(f"{es(single.mean_iterations_mean.iloc[0])} barridos sin ruido: el original ya es un punto fijo",
+                (0, single.mean_iterations_mean.iloc[0]), (22, -5), textcoords="offset points", fontsize=15, color=TEAL)
+    ax.annotate(f"{es(single.mean_iterations_mean.iloc[1])} barrido con ruido", (25, single.mean_iterations_mean.iloc[5]),
+                (0, -26), textcoords="offset points", fontsize=15, color=TEAL, ha="center")
+    ax.axhline(found["max_iterations"], color=MUTED, linestyle=":", linewidth=1.5, zorder=1)
+    ax.text(26, found["max_iterations"] + .04, f"máximo observado: {found['max_iterations']}", fontsize=14, color=MUTED, ha="center")
+    ax.set(xlabel="Módulos invertidos (%)", ylabel="Barridos que cambian el estado", ylim=(-.2, found["max_iterations"] + .4))
+    ax.set_xticks(range(0, 55, 5))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: es(value, 1)))
+    ax.legend(frameon=False, loc="upper left", fontsize=15, bbox_to_anchor=(.02, .8))
+    axis(ax)
+    finish(fig, "qr_iterations")
+
+
+def qr_energy_fig():
+    """Diapositiva 33: energía por visita de neurona, con el estado final común y los cinco QR originales."""
+    trace = data("hopfield_qr", "energy_trace.csv")
+    repeated = data("hopfield_qr", "recall_repetitions.csv")
+    stored = data("hopfield_qr", "stored.csv")
+    final = repeated.loc[repeated["set"] == "joint", "mean_final_energy_mean"].iloc[0]
+    sweep_size = 1369
+    fig, ax = plt.subplots(figsize=(14.4, 5.2))
+    for energy in stored.energy:
+        ax.axhline(energy, color="#B8C3C8", linewidth=1.2, zorder=1)
+    ax.text(3.02, stored.energy.max() + 25, f"energía de cada QR original\n({es(stored.energy.min()).replace('-', '−')} a {es(stored.energy.max()).replace('-', '−')})",
+            fontsize=14, color=MUTED, va="bottom")
+    ax.axhline(final, color=COPPER, linestyle="--", linewidth=2.2, zorder=2)
+    ax.text(3.02, final, f"estado final común\n{es(final, 2).replace('-', '−')}", fontsize=15, color=COPPER, fontweight="bold", va="center")
+    shades = [TEAL, "#2E8B94", "#5BA3AA"]
+    for color, level in zip(shades, [.1, .3, .45]):
+        rows = trace.loc[np.isclose(trace.level, level)]
+        ax.plot(rows.step / sweep_size, rows.energy, color=color, linewidth=2.6, zorder=3)
+        ax.annotate(f"{es(level * 100)}% invertido", (0, rows.energy.iloc[0]), (-8, 0), textcoords="offset points", ha="right", va="center",
+                    fontsize=14, color=INK, fontweight="bold")
+    ax.set(xlabel="Barridos (un barrido son 1369 visitas a neuronas)", ylabel="Energía", xlim=(-.8, 3.02))
+    ax.set_xticks([0, 1, 2, 3])
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: es(value, 0)))
+    ax.margins(y=.08)
+    axis(ax)
+    fig.subplots_adjust(right=.76)
+    fig.savefig(FIG / "qr_energy.png", dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
 def charts():
     FIG.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "runs/hopfield_letters/storage.png", FIG / "hopfield_letters__storage.png")
@@ -579,18 +681,20 @@ def charts():
     ax.set_yticks(range(5), [QR_NAMES[name] for name in overlap.index])
     finish(fig, "qr_similarity")
 
-    fig, axes = plt.subplots(1, 3, figsize=(12.8, 4.2), gridspec_kw={"width_ratios": [1, 1, 1.35]})
+    fig, axes = plt.subplots(1, 2, figsize=(10.4, 5.2))
     first = np.asarray(Image.open(ROOT / "datos/hopfield/food_menu_qr.png").convert("L"))
     final = np.array([[char == "#" for char in row] for row in qr["spurious_state"]])
     axes[0].imshow(first, cmap="gray", vmin=0, vmax=255, interpolation="nearest")
     axes[1].imshow(final, cmap="binary", vmin=0, vmax=1, interpolation="nearest")
-    for ax, title in zip(axes[:2], ["Original sin ruido", "Estado final"]): ax.set_title(title); ax.axis("off")
+    for ax, title in zip(axes, ["Original sin ruido", "Estado final"]): ax.set_title(title, fontsize=19); ax.axis("off")
+    finish(fig, "qr_failure")
     repeated = data("hopfield_qr", "recall_repetitions.csv")
     joint = repeated.loc[repeated["set"] == "joint"]
-    axes[2].errorbar(joint.level * 100, joint.mean_iterations_mean, yerr=joint.mean_iterations_std,
-                     fmt="o-", color=TEAL, capsize=3, markersize=5)
-    axes[2].set(xlabel="Módulos invertidos (%)", ylabel="Barridos que cambian el estado")
-    axis(axes[2]); finish(fig, "qr_failure")
+
+    letters_alphabet_fig()
+    qr_noise_fig()
+    qr_iterations_fig()
+    qr_energy_fig()
 
     storage = data("hopfield_qr", "storage_control.csv")
     fig, axes = plt.subplots(1, 2, figsize=(11.8, 4.5))
@@ -747,7 +851,7 @@ def build():
             f"{name}: {reason}." for name, reason in dropped.items()),
         "Siguen en el CSV: price_ars, el engagement total y el alcance argentino estimado sirven para interpretar campañas, no para entrenar.",
         f"Conservamos completos los cuatro tópicos y los cuatro formatos de contenido. Cada grupo es un conjunto de porcentajes que suma {hundred} "
-        f"en los 50 creadores (desvío máximo {deviation:.1e}). Son variables dependientes, pero PCA admite esa dependencia, "
+        f"en los 50 creadores (desvío máximo {f"{deviation:.1e}".replace(".", ",")}). Son variables dependientes, pero PCA admite esa dependencia, "
         "y así todas las categorías pesan igual en las distancias de Kohonen y Oja. Cambiar columnas o pesos obliga a repetir el análisis.",
         "Fuente: enunciado pp. 1-4; configs/feature_set.json; datos/creadores.csv; runs/eda/identities.csv y feature_set.json."])
     text(s, "31", .9, 2.0, 2.2, 1.6, size=96, color=MUTED)
@@ -888,7 +992,7 @@ def build():
     s = new_slide(prs, "La matriz U localiza transiciones de perfil", [
         "Cada número grande es la distancia media del prototipo a sus vecinos; el pequeño es el índice de neurona.",
         f"Revisión de la matriz: recomputamos U desde los 27 pesos de cada prototipo en runs/som/weights.csv (vecinas a distancia de grilla ≤ 1) "
-        f"y coincide con neurons.csv; desvío máximo {u_deviation:.1e}. No hay error de cálculo.",
+        f"y coincide con neurons.csv; desvío máximo {f"{u_deviation:.1e}".replace(".", ",")}. No hay error de cálculo.",
         "docs/hallazgos/figuras/som__u_matrix.png usa otra paleta e imprime dentro de cada celda la cantidad de creadores; esta diapositiva imprime U. "
         "Ambas colorean por U, y por eso parecían distintas.",
         f"En la semilla 42 la mayor arista une {int(edge.neuron_a)} y {int(edge.neuron_b)}; distancia {es(edge.distance, 4)}. Se dibuja sobre el borde compartido "
@@ -916,7 +1020,7 @@ def build():
         "PC1 es positiva en las dos filas de arriba y negativa en las dos de abajo; no es estrictamente monótona entre la primera y la segunda fila. PC2 baja de fila en fila.",
         f"Celda 5, profundidad: la media de PC1 de sus creadores es {signed(cells.pc1[5])} y su prototipo {signed(neurons.pc1[5])}. "
         f"Celda 13, volumen: {signed(cells.pc1[13])} y {signed(neurons.pc1[13])}. Celda 1, arte: PC2 media {signed(cells.pc2[1])} (ej1.md 1.2). "
-        "Las diapositivas muestran la proyección del prototipo; los valores de ej1.md son medias de los creadores asignados.",
+        "Los mapas muestran la proyección del prototipo; los valores de ej1.md son medias de los creadores asignados.",
         "El mapa se entrena con las 27 variables estandarizadas, no con componentes. Que ordene a los creadores como PCA es una confirmación independiente.",
         "Dos creadores cercanos en el biplot pueden caer en celdas distintas porque otras componentes también cuentan (ej1.md 1.2).",
         "Versiones de la nota de hallazgos: som__biplot_cells.png y som__pc_planes.png.",
@@ -1053,6 +1157,32 @@ def build():
                   ("Registro", "Datos, parámetros, semillas y fecha; las celdas no son etiquetas")])
 
     SECTION = "2.1"
+    orthogonality = data("hopfield_letters", "orthogonality.csv")
+    n_subsets = len(orthogonality)
+    assert n_subsets == letters["n_subsets"] and orthogonality.letters.iloc[0] == "".join(letters["selected_letters"])
+    best_max, second_max = int(orthogonality.max_abs_dot.iloc[0]), int(orthogonality.max_abs_dot.iloc[1])
+    worst_max = int(letters["worst_max_abs_dot"])
+    assert worst_max == int(orthogonality.max_abs_dot.iloc[-1]) and best_max == int(letters["selected_max_abs_dot"])
+    n_letters = letters["n_letters"]
+    sel, wor = ", ".join(letters["selected_letters"]), ", ".join(letters["worst_letters"])
+    s = new_slide(prs, f"Elegimos las 4 letras más ortogonales de las {n_letters}", [
+        f"El enunciado pide un análisis de ortogonalidad. Comparamos los productos internos de las {es(n_subsets)} combinaciones de 4 letras entre las {n_letters} del alfabeto.",
+        f"Para cada combinación miramos el mayor producto interno absoluto entre pares de letras distintas; desempata el menor promedio absoluto. "
+        "Es una comparación de ortogonalidad, no otra regla de aprendizaje.",
+        f"Elegidas {sel}: máximo {best_max} de 25, es decir {es(best_max / 25, 2)} normalizado. La siguiente mejor combinación llega a {second_max}. "
+        "Las cuatro letras son puntos fijos de la red.",
+        f"No se puede bajar de {best_max}: con 25 neuronas (impar) el producto interno de dos vectores ±1 es 25 − 2d y nunca vale cero.",
+        f"Las más correlacionadas, {wor}, llegan a {worst_max} de 25 ({es(worst_max / 25, 2)}) y solo {letters['worst_n_fixed_points']} de 4 letras queda estable.",
+        "Por qué importa: con Hebb W=PᵀP/N, el campo sobre un patrón almacenado es el propio patrón más términos cruzados proporcionales a los productos internos. "
+        "Si son pequeños, los recuerdos no interfieren; la diapositiva 24 muestra la consecuencia.",
+        "Fuente: enunciado 2.2; clase Hopfield pp. 15, 20, 33-38; runs/hopfield_letters/{orthogonality,dot_products,stored}.csv y summary.json; ej2.md 2.2."])
+    picture(s, "letters_alphabet.png", x=.5, y=1.5, w=9.8, h=6.4)
+    for y, head, body in [(1.9, "Cómo", f"{es(n_subsets)} subconjuntos de 4 letras; mayor |producto interno| entre pares"),
+                          (3.8, "Resultado", f"{sel}: máximo {best_max} de 25 ({es(best_max / 25, 2)}); el siguiente, {second_max}"),
+                          (5.7, "Por qué no menos", f"25 es impar: dos vectores ±1 nunca dan 0. {wor} llegan a {worst_max} de 25 ({es(worst_max / 25, 2)})")]:
+        text(s, head, 10.6, y, 4.8, .5, size=24, bold=True, color=TEAL)
+        text(s, body, 10.6, y + .5, 4.8, 1.3, size=18)
+
     s = new_slide(prs, "Primero almacenamos cuatro letras", [
         "Cada letra 5×5 se recorre por filas: 25 estados bipolares. Negro=+1, blanco=-1.",
         "G, R, T, V forman cuatro filas de P: matriz 4×25. Cada posición corresponde a una neurona.",
@@ -1127,15 +1257,76 @@ def build():
     text(s, "Similitud media", 10, 3.9, 5, .7, size=27)
     text(s, "sᵘᵛ = (ξᵘ·ξᵛ) / (37·37)", 9.4, 5.45, 6, 1.2, size=27)
 
+    repeated = data("hopfield_qr", "recall_repetitions.csv")
+    joint = repeated.loc[repeated["set"] == "joint"]
+    qr_config = json.loads((ROOT / "configs/hopfield_qr.json").read_text())["params"]
+    levels, trials, n_repeats = qr_config["noise_levels"], qr_config["trials"], qr_config["n_repeats"]
+    n_patterns, n_neurons = qr["n_patterns"], qr["n_neurons"]
+    assert n_patterns * len(levels) * trials * n_repeats == qr["n_queries"]
+    shares = (.15, .30, .45)
+    s = new_slide(prs, "Deterioramos el QR invirtiendo módulos al azar", [
+        "Cómo se agrega el ruido: cada consulta parte de un QR original (±1, negro +1, umbral 128, 37×37) e invierte exactamente round(p × 1369) módulos distintos, "
+        "de +1 a −1 o al revés. Los módulos se sortean sin repetición.",
+        "La figura es una ilustración del procedimiento sobre el QR principal, con numpy.random.default_rng(42) y rng.choice(1369, k, replace=False): "
+        + ", ".join(f"p = {es(p * 100)}% invierte {es(round(p * n_neurons))} módulos" for p in shares)
+        + ". El experimento sortea sus propios conjuntos en cada consulta y semilla.",
+        f"Diseño: {len(levels)} niveles de {es(levels[0] * 100)} a {es(levels[-1] * 100)}% en pasos de 5, {trials} consultas por QR y nivel, {n_repeats} semillas "
+        f"({es(qr['n_queries'])} consultas con los cinco QR juntos y otras {es(qr['n_queries'])} en el control de un QR por red). Niveles en configs/hopfield_qr.json.",
+        f"Por qué el máximo es {es(levels[-1] * 100)}%: más allá de la mitad, la consulta queda más cerca del patrón invertido que del original.",
+        "En el código, tp4/experiments/hopfield_qr.py usa flip_bits (tp4/analysis/hopfield_eval.py) para invertir la cantidad exacta de posiciones.",
+        "Fuente: enunciado 2.1, tercera viñeta; configs/hopfield_qr.json; datos/hopfield/food_menu_qr.png; ej2.md 2.1."])
+    picture(s, "qr_noise.png", y=1.5, h=4.2)
+    text(s, f"Cada consulta invierte round(p × {n_neurons}) módulos distintos, de +1 a −1 o al revés", .9, 5.95, 14.2, .5, size=23, color=TEAL)
+    text(s, f"{len(levels)} niveles de {es(levels[0] * 100)} a {es(levels[-1] * 100)}% · {trials} consultas por QR y nivel · {n_repeats} semillas"
+            , .9, 6.75, 14.2, .5, size=20)
+    caption(s, "Ilustración con semilla 42; el experimento sortea sus propios módulos")
+
     s = new_slide(prs, "Cinco QR juntos pierden el recuerdo consultado", [
         "Con los cinco juntos, ningún original es punto fijo: 71, 91, 225, 225 y 103 módulos inestables.",
         "33.000 consultas conjuntas: 5 QR × 11 niveles × 20 consultas × 30 semillas. Recuperación exacta: 0% en todos los niveles.",
-        "Ejemplo de la semilla 42: original principal sin ruido y estado final espurio. La curva de barridos usa 30 semillas.",
-        "Máximo 2 barridos que cambian el estado; la comprobación final no cuenta como otro cambio.",
+        "Ejemplo de la semilla 42: original principal sin ruido y estado final espurio. Las iteraciones y la energía se analizan en las dos diapositivas siguientes.",
         "Energía asincrónica no creciente no garantiza recuerdo correcto. El fracaso aparece ya en estabilidad, antes del ruido.",
         "Fuente: clase Hopfield pp.34-38; runs/hopfield_qr/{stored,recall_repetitions,queries}.csv."])
-    picture(s, "qr_failure.png", y=1.7, h=5.5)
+    picture(s, "qr_failure.png", y=1.6, h=5.9)
     caption(s, "0% de recuperación exacta · 33.000 consultas conjuntas")
+
+    single = repeated.loc[repeated["set"] == "single"].sort_values("level")
+    joint_sorted = joint.sort_values("level")
+    s = new_slide(prs, "Converge en uno o dos barridos, sin acertar", [
+        "Una iteración es un barrido de actualización asincrónica que cambió el estado; el último barrido sin cambios solo comprueba el punto fijo. "
+        f"Un barrido visita una vez las {n_neurons} neuronas.",
+        f"Cinco QR juntos: {es(joint_sorted.mean_iterations_mean.iloc[0], 3)} barridos sin ruido, {es(joint_sorted.mean_iterations_mean.iloc[-1], 3)} con {es(levels[-1] * 100)}% invertido "
+        f"(±{es(joint_sorted.mean_iterations_std.iloc[-1], 3)}). Sube porque más módulos invertidos piden una segunda pasada de corrección.",
+        f"Un QR por red: {es(single.mean_iterations_mean.iloc[0])} barridos sin ruido (el original ya es un punto fijo) y {es(single.mean_iterations_mean.iloc[1])} con cualquier ruido.",
+        f"Máximo observado: {qr['max_iterations']} barridos. Pocas iteraciones no significan recuperación correcta: la recuperación exacta es 0% en todos los niveles con los cinco QR juntos.",
+        "Estadísticas entre 30 semillas, media ± DE; definición de iteración en ej2.md, Modelo y mediciones.",
+        "Fuente: enunciado 2.1, cuarta viñeta; runs/hopfield_qr/recall_repetitions.csv y summary.json; ej2.md."])
+    picture(s, "qr_iterations.png", y=1.45, h=6.3)
+    caption(s, "Un barrido visita las 1369 neuronas; el último, sin cambios, solo confirma el punto fijo")
+
+    never_up = bool(qr["energy_never_increased"]) and bool((joint_sorted.energy_increase_rate_mean == 0).all())
+    final_energy = float(joint_sorted.mean_final_energy_mean.iloc[0])
+    stored_energy = data("hopfield_qr", "stored.csv").energy
+    trace = data("hopfield_qr", "energy_trace.csv")
+    assert never_up and (joint_sorted.mean_final_energy_std < 1e-9).all() and np.allclose(joint_sorted.mean_final_energy_mean, final_energy)
+    assert final_energy < stored_energy.min()
+    trace_levels = [.1, .3, .45]
+    trace_info = {level: trace.loc[np.isclose(trace.level, level)] for level in trace_levels}
+    s = new_slide(prs, "La energía baja en cada paso, pero hacia un espurio", [
+        "Energía H = −½ sᵀWs. En actualización asincrónica con pesos simétricos y diagonal cero no aumenta con ninguna actualización: "
+        "summary.json informa energy_never_increased y la tasa de aumentos es cero en todos los niveles.",
+        "Trazas de ejemplo (semilla 42), energía inicial y visitas hasta el punto fijo: " + "; ".join(
+            f"{es(level * 100)}% invertido, {es(rows.energy.iloc[0], 0).replace('-', '−')} y {es(int(rows.step.max()))} visitas ({es(rows.step.max() / 1369, 1)} barridos)"
+            for level, rows in trace_info.items()) + ".",
+        f"Todas las consultas terminan con la misma energía final, {es(final_energy, 2).replace('-', '−')}, menor que la de cualquier QR original "
+        f"({es(stored_energy.min(), 2).replace('-', '−')} a {es(stored_energy.max(), 2).replace('-', '−')}): los originales no son puntos fijos y la red prefiere el estado espurio.",
+        f"Con un QR por red la energía final es {es(single.mean_final_energy_mean.iloc[0], 0).replace('-', '−')}, la del propio patrón: −(N−1)/2 con N=1369.",
+        "Que la energía baje no garantiza recordar el menú consultado: una recuperación rápida y con energía decreciente puede ser completamente incorrecta.",
+        "Fuente: enunciado 2.1, cuarta viñeta; runs/hopfield_qr/{energy_trace,stored,recall_repetitions}.csv y summary.json; ej2.md."])
+    picture(s, "qr_energy.png", y=1.45, h=5.0)
+    text(s, "La energía nunca aumentó en ninguna medición", .9, 6.65, 14.2, .5, size=22)
+    text(s, "Todas terminan en el mismo estado, con energía menor que la de cualquier QR original: la red prefiere el espurio",
+         .9, 7.35, 14.2, .9, size=22, color=COPPER)
 
     s = new_slide(prs, "Al reducir la carga, estos QR sí se recuperan", [
         "Controles de estabilidad exhaustivos: 5 redes con un QR y 10 parejas; todos sus patrones son estables.",
@@ -1156,6 +1347,27 @@ def build():
         "Fuente: enunciado 2.1; runs/hopfield_qr/recall_repetitions.csv y summary.json; lector zxing-cpp."])
     picture(s, "qr_reader.png", y=1.6, h=6.2)
     caption(s, "Matrices alineadas de 37×37; fotografías reales quedan fuera de esta prueba")
+
+    single_recovery = single.recovery_rate_mean
+    assert (single_recovery == 1).all() and qr["n_fixed_points"] == 0
+    all_flipped = round(levels[-1] * n_neurons)
+    s = new_slide(prs, "Limitaciones: interferencia, daño simulado y menús fijos", [
+        "Pregunta del enunciado: explicar las limitaciones del caso de uso.",
+        f"Interferencia: con los cinco menús juntos hay {qr['n_fixed_points']} de {n_patterns} patrones estables y {es(qr['n_shared_modules'])} de {n_neurons} módulos compartidos. "
+        f"La referencia 0,15 N ≈ {es(qr['capacity_015'], 0)} no aplica como garantía con patrones tan correlacionados: estar muy por debajo de la capacidad no resuelve la correlación.",
+        "Daño simulado: trabajamos con matrices alineadas de 37×37 e inversiones al azar, como delimita el enunciado. Una foto real exigiría detectar, alinear y binarizar los módulos.",
+        "Menús nuevos: la red no conoce menús que no se almacenaron; cambiar una carta obliga a recalcular W y volver a comprobar estabilidad e interferencia.",
+        "Salida sin garantía: poca energía y pocos barridos no prueban que la salida corresponda al menú consultado.",
+        f"Control: con un QR por red la recuperación es 100% hasta {es(all_flipped)} de {n_neurons} módulos invertidos ({es(all_flipped / n_neurons * 100, 3)}%). "
+        "La limitación corresponde a la memoria conjunta y su interferencia, no al formato QR.",
+        "Fuente: enunciado 2.1, última viñeta; ej2.md, Limitaciones del caso de uso; runs/hopfield_qr/summary.json y recall_repetitions.csv."])
+    four_rows(s, [("Interferencia", f"{qr["n_fixed_points"]} de {n_patterns} estables: comparten {es(qr['n_shared_modules'])} de {n_neurons} módulos y 0,15 N no aplica"),
+                  ("Daño simulado", "Solo matrices alineadas y ruido al azar; una foto real exige alinear y binarizar"),
+                  ("Menús nuevos", "La red no los conoce: cambiar una carta exige recalcular W"),
+                  ("Salida sin garantía", "Energía baja y pocos barridos no prueban el menú correcto")],
+              y0=1.7, pitch=1.2)
+    text(s, f"Un QR por red recupera 100% hasta {es(all_flipped)} de {n_neurons} módulos invertidos: el límite es la memoria conjunta",
+         .9, 6.7, 14.2, 1.2, size=23, color=TEAL)
 
     prs.save(OUT)
     print(f"{OUT}: {len(prs.slides)} diapositivas, {sum(bool(s.notes_slide.notes_text_frame.text.strip()) for s in prs.slides)} con notas")
