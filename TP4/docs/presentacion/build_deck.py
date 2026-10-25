@@ -21,6 +21,7 @@ import pandas as pd
 from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
@@ -279,6 +280,142 @@ def som_vs_pca_fig(neurons):
     finish(fig, "som_vs_pca")
 
 
+FEATURE_LABELS = {
+    "followers": "Seguidores", "average_reach": "Alcance medio", "average_impressions": "Impresiones medias",
+    "average_video_views": "Vistas de video", "monthly_posts": "Publicaciones por mes",
+    "argentina_audience_pct": "Audiencia argentina", "non_follower_reach_pct": "Alcance a no seguidores",
+    "likes_per_1000": "Likes por 1000", "comments_per_1000": "Comentarios por 1000",
+    "saves_per_1000": "Guardados por 1000", "shares_per_1000": "Compartidos por 1000",
+    "profile_visits_per_1000": "Visitas al perfil por 1000", "price_usd": "Precio (USD)",
+    "sponsored_posts_pct": "Patrocinadas", "topic_football_pct": "Tópico fútbol",
+    "topic_makeup_pct": "Tópico belleza", "topic_dogs_pct": "Tópico perros", "topic_art_pct": "Tópico arte",
+    "content_tutorial_pct": "Tutoriales", "content_review_pct": "Reseñas",
+    "content_entertainment_pct": "Entretenimiento", "content_showcase_pct": "Showcase",
+    "average_caption_words": "Palabras de epígrafe", "average_watch_time_seconds": "Tiempo de visualización",
+    "video_posts_pct": "Publicaciones de video", "short_form_posts_pct": "Formato corto",
+    "trend_posts_pct": "Tendencias"}
+
+
+def oja_weights_fig():
+    """Diapositiva 16: los 27 coeficientes de Oja y de PC1, ordenados por PC1."""
+    weight = data("oja", "weights_stats.csv").set_index("feature")
+    assert set(weight.index) == set(FEATURE_LABELS) and len(weight) == 27
+    weight = weight.sort_values("pc1_loading", ascending=False)
+    halves = [weight.iloc[:14], weight.iloc[14:]]
+    limit = max((weight.oja_weight_mean.abs() + weight.oja_weight_std).max(), weight.pc1_loading.abs().max()) * 1.08
+    fig, axes = plt.subplots(1, 2, figsize=(14.4, 6.2), sharex=True)
+    for ax, part in zip(axes, halves):
+        y = np.arange(len(part))
+        ax.barh(y - .19, part.oja_weight_mean, height=.34, color=TEAL, xerr=part.oja_weight_std,
+                error_kw={"ecolor": INK, "elinewidth": 1, "capsize": 2}, label="Oja, media ± DE", zorder=3)
+        ax.barh(y + .19, part.pc1_loading, height=.34, color=COPPER, label="PC1", zorder=3)
+        ax.set_yticks(y, labels=[FEATURE_LABELS[name] for name in part.index], fontsize=13)
+        ax.invert_yaxis()
+        ax.axvline(0, color=INK, linewidth=1, zorder=4)
+        ax.set_xlim(-limit, limit)
+        ax.grid(axis="x", color=LIGHT, linewidth=.7, zorder=0)
+        ax.tick_params(axis="x", labelsize=12)
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: es(value, 1)))
+        ax.set_xlabel("Coeficiente del vector normalizado", fontsize=13)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, ncol=2, frameon=False, loc="upper center", fontsize=14)
+    fig.tight_layout(rect=(0, 0, 1, .94), pad=1.0)
+    path = FIG / "oja_weights.png"
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def oja_index_fig():
+    """Diapositiva 17: índice de Oja por tópico dominante, con los cinco más altos marcados."""
+    ranking = data("oja", "ranking.csv")
+    medians = ranking.groupby("dominant_topic").oja_index.median().sort_values(ascending=False)
+    jitter = np.random.default_rng(7).uniform(-.27, .27, len(ranking))
+    fig, ax = plt.subplots(figsize=(14.4, 4.5))
+    labels = []
+    for row, (topic, median) in enumerate(medians.items()):
+        mask = (ranking.dominant_topic == topic).to_numpy()
+        ax.scatter(ranking.oja_index[mask], row + jitter[mask], s=95, color=TOPIC_COLORS[topic],
+                   marker=TOPIC_MARKERS[topic], edgecolor="white", linewidth=.8, zorder=3)
+        ax.plot([median, median], [row - .38, row + .38], color=INK, linewidth=3, zorder=4)
+        labels.append(f"{TOPICS[topic]}\nmediana {signed(median, 2)}")
+    top5 = ranking.nsmallest(5, "rank")
+    assert (top5.dominant_topic == "dogs").all() and medians.index[0] == "dogs"
+    left, right, base = top5.oja_index.min(), top5.oja_index.max(), -.55
+    ax.plot([left, left, right, right], [base + .12, base, base, base + .12], color=INK, linewidth=1.5, clip_on=False)
+    ax.text((left + right) / 2, base - .08, "los 5 más altos, todos de perros", ha="center", va="bottom", fontsize=14,
+            clip_on=False)
+    ax.set_yticks(range(len(medians)), labels=labels, fontsize=14)
+    ax.set_ylim(len(medians) - .5, -.95)
+    ax.axvline(0, color=LIGHT, linewidth=1, zorder=0)
+    ax.set_xlabel("Índice de Oja, proyección sobre PC1 (ejemplo de la semilla 42)", fontsize=14)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: es(value, 0)))
+    ax.tick_params(axis="x", labelsize=13)
+    ax.grid(axis="x", color=LIGHT, linewidth=.7, zorder=0)
+    ax.spines[["left"]].set_visible(False)
+    ax.tick_params(axis="y", length=0)
+    finish(fig, "oja_index")
+
+
+def football_rows():
+    profiles = data("campaigns", "strategy_profiles.csv").query("client == 'football'").set_index("som_bmu")
+    return [("Alcance masivo", 13), ("Descubrimiento", 0), ("Profundidad", 5)], profiles
+
+
+def football_strategies_fig():
+    """Diapositiva 18: tabla de decisión de las tres estrategias de fútbol."""
+    strategies, profiles = football_rows()
+    columns = [("mean_followers", "Seguidores\nmedios", 0, True), ("mean_non_follower_reach_pct", "Alcance a no\nseguidores (%)", 2, True),
+               ("mean_saves_per_1000", "Guardados\npor 1000", 2, True), ("mean_content_tutorial_pct", "Tutoriales\n(%)", 2, True),
+               ("total_price_usd", "Costo total\n(USD)", 2, False)]
+    cells = [13, 0, 5]
+    fig, ax = plt.subplots(figsize=(14.4, 4.2))
+    ax.set(xlim=(0, 14.4), ylim=(4.2, 0)); ax.axis("off")
+    centers = [5.6, 7.75, 9.9, 11.85, 13.5]
+    ax.text(.1, .55, "Estrategia", fontsize=15, color=MUTED, va="center")
+    for (column, header, _, _), x in zip(columns, centers):
+        ax.text(x, .55, header, fontsize=15, color=MUTED, ha="center", va="center", linespacing=1.15)
+    ax.plot([0, 14.4], [1.1, 1.1], color=INK, linewidth=1.2)
+    for i, ((name, cell), y) in enumerate(zip(strategies, [1.85, 2.75, 3.65])):
+        ax.text(.1, y, f"{name}\n", fontsize=19, fontweight="bold", va="center")
+        ax.text(.1, y + .24, f"celda {cell}", fontsize=15, color=MUTED, va="center")
+        for (column, _, digits, higher), x in zip(columns, centers):
+            values = profiles.loc[cells, column]
+            best = values.max() if higher else values.min()
+            value = profiles.loc[cell, column]
+            win = abs(value - best) < 1e-9
+            ax.text(x, y, es(value, digits), fontsize=21, ha="center", va="center",
+                    color=TEAL if win else INK, fontweight="bold" if win else "normal")
+        if i < 2:
+            ax.plot([0, 14.4], [y + .45, y + .45], color=LIGHT, linewidth=1)
+    finish(fig, "football_strategies")
+
+
+def followers_vs_selection_fig():
+    """Diapositiva 20: selección propia contra las dos estrategias de seguidores."""
+    comparison = data("campaigns", "comparison.csv")
+    clients = ["dogs", "football", "makeup", "art"]
+    strategies = [("assumption", "Nuestra selección", TEAL), ("followers_global", "Seguidores global", "#8A999F"),
+                  ("followers_in_topic", "Seguidores del tópico", COPPER)]
+    panels = [("mean_topic_share", "Contenido del tópico (%)", 0), ("summed_est_arg_reach", "Alcance argentino estimado", 0),
+              ("mean_saves_per_1000", "Guardados por 1000", 0), ("total_price_usd", "Costo total (USD)", 0)]
+    fig, axes = plt.subplots(1, 4, figsize=(14.4, 4.0))
+    x = np.arange(len(clients))
+    for ax, (column, title, digits) in zip(axes, panels):
+        for k, (strategy, label, color) in enumerate(strategies):
+            rows = comparison.loc[comparison.strategy == strategy].set_index("client").loc[clients]
+            ax.bar(x + (k - 1) * .27, rows[column], width=.26, color=color, label=label, zorder=3)
+        ax.set_xticks(x, labels=[TOPICS[client] for client in clients], fontsize=12)
+        ax.set_title(title, fontsize=14)
+        ax.tick_params(axis="y", labelsize=12)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _, d=digits: es(value, d)))
+        ax.grid(axis="y", color=LIGHT, linewidth=.7, zorder=0)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, ncol=3, frameon=False, loc="upper center", fontsize=14)
+    fig.tight_layout(rect=(0, 0, 1, .9), pad=1.0)
+    fig.savefig(FIG / "followers_vs_selection.png", dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
 def charts():
     FIG.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "runs/hopfield_letters/storage.png", FIG / "hopfield_letters__storage.png")
@@ -370,42 +507,10 @@ def charts():
     som_u_fig(neurons)
     som_vs_pca_fig(neurons)
 
-    weight = data("oja", "weights_stats.csv").set_index("feature")
-    show = ["average_caption_words", "average_impressions", "average_reach", "saves_per_1000", "content_tutorial_pct", "price_usd"]
-    labels = ["Epígrafe", "Impresiones", "Alcance", "Guardados", "Tutoriales", "Precio"]
-    fig, ax = plt.subplots(figsize=(10.4, 5.4))
-    y = np.arange(len(show))
-    ax.errorbar(weight.loc[show, "oja_weight_mean"], y - .12,
-                xerr=weight.loc[show, "oja_weight_std"], fmt="o", color=TEAL, capsize=4, markersize=9, label="Oja, media ± DE")
-    ax.scatter(weight.loc[show, "pc1_loading"], y + .12, marker="x", s=85, linewidths=2, color=COPPER, label="PC1")
-    ax.set_yticks(y, labels=labels); ax.invert_yaxis()
-    ax.axvline(0, color=LIGHT); ax.set_xlabel("Coeficiente del vector normalizado")
-    ax.legend(frameon=False, loc="lower right")
-    finish(fig, "oja_weights")
-
-    index = data("oja", "index_stats.csv")
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-    ax.errorbar(index.pc1_score, index.oja_index_mean, yerr=index.oja_index_std, fmt="o", ms=5,
-                color="#8F9CA2", alpha=.8, linewidth=.8, capsize=2)
-    stable = index.top5_count == index.n_repeats
-    ax.scatter(index.loc[stable, "pc1_score"], index.loc[stable, "oja_index_mean"], s=55, color=TEAL, zorder=3)
-    ax.plot([-7.5, 7.5], [-7.5, 7.5], color=INK, lw=1, ls=":")
-    ax.set(xlabel="PC1", ylabel="Índice de Oja, media ± DE")
-    axis(ax)
-    finish(fig, "oja_scores")
-
-    profiles = data("campaigns", "strategy_profiles.csv").query("client == 'football'")
-    compare = profiles.loc[profiles.som_bmu.isin([5, 13])].sort_values("som_bmu")
-    fig, axes = plt.subplots(1, 3, figsize=(12.2, 4.4))
-    for ax, column, label in zip(axes, ["mean_content_tutorial_pct", "mean_saves_per_1000", "mean_followers"],
-                                ["Tutoriales (%)", "Guardados por 1000", "Seguidores (miles)"]):
-        values = compare[column].to_numpy()
-        if column == "mean_followers": values = values / 1000
-        ax.bar(["Celda 5", "Celda 13"], values, color=[TEAL, COPPER], width=.55)
-        for i, value in enumerate(values): ax.text(i, value + max(values) * .04, f"{value:.1f}", ha="center", fontsize=17)
-        ax.set_ylim(0, max(values) * 1.25); ax.set_ylabel(label)
-        axis(ax)
-    finish(fig, "football_profiles")
+    oja_weights_fig()
+    oja_index_fig()
+    football_strategies_fig()
+    followers_vs_selection_fig()
 
     dots = data("hopfield_letters", "dot_products.csv").set_index("letter")
     letters = summary("hopfield_letters")
@@ -562,6 +667,18 @@ def new_slide(prs, title, reminders):
 
 def caption(slide, value):
     text(slide, value, .85, 7.95, 14.2, .45, size=20, color=MUTED)
+
+
+def four_rows(slide, rows, y0=1.75, pitch=1.35, size=21):
+    """Filas de disparador en negrita y explicación en verde petróleo, separadas por filetes finos."""
+    for i, (trigger, body) in enumerate(rows):
+        y = y0 + i * pitch
+        if i:
+            rule = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(.9), Inches(y - .2), Inches(14.2), Inches(.02))
+            rule.fill.solid(); rule.fill.fore_color.rgb = rgb(LIGHT)
+            rule.line.fill.background(); rule.shadow.inherit = False
+        text(slide, trigger, .9, y, 4.6, 1.0, size=size + 1, bold=True)
+        text(slide, body, 5.7, y, 9.4, 1.1, size=size, color=TEAL)
 
 
 def build():
@@ -811,40 +928,65 @@ def build():
          .9, 7.85, 14.2, .4, size=18, color=MUTED)
 
     SECTION = "1.3"
+    cosine_mean, cosine_std = oja["cosine_to_pc1_mean"], oja["cosine_to_pc1_std"]
     s = new_slide(prs, "Oja aproxima la primera componente", [
         "Una neurona: y=w·x; actualización Δw=ηy(x−yw); pesos iniciales uniformes [0,1], η=0,001, 200 épocas.",
-        "Mostramos seis coeficientes interpretables; pesos completos y dispersiones en weights_stats.csv.",
-        "Coseno absoluto con PC1: media 0,999891, DE 0,000039 en 30 entrenamientos.",
+        "Antes mostrábamos seis coeficientes; ahora van las 27 variables, ordenadas por su coeficiente en PC1, para que no falte ninguna.",
+        "Cada variable tiene dos barras: coeficiente de Oja (media ± DE entre 30 semillas) y de PC1. Casi se superponen, que es lo esperable.",
+        "No hace falta agrupar por tipo: ordenar por coeficiente ya separa las variables de volumen (negativas: impresiones, vistas de video, alcance, "
+        "tendencias, seguidores, precio) de las de profundidad (positivas: epígrafe, guardados, visitas al perfil, comentarios, tutoriales).",
+        f"Coseno absoluto con PC1: media {es(cosine_mean, 6)}, DE {es(cosine_std, 6)} en 30 entrenamientos.",
         "PC1 solo permite comparar y orientar el informe. No interviene en actualización ni parada.",
         "Norma cerca de uno no prueba dirección convergida. Con η constante persiste variación del vector.",
         "Fuente: clase Oja y Sanger pp. 12-16; runs/oja/{repeats,weights_stats,history_stats}.csv."])
-    picture(s, "oja_weights.png", x=.7, y=1.6, w=10.5, h=6.4)
-    text(s, "0,999891", 11.5, 2.55, 4, .9, size=43, color=TEAL, bold=True)
-    text(s, "± 0,000039", 11.5, 3.6, 4, .7, size=26)
-    text(s, "Coseno con PC1\n30 semillas", 11.5, 4.8, 4, 1.4, size=23, color=MUTED)
+    picture(s, "oja_weights.png", x=.8, y=1.4, w=14.4, h=6.4)
+    caption(s, f"Coseno con PC1: {es(cosine_mean, 6)} ± {es(cosine_std, 6)} en 30 semillas")
 
-    s = new_slide(prs, "El índice ordena un eje de variación", [
-        "Cada punto es un creador; eje Y muestra media y DE del índice entre semillas.",
-        "Normalizamos y alineamos el signo de los vectores aprendidos para informar; nunca renormalizamos durante el entrenamiento.",
-        "Los cinco primeros aparecen en top5 en los 30 entrenamientos; las cinco cuentas corresponden al extremo positivo de PC1.",
-        "Índice alto no mide ventas, adopciones ni adecuación universal. Invertir el signo invierte el ranking.",
-        "La decisión necesita el objetivo de campaña y las variables observadas, no el máximo automático.",
-        "Fuente: clase PCA p.46; Oja pp.12-16; runs/oja/index_stats.csv y ranking.csv."])
-    picture(s, "oja_scores.png", x=.8, y=1.65, w=10.8, h=6.1)
-    text(s, "Top 5 estable", 11.7, 2.65, 3.7, .8, size=29, bold=True)
-    text(s, "30/30", 11.7, 3.75, 3.7, .9, size=44, color=TEAL)
-    text(s, "entrenamientos", 11.7, 4.9, 3.7, .7, size=23)
+    ranking = data("oja", "ranking.csv")
+    index_stats = data("oja", "index_stats.csv")
+    always_top5 = index_stats.loc[index_stats.top5_count == index_stats.n_repeats, "name"].tolist()
+    football = ranking.loc[ranking.dominant_topic == "football"].reset_index(drop=True)
+    football_positions = [int(football.index[football.name == handle][0]) + 1 for handle in campaigns["football_picks"]]
+    s = new_slide(prs, "No elegimos al máximo del índice para cualquier campaña", [
+        "Qué representa: es la proyección de cada creador sobre el vector que aprende Oja, normalizado y orientado para informar. "
+        f"Coincide con PC1 (coseno {es(cosine_mean, 6)}, correlación de puntajes {es(oja['pearson_scores_pc1_mean'], 6)}).",
+        "Cómo se interpreta: es el eje de mayor variación, volumen y alcance contra profundidad de interacción y epígrafes largos. No mide calidad, ventas ni adecuación.",
+        "¿Es correcto elegir automáticamente al creador con el valor más alto para cualquier campaña? No. Los cinco más altos son de perros "
+        f"({', '.join(always_top5)}) y aparecen en el top 5 en las 30 semillas; maximizar el índice elegiría un estilo y favorecería ciertos tópicos "
+        "sin mirar objetivo, público ni precio.",
+        "Invertir el signo invierte el ranking sin cambiar la componente: el máximo no tiene significado propio.",
+        "Dentro de un tópico el índice sí ordena de forma razonable: " + ", ".join(
+            f"{handle} es el puesto {pos} de {len(football)} en fútbol" for handle, pos in zip(campaigns["football_picks"], football_positions))
+        + ". Por eso las campañas filtran primero por tópico y después ordenan por una variable observada.",
+        "Medianas del índice por tópico: " + ", ".join(
+            f"{TOPICS[topic]} {signed(value)}" for topic, value in ranking.groupby("dominant_topic").oja_index.median().sort_values(ascending=False).items()) + ".",
+        "Fuente: enunciado 1.3; clase PCA p.46; Oja pp.12-16; runs/oja/{ranking,index_stats,summary}.json y csv; ej1.md 1.3."])
+    picture(s, "oja_index.png", x=.8, y=1.4, w=14.4, h=4.5)
+    text(s, f"Proyección sobre PC1 (coseno {es(cosine_mean, 4)} con Oja): volumen contra profundidad, no calidad", .9, 6.05, 14.2, .5, size=21)
+    text(s, "Los cinco más altos son de perros: el máximo ignora tópico, objetivo y precio", .9, 6.75, 14.2, .5, size=21)
+    text(s, "Invertir el signo invierte el ranking", .9, 7.45, 14.2, .5, size=21)
 
     SECTION = "1.4"
-    s = new_slide(prs, "Para fútbol priorizamos profundidad", [
-        "Supuesto: explicar ropa de entrenamiento; filtro de contenido de fútbol >=40%, orden por guardados por 1000.",
-        "Comparamos solo candidatos de fútbol de cada celda. No usar medias de toda la celda como si fueran ese subconjunto.",
-        "Celda 5 agrupa los tres elegidos de fútbol; celda 13 concentra más volumen y menos profundidad educativa.",
-        "Una campaña de reconocimiento podría priorizar alcance o descubrimiento; el objetivo cambia la decisión.",
-        "No hay ventas, conversiones ni adopciones en el catálogo: estos proxies no prueban rentabilidad.",
-        "Fuente: enunciado 1.4; configs/campaigns.json; runs/campaigns/strategy_profiles.csv."])
-    picture(s, "football_profiles.png", y=1.7, h=5.7)
-    caption(s, "Candidatos con ≥40% de fútbol · ejemplo de la semilla 42")
+    strategies, football_profiles = football_rows()
+    cell5, cell13, cell0 = (football_profiles.loc[c] for c in (5, 13, 0))
+    s = new_slide(prs, "Para fútbol priorizamos profundidad, no alcance", [
+        "Pregunta del enunciado: para una campaña de fútbol, ¿conviene alcance masivo, descubrimiento o profundidad educativa?",
+        f"Alcance masivo (celda 13): {es(cell13.mean_followers)} seguidores medios, {es(cell13.summed_est_arg_reach)} de alcance argentino sumado, "
+        f"{es(cell13.mean_non_follower_reach_pct, 2)}% de alcance a no seguidores, {es(cell13.mean_saves_per_1000, 2)} guardados por 1000, "
+        f"{es(cell13.mean_content_tutorial_pct, 2)}% de tutoriales, USD {es(cell13.total_price_usd, 2)}.",
+        f"Descubrimiento (celda 0): {es(cell0.mean_non_follower_reach_pct, 2)}% de alcance a no seguidores y {es(cell0.mean_argentina_audience_pct, 2)}% de audiencia argentina; "
+        f"{es(cell0.mean_saves_per_1000, 2)} guardados por 1000, USD {es(cell0.total_price_usd, 2)}.",
+        f"Profundidad (celda 5): {es(cell5.mean_content_tutorial_pct, 2)}% de tutoriales, {es(cell5.mean_saves_per_1000, 2)} guardados por 1000, "
+        f"{es(cell5.mean_followers)} seguidores medios, USD {es(cell5.total_price_usd, 2)}.",
+        "Cada estrategia gana su propia métrica: la celda 13 en seguidores, la celda 0 en alcance a no seguidores, la celda 5 en guardados, tutoriales y costo.",
+        "Elegimos profundidad por un supuesto comercial: la ropa de entrenamiento se compra después de aprender a usarla, así que guardados y tutoriales pesan más que los seguidores. "
+        "No hay ventas, conversiones ni adopciones en el catálogo: los proxies no prueban rentabilidad. Una campaña de reconocimiento podría elegir alcance o descubrimiento.",
+        "Elegidos: " + ", ".join(campaigns["football_picks"]) + ", los tres en la celda 5. Filtro de al menos 40% de contenido de fútbol y orden por guardados por 1000. "
+        "Comparamos solo los candidatos de fútbol de cada celda, no las medias de toda la celda. Cifras deterministas del catálogo, sin barras entre semillas.",
+        "Fuente: enunciado 1.4; configs/campaigns.json; runs/campaigns/strategy_profiles.csv; ej1.md 1.4."])
+    picture(s, "football_strategies.png", y=1.5, h=4.7)
+    text(s, "Supuesto comercial: la ropa de entrenamiento se compra tras aprender a usarla, así que guardados y tutoriales pesan más que los seguidores. "
+            "Sin ventas no se prueba rentabilidad.", .9, 6.55, 14.2, 1.2, size=21, color=MUTED)
 
     s = new_slide(prs, "Cada campaña exige su propia selección", [
         "Supuestos comunes: una publicación por creador, tres creadores y contenido del tópico >=40%.",
@@ -859,19 +1001,56 @@ def build():
         for x, handle in zip([3.6, 7.6, 11.6], handles):
             text(s, handle, x, y + .08, 4.0, .75, size=19)
 
-    s = new_slide(prs, "Los cambios de datos obligan a revisar el análisis", [
-        "Campaña nueva con mismo catálogo: definir objetivo y revisar evidencia; puede cambiar la elección comercial sin cambiar los modelos.",
-        "Datos mensuales o más creadores: revisar distribuciones, escalas, entrenamientos, grilla e interpretaciones.",
-        "Variables nuevas cambian distancias y componentes: repetir representación, estandarización y modelos.",
-        "Puede proyectarse un creador nuevo con la transformación existente si sigue siendo representativa; el repositorio regenera todo al actualizar el CSV.",
-        "Guardar versión de datos, fecha, semillas y parámetros; celdas y signos no son etiquetas permanentes.",
-        "Fuente: enunciado 1.4; modelo de Kohonen y proyección PCA; configs y runs."])
-    for y, left, right in [(2.4, "Campaña nueva", "Revisar objetivo y criterios"),
-                           (4.1, "Datos actualizados", "Revisar escalas y entrenamientos"),
-                           (5.8, "Variables nuevas", "Repetir representación y modelos")]:
-        text(s, left, .95, y, 5.2, .8, size=30, bold=True)
-        text(s, "→", 6.45, y, 1, .8, size=34, color=MUTED)
-        text(s, right, 8.0, y, 7, 1.0, size=28, color=TEAL)
+    comparison = data("campaigns", "comparison.csv")
+    by_strategy = {name: comparison.loc[comparison.strategy == name].set_index("client") for name in
+                   ["assumption", "followers_global", "followers_in_topic"]}
+    ours, f_global, f_topic = by_strategy["assumption"], by_strategy["followers_global"], by_strategy["followers_in_topic"]
+    assert (f_global.summed_est_arg_reach > ours.summed_est_arg_reach).all() and (f_topic.summed_est_arg_reach > ours.summed_est_arg_reach).all()
+    assert (ours.mean_topic_share > f_global.mean_topic_share).all()
+    assert (ours.mean_saves_per_1000 > f_global.mean_saves_per_1000).all() and (ours.mean_saves_per_1000 > f_topic.mean_saves_per_1000).all()
+    assert (ours.mean_content_tutorial_pct > f_topic.mean_content_tutorial_pct).all()
+    followers_cost = pd.concat([f_global.total_price_usd, f_topic.total_price_usd])
+    s = new_slide(prs, "Solo seguidores: más alcance, más costo y menos foco", [
+        "Pregunta del enunciado: comparar la selección con una estrategia basada únicamente en followers; ventajas y desventajas de cada una.",
+        "Tres barras por campaña: nuestra selección, seguidores global (siempre @mateconideas, @golconmate y @brillourbano) y seguidores del tópico (los tres con más seguidores dentro del tópico).",
+        "El control de seguidores del tópico separa el efecto de filtrar por tema del efecto del criterio elegido.",
+        "Seguidores, ventajas: más alcance argentino estimado (la suma de alcances es una cota superior porque las audiencias se superponen). "
+        f"Desventajas: la estrategia global usa el mismo trío para todas las campañas, con contenido del tópico entre {es(f_global.mean_topic_share.min(), 1)}% y {es(f_global.mean_topic_share.max(), 1)}%; "
+        f"el costo total de las dos estrategias de seguidores va de USD {es(followers_cost.min())} a {es(followers_cost.max())}; tienen menos guardados y tutoriales.",
+        "Nuestra selección, ventajas: más contenido del tópico que seguidores global, más guardados y más tutoriales, con costo de "
+        f"USD {es(ours.total_price_usd.min())} a {es(ours.total_price_usd.max())}. Desventajas: menos alcance, depende de supuestos comerciales "
+        "(una publicación por creador, tres creadores, 40% de tópico) y, sin ventas en el catálogo, no prueba rentabilidad.",
+        "Contenido del tópico: " + "; ".join(f"{TOPICS[c]} {es(ours.mean_topic_share[c], 2)}% / {es(f_global.mean_topic_share[c], 2)}% / {es(f_topic.mean_topic_share[c], 2)}%"
+                                          for c in ["dogs", "football", "makeup", "art"]) + " (selección / global / del tópico).",
+        "Costo total en USD (selección / seguidores del tópico): " + "; ".join(
+            f"{TOPICS[c]} {es(ours.total_price_usd[c], 2)} / {es(f_topic.total_price_usd[c], 2)}" for c in ["dogs", "football", "makeup", "art"]) + ".",
+        "Fuente: enunciado 1.4; runs/campaigns/comparison.csv y baselines.csv; configs/campaigns.json; ej1.md 1.4."])
+    picture(s, "followers_vs_selection.png", x=.8, y=1.4, w=14.4, h=4.2)
+    text(s, "Solo seguidores", .9, 5.7, 6.8, .5, size=24, bold=True)
+    text(s, "Más alcance bruto y audiencia argentina\n"
+            f"Mismo trío para todas; tópico {es(f_global.mean_topic_share.min(), 1)}% a {es(f_global.mean_topic_share.max(), 1)}%; "
+            f"USD {es(followers_cost.min())} a {es(followers_cost.max())}", .9, 6.3, 6.8, 1.9, size=19, color=MUTED)
+    text(s, "Nuestra selección", 8.4, 5.7, 6.8, .5, size=24, bold=True, color=TEAL)
+    text(s, "Más tópico, guardados y tutoriales; "
+            f"USD {es(ours.total_price_usd.min())} a {es(ours.total_price_usd.max())}\n"
+            "Menos alcance; depende de supuestos; sin ventas no prueba rentabilidad", 8.4, 6.3, 6.8, 1.9, size=19, color=TEAL)
+
+    s = new_slide(prs, "Cada cambio de datos obliga a rehacer algo distinto", [
+        "Preguntas del enunciado: ¿qué implica el mantenimiento del sistema?, ¿qué ocurre cuando llega una nueva campaña?, ¿qué cambios hacen falta si cambia la cantidad "
+        "de creadores o se incorporan variables?, ¿qué implica actualizar los datos a fin de cada mes?",
+        "Campaña nueva con el mismo catálogo: se definen objetivo, público y supuestos, se revisan las celdas y variables pertinentes y se comparan alternativas. "
+        "Si sigue usando el mismo catálogo y variables, no obliga a cambiar las reglas de aprendizaje.",
+        "Creador nuevo o actualización mensual: para un creador nuevo se aplican la media y el desvío existentes y se le asignan su ganadora y sus proyecciones, mientras no cambie la distribución. "
+        "Más creadores o cambios mensuales justifican revisar distribuciones, correlaciones, escalas, entrenamientos y la selección de grilla. "
+        "Este repositorio regenera el análisis completo al actualizar el CSV.",
+        "Variables nuevas: cambian las distancias, los pesos y las componentes; exigen nueva selección y estandarización y repetir PCA, Kohonen y Oja.",
+        "Registro: guardar datos, parámetros, semillas, fecha y versión de cada análisis. Las coordenadas, signos y números de celda no son etiquetas comerciales permanentes. "
+        "Volver a contrastar los supuestos con resultados comerciales cuando existan.",
+        "Fuente: enunciado 1.4; ej1.md 1.4, párrafo Mantenimiento; configs y runs."])
+    four_rows(s, [("Campaña nueva", "Se redefinen objetivo y supuestos; los modelos no cambian"),
+                  ("Creador nuevo o mes nuevo", "Se proyecta con lo existente; si cambia la distribución, se rehace"),
+                  ("Variables nuevas", "Cambian distancias y componentes: repetir PCA, Kohonen y Oja"),
+                  ("Registro", "Datos, parámetros, semillas y fecha; las celdas no son etiquetas")])
 
     SECTION = "2.1"
     s = new_slide(prs, "Primero almacenamos cuatro letras", [
