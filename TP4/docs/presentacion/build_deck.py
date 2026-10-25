@@ -368,9 +368,19 @@ def picture(slide, name, x=.8, y=1.55, w=14.4, h=6.7):
     return slide.shapes.add_picture(str(path), Inches(x + (w - nw) / 2), Inches(y + (h - nh) / 2), Inches(nw), Inches(nh))
 
 
+SECTION = ""
+KICKER = {"1": "Ejercicio 1: Creadores de contenido",
+          "1.1": "Ejercicio 1: Creadores de contenido · 1.1 Representación, estandarización y PCA",
+          "1.2": "Ejercicio 1: Creadores de contenido · 1.2 Mapa de Kohonen",
+          "1.3": "Ejercicio 1: Creadores de contenido · 1.3 Regla de Oja e índice",
+          "1.4": "Ejercicio 1: Creadores de contenido · 1.4 Campañas y cambios de datos",
+          "2.1": "Ejercicio 2: Memoria asociativa · 2.1 Hopfield: letras 5×5 y códigos QR"}
+
+
 def new_slide(prs, title, reminders):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     slide.background.fill.solid(); slide.background.fill.fore_color.rgb = rgb("#FFFFFF")
+    if title and SECTION: text(slide, KICKER[SECTION], .72, .12, 14.5, .3, size=15, color=MUTED)
     text(slide, title, .72, .45, 14.5, .9, size=32, bold=True)
     text(slide, "TP4 · Grupo 3", .72, 8.55, 3, .25, size=12, color=MUTED)
     text(slide, str(len(prs.slides)).zfill(2), 14.7, 8.5, .6, .3, size=13, color=MUTED, align=PP_ALIGN.RIGHT)
@@ -383,6 +393,7 @@ def caption(slide, value):
 
 
 def build():
+    global SECTION
     charts()
     prs = Presentation(); prs.slide_width = Inches(16); prs.slide_height = Inches(9)
     prs.core_properties.title = "TP4 · Aprendizaje no supervisado"
@@ -404,6 +415,22 @@ def build():
     text(s, "Perfiles de creadores y memoria asociativa", .9, 4.65, 13.5, .7, size=29, color=TEAL)
     text(s, "Trabajo Práctico 4 · SIA · ITBA · 2Q 2026", .9, 6.8, 13.5, .5, size=22, color=MUTED)
 
+    SECTION = ""
+    s = new_slide(prs, "Índice", ["Ejercicio 1: creadores de contenido. Ejercicio 2: memoria asociativa de Hopfield."])
+    for x, head, items in [
+        (.9, "Ejercicio 1 · Creadores de contenido", [
+            ("1.1", "Representación, estandarización y PCA"),
+            ("1.2", "Mapa de Kohonen"),
+            ("1.3", "Regla de Oja e índice"),
+            ("1.4", "Campañas y cambios de datos")]),
+        (8.4, "Ejercicio 2 · Memoria asociativa", [
+            ("2.1", "Hopfield: letras 5×5 y códigos QR 37×37")])]:
+        text(s, head, x, 2.0, 6.9, .7, size=28, bold=True, color=TEAL)
+        for i, (num, label) in enumerate(items):
+            text(s, num, x, 3.1 + i * 1.15, 1.1, .7, size=30, bold=True, color=COPPER)
+            text(s, label, x + 1.2, 3.1 + i * 1.15, 5.7, 1.0, size=26)
+
+    SECTION = "1"
     s = new_slide(prs, "Los más seguidos publican contenidos distintos", [
         "La agencia elige principalmente por seguidores; necesita adecuación a cada campaña.",
         "Esta figura usa los tres primeros por seguidores del catálogo original.",
@@ -412,6 +439,7 @@ def build():
         "Fuente: enunciado 1, datos/creadores.csv; runs/campaigns/comparison.csv."])
     picture(s, "followers_topics.png", y=2.0, h=5.4)
 
+    SECTION = "1.1"
     s = new_slide(prs, "Elegimos una representación de 27 variables", [
         "50 creadores, 31 variables numéricas; nombres e ID solo identifican filas. Sin faltantes; conservamos los 50 registros.",
         "price_ars duplica price_usd por conversión fija; organic_posts_pct complementa sponsored_posts_pct.",
@@ -452,6 +480,7 @@ def build():
         source_pca])
     picture(s, "pca_biplot.png", y=1.4, h=6.8)
 
+    SECTION = "1.2"
     s = new_slide(prs, "Kohonen organiza perfiles por semejanza", [
         "Entrada: las mismas 27 variables estandarizadas. Ganadora: menor distancia euclídea.",
         "Actualizamos la ganadora y vecinas del radio binario; el dibujo destaca una ganadora y su vecindad.",
@@ -524,6 +553,7 @@ def build():
     text(s, "j: vecinas de i", 10.0, 4.8, 4.8, .7, size=23)
     caption(s, "Mapa de ejemplo: semilla 42")
 
+    SECTION = "1.3"
     s = new_slide(prs, "Oja aproxima la primera componente", [
         "Una neurona: y=w·x; actualización Δw=ηy(x−yw); pesos iniciales uniformes [0,1], η=0,001, 200 épocas.",
         "Mostramos seis coeficientes interpretables; pesos completos y dispersiones en weights_stats.csv.",
@@ -548,6 +578,7 @@ def build():
     text(s, "30/30", 11.7, 3.75, 3.7, .9, size=44, color=TEAL)
     text(s, "entrenamientos", 11.7, 4.9, 3.7, .7, size=23)
 
+    SECTION = "1.4"
     s = new_slide(prs, "Para fútbol priorizamos profundidad", [
         "Supuesto: explicar ropa de entrenamiento; filtro de contenido de fútbol >=40%, orden por guardados por 1000.",
         "Comparamos solo candidatos de fútbol de cada celda. No usar medias de toda la celda como si fueran ese subconjunto.",
@@ -585,6 +616,7 @@ def build():
         text(s, "→", 6.45, y, 1, .8, size=34, color=MUTED)
         text(s, right, 8.0, y, 7, 1.0, size=28, color=TEAL)
 
+    SECTION = "2.1"
     s = new_slide(prs, "Primero almacenamos cuatro letras", [
         "Cada letra 5×5 se recorre por filas: 25 estados bipolares. Negro=+1, blanco=-1.",
         "G, R, T, V forman cuatro filas de P: matriz 4×25. Cada posición corresponde a una neurona.",
