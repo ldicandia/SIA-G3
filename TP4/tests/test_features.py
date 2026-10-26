@@ -18,7 +18,6 @@ from tp4.features import (
     near_redundant_pairs,
     select_features,
     selected_columns,
-    validate_feature_set,
 )
 
 FEATURE_SET = "configs/feature_set.json"
@@ -28,8 +27,6 @@ EXPECTED_DROPS = {
     "total_engagement_per_1000",
     "estimated_argentina_reach",
     "organic_posts_pct",
-    "topic_art_pct",
-    "content_showcase_pct",
 }
 
 
@@ -49,10 +46,9 @@ def _write_fs(tmp_path, payload) -> str:
     return str(path)
 
 
-def test_declared_feature_set_has_six_reasoned_drops(fs):
+def test_declared_feature_set_has_four_reasoned_drops(fs):
     assert set(fs.drop) == EXPECTED_DROPS
     assert all(isinstance(r, str) and r.strip() for r in fs.drop.values())
-    assert set(fs.reconstruct) == {"topic_art_pct", "content_showcase_pct"}
     assert fs.source == FEATURE_SET
 
 
@@ -71,11 +67,10 @@ def test_check_identities_on_real_data_all_hold_and_are_broken_by_the_feature_se
     report = check_identities(creators, fs)
     assert len(report) == 6
     assert report["holds"].all()
-    assert (report["broken_by"] != "").all()
     by_name = report.set_index("name")["broken_by"]
     assert by_name["price_ars_ratio"] == "price_ars"
-    assert by_name["topic_block"] == "topic_art_pct"
-    assert by_name["content_block"] == "content_showcase_pct"
+    assert by_name["topic_block"] == ""
+    assert by_name["content_block"] == ""
     assert list(report.columns) == [
         "name", "kind", "columns", "formula", "max_abs_residual", "tolerance", "holds", "broken_by", "member_std",
     ]
@@ -142,24 +137,13 @@ def test_near_redundant_real_data_leads_with_reach_video_views(creators):
     assert first["abs_r"] == pytest.approx(0.997, abs=1e-3)
 
 
-def test_validate_feature_set_names_the_unbroken_identity(creators):
-    drop = {c: "x" for c in EXPECTED_DROPS - {"topic_art_pct"}}
-    with pytest.raises(ConfigError, match="topic_block"):
-        validate_feature_set(creators, FeatureSet(drop=drop, source="t"))
-    with pytest.raises(ConfigError, match="price_ars_ratio"):
-        validate_feature_set(creators, FeatureSet(drop={}, source="t"))
-
-
 def test_select_features_refuses_invalid_sets_and_accepts_the_declared_one(creators, fs):
-    bad = FeatureSet(drop={"price_ars": "x"}, source="t")
-    with pytest.raises(ConfigError, match="topic_block"):
-        select_features(creators, bad)
     X = select_features(creators, fs)
-    assert X.shape == (len(creators), 25)
+    assert X.shape == (len(creators), 27)
     assert list(X.columns) == selected_columns(creators, fs)
     numeric = [c for c in creators.columns if c not in ("creator_id", "name")]
     assert list(X.columns) == [c for c in numeric if c not in EXPECTED_DROPS]
-    assert "topic_art_pct" not in X.columns and "topic_football_pct" in X.columns
+    assert "topic_art_pct" in X.columns and "topic_football_pct" in X.columns
 
 
 @pytest.mark.parametrize("bad_col", ["not_a_column", "name", "creator_id"])
@@ -183,8 +167,8 @@ def test_selected_columns_rejects_non_numeric_column():
         ({"drop": {"price_ars": 3}}, "reason"),
         ({"drop": {"price_ars": "ok"}, "extra": 1}, "unknown key"),
         ({"drop": {}}, "non-empty"),
-        ({"reconstruct": {}}, "non-empty"),
-        ({"drop": {"price_ars": "ok"}, "reconstruct": {"topic_art_pct": "f"}}, "not in 'drop'"),
+        ({"reconstruct": {}}, "unknown key"),
+        ({"drop": {"price_ars": "ok"}, "reconstruct": {"topic_art_pct": "f"}}, "unknown key"),
         ([], "object"),
     ],
 )
@@ -207,26 +191,17 @@ def test_load_design_keeps_every_creator_and_ids(creators):
     assert design.X.index.equals(design.raw.index)
 
 
-def test_pca_run_with_an_invalid_feature_set_fails_before_runs_is_created(tmp_path, write_config, capsys):
-    bad = _write_fs(tmp_path, {"drop": {"price_ars": "x"}})
-    cfg = write_config("configs/pca.json", plots=False, feature_set=bad)
-    assert main(["run", str(cfg), "--out-root", str(tmp_path / "runs")]) == 2
-    assert "topic_block" in capsys.readouterr().err
-    assert not (tmp_path / "runs" / "pca").exists()
-
-
 def test_eda_cli_proves_the_feature_set(tmp_path):
     out = tmp_path / "runs"
     assert main(["run", "configs/eda.json", "--out-root", str(out)]) == 0
     run = out / "eda"
     report = pd.read_csv(run / "identities.csv")
-    assert len(report) == 6 and report["holds"].all() and report["broken_by"].notna().all()
+    assert len(report) == 6 and report["holds"].all()
     resolved = json.loads((run / "feature_set.json").read_text(encoding="utf-8"))
-    assert resolved["valid"] is True and resolved["n_selected"] == 25
-    assert "topic_art_pct" not in resolved["selected"] and "topic_dogs_pct" in resolved["selected"]
+    assert resolved["valid"] is True and resolved["n_selected"] == 27
+    assert "topic_art_pct" in resolved["selected"] and "topic_dogs_pct" in resolved["selected"]
     summary = json.loads((run / "summary.json").read_text(encoding="utf-8"))
-    assert summary["selected_rank"] == summary["n_selected_features"] == 25
-    assert summary["numeric_rank"] == 26
+    assert summary["n_selected_features"] == 27
     assert summary["n_identities"] == 6 and summary["n_identities_holding"] == 6
     pairs = pd.read_csv(run / "near_redundant.csv")
     kept = pairs[pairs["both_selected"]].iloc[0]
@@ -235,13 +210,13 @@ def test_eda_cli_proves_the_feature_set(tmp_path):
     assert (run / "correlation_heatmap_selected.png").stat().st_size > 0
 
 
-def test_eda_reports_but_does_not_enforce_an_invalid_feature_set(tmp_path, write_config):
+def test_eda_reports_remaining_dependencies_without_rejecting_features(tmp_path, write_config):
     only_price = _write_fs(tmp_path, {"drop": {"price_ars": "x"}})
     cfg = write_config(feature_set=only_price, plots=False)
     out = tmp_path / "runs"
     assert main(["run", str(cfg), "--out-root", str(out)]) == 0
     resolved = json.loads((out / "eda" / "feature_set.json").read_text(encoding="utf-8"))
-    assert resolved["valid"] is False
+    assert resolved["valid"] is True
     report = pd.read_csv(out / "eda" / "identities.csv").set_index("name")
     assert report.loc["price_ars_ratio", "broken_by"] == "price_ars"
     assert pd.isna(report.loc["topic_block", "broken_by"])

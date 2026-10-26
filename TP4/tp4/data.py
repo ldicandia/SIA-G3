@@ -1,6 +1,6 @@
 """Read-only loading of datos/creadores.csv.
 
-Rows and columns are never dropped or modified (EDA-01 transparency): missing
+Rows and columns are never dropped or modified: missing
 values are allowed and reported by the EDA; outliers are only flagged.
 """
 

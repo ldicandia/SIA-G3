@@ -1,23 +1,12 @@
-"""Experiment kind `sweep`: run a base experiment over a grid of config values.
+"""Vary one base-config parameter at a time, preserving grid key and value order.
 
-Config keys (besides the common ones):
-  base         path to the config being swept (relative to TP4/); must not be a sweep
-  grid         {dotted.config.key: [values...]}; children are the cartesian product
-               in config order (itertools.product), so sweep.csv order is stable
-  workers      worker processes (int >= 1, default 1)
-  child_plots  write PNGs in every child run (default false)
-
-Each child is a full tp4 run (run.json + summary.json + artifacts) stored in
-`<sweep run dir>/<child name>/`; `sweep.csv` has one row per child.
-
-`tp4.runner` is imported only inside functions: the runner imports the
-experiment registry, which imports this module (a top-level import would cycle).
+Each child changes one grid leaf. Other parameters retain their base values;
+seed and plot settings come from the sweep. No combinations of grid keys are run.
 """
 
 from __future__ import annotations
 
 import copy
-import itertools
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -49,13 +38,12 @@ def _slug(value: Any) -> str:
     )
 
 
-def child_name(assignments: Sequence[tuple[str, Any]]) -> str:
-    """Directory/experiment name of one grid point, e.g. `standardize-true__k-3`."""
-    name = "__".join(f"{key.rsplit('.', 1)[-1]}-{_slug(value)}" for key, value in assignments)
+def child_name(key: str, value: Any) -> str:
+    name = f"{key.rsplit('.', 1)[-1]}-{_slug(value)}"
     if not EXPERIMENT_NAME_RE.fullmatch(name):
         raise ConfigError(
-            f"sweep: grid point {list(assignments)!r} gives child name {name!r}, which must match "
-            f"{EXPERIMENT_NAME_RE.pattern}"
+            f"sweep: parameter {key!r} value {value!r} gives child name {name!r}, "
+            f"which must match {EXPERIMENT_NAME_RE.pattern}"
         )
     return name
 
@@ -76,24 +64,21 @@ def _set_dotted(config: dict[str, Any], dotted: str, value: Any) -> None:
 def expand_grid(
     base: Mapping[str, Any], grid: Mapping[str, Sequence[Any]], *, seed: int, plots: bool
 ) -> list[tuple[str, dict]]:
-    """Cartesian product of `grid` (keys in config order) applied to deep copies of `base`."""
-    keys = list(grid)
+    """Apply each key/value separately to an independent copy of the base."""
     children: list[tuple[str, dict]] = []
     seen: set[str] = set()
-    for values in itertools.product(*(grid[k] for k in keys)):
-        assignments = list(zip(keys, values))
-        name = child_name(assignments)
-        if name in seen:
-            raise ConfigError(f"sweep: duplicate grid point {name!r} (repeated values in the grid)")
-        seen.add(name)
-        child = copy.deepcopy(dict(base))
-        for key, value in assignments:
-            _set_dotted(child, key, value)
-        child["experiment"] = name
-        if "seed" not in grid:
+    for key, values in grid.items():
+        for value in values:
+            name = child_name(key, value)
+            if name in seen:
+                raise ConfigError(f"sweep: duplicate child name {name!r} (repeated or colliding values)")
+            seen.add(name)
+            child = copy.deepcopy(dict(base))
             child["seed"] = seed
-        child["plots"] = plots
-        children.append((name, child))
+            _set_dotted(child, key, value)
+            child["experiment"] = name
+            child["plots"] = plots
+            children.append((name, child))
     return children
 
 
@@ -120,7 +105,7 @@ def _check_grid(grid: Any) -> None:
 def validate(config: dict) -> None:
     from .. import runner
 
-    base = _load_base(config)
+    base = runner.validate_config(_load_base(config))
     _check_grid(config.get("grid"))
     workers = config.get("workers", 1)
     if type(workers) is not int or workers < 1:
@@ -129,9 +114,7 @@ def validate(config: dict) -> None:
     if type(child_plots) is not bool:
         raise ConfigError(f"sweep: child_plots must be a boolean, got {child_plots!r}")
 
-    n_children = 1
-    for values in config["grid"].values():
-        n_children *= len(values)
+    n_children = sum(len(values) for values in config["grid"].values())
     if n_children > MAX_CHILDREN:
         raise ConfigError(f"sweep: grid expands to {n_children} children (maximum {MAX_CHILDREN})")
     for _name, child in expand_grid(base, config["grid"], seed=config["seed"], plots=child_plots):
@@ -149,8 +132,10 @@ def _run_child(item: tuple[dict, str]) -> dict:
 
 
 def run(ctx: RunContext) -> dict:
+    from ..runner import validate_config
+
     config = ctx.config
-    base = _load_base(config)
+    base = validate_config(_load_base(config))
     grid = config["grid"]
     children = expand_grid(
         base, grid, seed=ctx.seed, plots=config.get("child_plots", False)
@@ -164,22 +149,23 @@ def run(ctx: RunContext) -> dict:
         {k for s in summaries for k, v in s.items() if not isinstance(v, list)}
     )
     rows = []
-    for (name, cfg), summary in zip(children, summaries):
+    variations = [(key, value) for key, values in grid.items() for value in values]
+    for (name, cfg), summary, (parameter, value) in zip(children, summaries, variations, strict=True):
         row: dict[str, Any] = {"child": name}
         for key in keys:
             node: Any = cfg
             for part in key.split("."):
                 node = node[part]
             row[key] = node
+        row["varied_parameter"] = parameter
+        row["parameter_value"] = value
         for k in scalar_keys:
             row[k] = summary.get(k)
         rows.append(row)
-    table = pd.DataFrame(rows, columns=["child", *keys, *scalar_keys])
+    table = pd.DataFrame(rows, columns=["child", *keys, "varied_parameter", "parameter_value", *scalar_keys])
     write_csv(ctx.artifact("sweep.csv"), table)
     summary: dict[str, Any] = {"n_children": len(children), "workers": workers, "grid_keys": keys}
 
-    # Registry import is function-local for the same cycle reason as `runner` above. The hook is
-    # a Python attribute of the registered Experiment, never a name read from a config (T-02-04).
     from . import get_experiment
 
     hook = get_experiment(base["kind"]).sweep_report

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import csv
 import json
-import sys
 
+import numpy as np
 import pytest
 
 from tp4.cli import main
@@ -13,7 +13,7 @@ from tp4.experiments.som import labels_by_neuron
 from tp4.runs import PROJECT_ROOT
 
 DATA_PATH = PROJECT_ROOT / "datos" / "creadores.csv"
-ARTIFACTS = ("run.json", "summary.json", "bmus.csv", "neurons.csv", "weights.csv", "hit_map.png")
+ARTIFACTS = ("run.json", "summary.json", "bmus.csv", "neurons.csv", "weights.csv", "hit_map.png", "per_seed.csv", "history_repeats.csv")
 
 
 def _read(path):
@@ -28,7 +28,11 @@ def _config() -> dict:
 @pytest.fixture(scope="module")
 def som_run(tmp_path_factory):
     out = tmp_path_factory.mktemp("som_run") / "runs"
-    assert main(["run", "configs/som.json", "--out-root", str(out)]) == 0
+    config = _config()
+    config["params"]["n_repeats"] = 2
+    path = out.parent / "som.json"
+    path.write_text(json.dumps(config))
+    assert main(["run", str(path), "--out-root", str(out)]) == 0
     return out / "som"
 
 
@@ -43,8 +47,8 @@ def test_bmus_has_every_creator_exactly_once(som_run):
     assert len(bmus) == len(creators)
     assert [r["creator_id"] for r in bmus] == [r["creator_id"] for r in creators]
     assert [r["name"] for r in bmus] == [r["name"] for r in creators]
-    assert list(bmus[0])[:9] == [
-        "creator_id", "name", "dominant_topic", "bmu", "row", "col", "bmu_distance", "second_bmu", "second_adjacent",
+    assert list(bmus[0]) == [
+        "creator_id", "name", "dominant_topic", "bmu", "row", "col", "bmu_distance", "pc1", "pc2",
     ]
 
 
@@ -73,14 +77,22 @@ def test_summary_counts(som_run):
     summary = json.loads((som_run / "summary.json").read_text(encoding="utf-8"))
     assert summary["n_creators_mapped"] == len(_read(DATA_PATH))
     assert summary["n_samples"] == summary["n_creators_mapped"]
-    assert summary["n_features"] == 25
+    assert summary["n_features"] == 27
     assert summary["topology"] == "hex"
-    assert isinstance(summary["quantization_error"], float)
-    assert isinstance(summary["topographic_error"], float)
+    records = _read(som_run / "per_seed.csv")
+    assert summary["n_repeats"] == 2
+    assert summary["seeds"] == [42, 43]
+    assert [int(r["seed"]) for r in records] == summary["seeds"]
+    for metric in ("mean_bmu_distance", "empty_neuron_frac", "u_mean"):
+        values = np.array([float(r[metric]) for r in records])
+        assert summary[f"{metric}_mean"] == pytest.approx(values.mean(), abs=1e-8)
+        assert summary[f"{metric}_std"] == pytest.approx(values.std(ddof=1), abs=1e-8)
+    assert summary["mean_bmu_distance_std"] > 0
+    assert isinstance(summary["mean_bmu_distance"], float)
 
 
 def test_same_seed_gives_byte_identical_tables(tmp_path, write_config):
-    cfg = write_config(base="configs/som.json", **{"plots": False})
+    cfg = write_config(base="configs/som.json", **{"plots": False, "params.n_repeats": 2})
     out_a, out_b = tmp_path / "a", tmp_path / "b"
     assert main(["run", str(cfg), "--out-root", str(out_a)]) == 0
     assert main(["run", str(cfg), "--out-root", str(out_b)]) == 0
@@ -97,32 +109,27 @@ def test_invalid_map_size_exits_2_and_creates_nothing(tmp_path, write_config, ca
     assert not (out / "som").exists()
 
 
-# --------------------------------------------------------------------------- Task 3: every hyperparameter from the config
-
 INVALID_CASES = [
     {"params.rows": 0},
     {"params.rows": 1, "params.cols": 1},
-    {"params.rows": 21, "params.cols": 20},  # 420 > MAX_NEURONS
+    {"params.rows": 21, "params.cols": 20},
     {"params.epochs": 0},
     {"params.epochs": 5001},
     {"params.eta0": 0},
     {"params.eta0": 1.5},
-    {"params.eta_min": 0.6, "params.eta0": 0.5},
     {"params.radius0": 0},
-    {"params.radius_min": 4, "params.radius0": 3},
     {"params.topology": "tri"},
-    {"params.neighborhood": "mexican"},
     {"params.init": "pca"},
-    {"params.eta_decay": "cosine"},
     {"params.radius_decay": "fast"},
     {"params.unknown": 1},
     {"params.rows": True},
+    {"params.n_repeats": 1},
+    {"params.n_repeats": 101},
+    {"params.n_repeats": True},
 ]
-
 
 @pytest.mark.parametrize("overrides", INVALID_CASES, ids=lambda o: ",".join(f"{k}={v}" for k, v in o.items()))
 def test_invalid_som_config_exits_2_and_creates_no_run_dir(tmp_path, write_config, capsys, overrides):
-    assert len(INVALID_CASES) == 17
     cfg = write_config(base="configs/som.json", **overrides)
     out = tmp_path / "out"
     assert main(["run", str(cfg), "--out-root", str(out)]) == 2
@@ -134,17 +141,15 @@ def test_invalid_som_config_exits_2_and_creates_no_run_dir(tmp_path, write_confi
     "overrides",
     [
         {"params.topology": "rect"},
-        {"params.neighborhood": "step"},
         {"params.init": "random"},
-        {"params.eta_decay": "linear", "params.radius_decay": "inverse"},
-        {"params.eta_decay": "constant", "params.eta0": 0.1},
+        {"params.radius_decay": "inverse"},
         {"params.rows": 1, "params.cols": 6},
         {"params.rows": 4, "params.cols": 9},
     ],
     ids=lambda o: ",".join(f"{k}={v}" for k, v in o.items()),
 )
 def test_valid_variants_run(tmp_path, write_config, overrides):
-    cfg = write_config(base="configs/som.json", plots=False, **overrides)
+    cfg = write_config(base="configs/som.json", plots=False, **{"params.n_repeats": 2, **overrides})
     assert main(["run", str(cfg), "--out-root", str(tmp_path / "out")]) == 0
     summary = json.loads((tmp_path / "out" / "som" / "summary.json").read_text(encoding="utf-8"))
     assert summary["n_creators_mapped"] == len(_read(DATA_PATH))
@@ -152,7 +157,7 @@ def test_valid_variants_run(tmp_path, write_config, overrides):
 
 def test_history_has_one_row_per_epoch(som_run):
     rows = _read(som_run / "history.csv")
-    assert list(rows[0]) == ["epoch", "eta", "radius", "quantization_error", "topographic_error"]
+    assert list(rows[0]) == ["epoch", "eta", "radius", "mean_bmu_distance"]
     assert len(rows) == _config()["params"]["epochs"]
     assert [int(r["epoch"]) for r in rows] == list(range(1, len(rows) + 1))
 
@@ -160,11 +165,9 @@ def test_history_has_one_row_per_epoch(som_run):
 def test_summary_echoes_hyperparameters_and_new_metrics(som_run):
     summary = json.loads((som_run / "summary.json").read_text(encoding="utf-8"))
     p = _config()["params"]
-    for key in ("topology", "neighborhood", "init", "eta_decay", "radius_decay"):
+    for key in ("topology", "init", "radius_decay"):
         assert summary[key] == p[key]
-    assert summary["eta_min"] == p["eta_min"] and summary["radius_min"] == p["radius_min"]
-    assert "distance_preservation" in summary
-    assert summary["distance_preservation"] is None or -1 <= summary["distance_preservation"] <= 1
+    assert summary["mean_bmu_distance"] >= 0
     occupied = summary["n_neurons"] - summary["n_empty_neurons"]
     assert summary["mean_hits_occupied"] == pytest.approx(summary["n_samples"] / occupied, abs=1e-4)
 
@@ -173,25 +176,10 @@ def test_plots_include_the_training_curve(som_run):
     assert (som_run / "training_curve.png").stat().st_size > 0
 
 
-def test_cupy_unavailable_falls_back_with_identical_weights(tmp_path, write_config, no_cupy):
-    numpy_cfg = write_config(base="configs/som.json", plots=False)
-    cupy_cfg = write_config(base="configs/som.json", plots=False, backend="cupy")
-    assert main(["run", str(numpy_cfg), "--out-root", str(tmp_path / "np")]) == 0
-    assert main(["run", str(cupy_cfg), "--out-root", str(tmp_path / "cp")]) == 0
-    record = json.loads((tmp_path / "cp" / "som" / "run.json").read_text(encoding="utf-8"))["backend"]
-    assert record["requested"] == "cupy" and record["resolved"] == "numpy" and record["fallback_reason"]
-    assert (tmp_path / "np" / "som" / "weights.csv").read_bytes() == (tmp_path / "cp" / "som" / "weights.csv").read_bytes()
-
-
 def test_same_seed_gives_byte_identical_summary_bmus_weights_history(tmp_path, write_config):
-    cfg = write_config(base="configs/som.json", plots=False)
+    cfg = write_config(base="configs/som.json", plots=False, **{"params.n_repeats": 2})
     out_a, out_b = tmp_path / "a", tmp_path / "b"
     assert main(["run", str(cfg), "--out-root", str(out_a)]) == 0
     assert main(["run", str(cfg), "--out-root", str(out_b)]) == 0
     for name in ("summary.json", "bmus.csv", "weights.csv", "history.csv"):
         assert (out_a / "som" / name).read_bytes() == (out_b / "som" / name).read_bytes(), name
-
-
-@pytest.fixture
-def no_cupy(monkeypatch):
-    monkeypatch.setitem(sys.modules, "cupy", None)  # import cupy -> ImportError

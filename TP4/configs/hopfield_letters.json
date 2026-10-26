@@ -2,20 +2,30 @@
   "experiment": "hopfield_letters",
   "kind": "hopfield_letters",
   "seed": 42,
-  "backend": "numpy",
   "plots": true,
   "alphabet": "datos/letras_5x5.json",
   "params": {
-    "n_store": 4,
     "letters": [],
-    "rule": "hebb",
-    "updates": ["async", "sync"],
+    "updates": [
+      "async",
+      "sync"
+    ],
     "max_iter": 100,
-    "noise_levels": [0.04, 0.08, 0.12, 0.16, 0.2, 0.28, 0.36, 0.44],
+    "noise_levels": [
+      0.04,
+      0.08,
+      0.12,
+      0.16,
+      0.2,
+      0.28,
+      0.36,
+      0.44
+    ],
     "example_level": 0.2,
     "trials": 50,
     "spurious_noise": 0.4,
     "capacity_max_p": 10,
-    "capacity_subsets": 200
+    "capacity_subsets": 200,
+    "n_repeats": 30
   }
 }

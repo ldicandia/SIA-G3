@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from tp4.models import oja as oja_module
-from tp4.models.oja import MAX_W_NORM, OjaConfig, convergence_epoch, train_oja
+from tp4.models.oja import MAX_W_NORM, OjaConfig, norm_band_epoch, train_oja
 from tp4.runs import PROJECT_ROOT
 
 EIGENVALUES = np.array([5.0, 2.0, 1.0, 0.5, 0.25])
@@ -31,12 +31,9 @@ def _leading_eigenvector(X):
 
 
 def _cfg(**kw):
-    base = dict(epochs=100, eta0=1e-3, eta_min=1e-5, eta_decay="constant")
+    base = dict(epochs=100, eta0=1e-3)
     base.update(kw)
     return OjaConfig(**base)
-
-
-# --------------------------------------------------------------------------- recovery (D-07)
 
 
 def test_recovers_the_leading_eigenvector_and_norm_one():
@@ -100,24 +97,9 @@ def test_the_online_rule_is_applied_one_sample_at_a_time():
     assert np.allclose(result.weights, w, atol=1e-15, rtol=0)
 
 
-# --------------------------------------------------------------------------- schedule
-
-
-def test_exponential_decay_runs_from_eta0_to_eta_min():
-    X = _anisotropic(n=60)
-    result = train_oja(X, _cfg(epochs=20, eta0=5e-3, eta_min=1e-4, eta_decay="exponential"), np.random.default_rng(0))
-    eta = result.history["eta"]
-    assert eta[-1] == pytest.approx(1e-4, rel=1e-12)
-    assert eta[0] < 5e-3 and eta[0] > eta[-1]
-    assert (np.diff(eta) < 0).all()
-
-
 def test_constant_eta_is_flat():
     result = train_oja(_anisotropic(n=60), _cfg(epochs=5), np.random.default_rng(0))
     assert (result.history["eta"] == 1e-3).all()
-
-
-# --------------------------------------------------------------------------- divergence
 
 
 def test_divergence_is_flagged_not_raised_and_no_warning_escapes():
@@ -134,9 +116,6 @@ def test_divergence_is_flagged_not_raised_and_no_warning_escapes():
     assert MAX_W_NORM == 1e6
 
 
-# --------------------------------------------------------------------------- validation
-
-
 @pytest.mark.parametrize(
     "cfg",
     [
@@ -145,9 +124,6 @@ def test_divergence_is_flagged_not_raised_and_no_warning_escapes():
         dict(epochs=2.5),
         dict(eta0=0.0),
         dict(eta0=float("nan")),
-        dict(eta_min=0.0),
-        dict(eta_min=2e-3),
-        dict(eta_decay="cosine"),
     ],
 )
 def test_bad_config_raises_value_error(cfg):
@@ -177,26 +153,21 @@ def test_reference_must_match_the_feature_count_and_be_usable():
             train_oja(X, _cfg(), np.random.default_rng(0), reference=reference)
 
 
-# --------------------------------------------------------------------------- convergence_epoch
-
-
-def test_convergence_epoch_is_first_epoch_after_which_all_stay_inside():
-    assert convergence_epoch([3.0, 1.2, 1.005, 0.999, 1.0], 0.01) == 3
-    assert convergence_epoch([1.0, 1.0, 1.5], 0.01) is None
-    assert convergence_epoch([1.0, 1.5, 1.0, 1.0], 0.01) == 3
+def test_norm_band_epoch_is_first_epoch_after_which_all_stay_inside():
+    assert norm_band_epoch([3.0, 1.2, 1.005, 0.999, 1.0], 0.01) == 3
+    assert norm_band_epoch([1.0, 1.0, 1.5], 0.01) is None
+    assert norm_band_epoch([1.0, 1.5, 1.0, 1.0], 0.01) == 3
 
 
 def test_convergence_band_is_inclusive():
-    assert convergence_epoch([2.0, 1.25, 0.75], 0.25) == 2
+    assert norm_band_epoch([2.0, 1.25, 0.75], 0.25) == 2
 
 
-def test_convergence_epoch_none_for_empty_or_nan_tail():
-    assert convergence_epoch([], 0.01) is None
-    assert convergence_epoch([1.0, 1.0, float("nan")], 0.01) is None
-    assert convergence_epoch([float("nan"), 1.0, 1.0], 0.01) == 2
+def test_norm_band_epoch_none_for_empty_or_nan_tail():
+    assert norm_band_epoch([], 0.01) is None
+    assert norm_band_epoch([1.0, 1.0, float("nan")], 0.01) is None
+    assert norm_band_epoch([float("nan"), 1.0, 1.0], 0.01) == 2
 
-
-# --------------------------------------------------------------------------- hand-written (OJA-01)
 
 ALLOWED_TOP_LEVEL = {"__future__", "math", "dataclasses", "typing", "numpy", "tp4"}
 EIGEN_CALL = re.compile(r"linalg\s*\.\s*(eig|eigh|eigvals|eigvalsh|svd|svdvals)\b|\b(eigh?|svd)\s*\(")

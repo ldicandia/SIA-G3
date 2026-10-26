@@ -2,7 +2,6 @@
   "experiment": "campaigns",
   "kind": "campaigns",
   "seed": 42,
-  "backend": "numpy",
   "plots": true,
   "oja_config": "configs/oja.json",
   "params": {
@@ -15,13 +14,7 @@
       "objective": "consultas y adopciones",
       "topic": "topic_dogs_pct",
       "min_share": 40,
-      "regions": [1],
-      "rank_by": [
-        {"column": "argentina_audience_pct", "weight": 1.0},
-        {"column": "profile_visits_per_1000", "weight": 1.0},
-        {"column": "comments_per_1000", "weight": 0.5},
-        {"column": "saves_per_1000", "weight": 0.5}
-      ]
+      "order_by": "profile_visits_per_1000"
     },
     {
       "name": "football",
@@ -29,12 +22,7 @@
       "objective": "ventas",
       "topic": "topic_football_pct",
       "min_share": 40,
-      "regions": [],
-      "rank_by": [
-        {"column": "cost_per_1000_arg_reach", "weight": -1.0},
-        {"column": "argentina_audience_pct", "weight": 0.5},
-        {"column": "profile_visits_per_1000", "weight": 0.5}
-      ]
+      "order_by": "saves_per_1000"
     },
     {
       "name": "makeup",
@@ -42,12 +30,7 @@
       "objective": "ventas",
       "topic": "topic_makeup_pct",
       "min_share": 40,
-      "regions": [],
-      "rank_by": [
-        {"column": "cost_per_1000_arg_reach", "weight": -1.0},
-        {"column": "argentina_audience_pct", "weight": 0.5},
-        {"column": "saves_per_1000", "weight": 0.5}
-      ]
+      "order_by": "content_tutorial_pct"
     },
     {
       "name": "art",
@@ -55,12 +38,8 @@
       "objective": "ventas",
       "topic": "topic_art_pct",
       "min_share": 40,
-      "regions": [],
-      "rank_by": [
-        {"column": "cost_per_1000_arg_reach", "weight": -1.0},
-        {"column": "argentina_audience_pct", "weight": 0.5},
-        {"column": "content_tutorial_pct", "weight": 0.5}
-      ]
+      "order_by": "content_tutorial_pct"
     }
-  ]
+  ],
+  "som_config": "configs/som.json"
 }

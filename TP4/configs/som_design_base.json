@@ -2,22 +2,18 @@
   "experiment": "som_design_base",
   "kind": "som",
   "seed": 42,
-  "backend": "numpy",
   "plots": true,
   "data": "datos/creadores.csv",
   "feature_set": "configs/feature_set.json",
   "params": {
-    "rows": 6,
+    "rows": 4,
     "cols": null,
     "topology": "hex",
-    "neighborhood": "gaussian",
     "init": "sample",
     "epochs": 200,
-    "eta0": 0.5,
-    "eta_min": 0.01,
-    "eta_decay": "exponential",
-    "radius0": 3,
-    "radius_min": 1,
-    "radius_decay": "exponential"
+    "eta0": 0.9,
+    "radius0": 1,
+    "radius_decay": "constant",
+    "n_repeats": 30
   }
 }

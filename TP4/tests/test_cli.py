@@ -32,13 +32,11 @@ def test_run_json_records_provenance(out_root, tmp_path, write_config):
     assert run["seed"] == 42
     assert run["kind"] == "eda"
     assert run["experiment"] == "eda"
-    assert run["backend"] == {"requested": "numpy", "resolved": "numpy", "fallback_reason": None}
     assert run["config"]["data"] == "datos/creadores.csv"
     assert run["config_path"] == "configs/eda.json"
     assert "numpy" in run["versions"]
     assert "columns.csv" in run["artifacts"] and "run.json" not in run["artifacts"]
 
-    # T-01-05: a config outside the TP4 tree is recorded by bare file name, never an absolute path.
     other = tmp_path / "other"
     cfg = write_config(plots=False)
     main(["run", str(cfg), "--out-root", str(other)])

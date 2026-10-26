@@ -9,13 +9,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from types import ModuleType
 
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 
-from ..backend import to_numpy
 from ..errors import DataError
 
 
@@ -93,30 +91,11 @@ def fit_pca(Z: np.ndarray, features: Sequence[str], n_components: int | None = N
     )
 
 
-def eigen_crosscheck(Z: np.ndarray, explained_variance_ratio: np.ndarray, xp: ModuleType) -> float:
-    """Max |difference| between sklearn's ratios and an eigen-decomposition on backend `xp`.
-
-    This is the course's view of PCA: eigenvalues of the covariance `Z.T @ Z / n`
-    (the correlation matrix when `Z` is standardized), normalized to ratios.
-    """
-    Zx = xp.asarray(Z)
-    cov = Zx.T @ Zx / Zx.shape[0]
-    eigvals = np.sort(to_numpy(xp.linalg.eigvalsh(cov)))[::-1]
-    ratios = eigvals / eigvals.sum()
-    expected = np.asarray(explained_variance_ratio, dtype=float)
-    return float(np.max(np.abs(ratios[: expected.size] - expected)))
-
-
-def components_for_threshold(cumulative: np.ndarray, threshold: float) -> int:
-    """Smallest k (1-based) with cumulative[k-1] >= threshold (1e-12 slack); full count if never."""
+def components_for_threshold(cumulative: np.ndarray, threshold: float) -> int | None:
+    """Smallest k reaching the threshold; None when the computed components do not reach it."""
     cum = np.asarray(cumulative, dtype=float)
     hits = np.flatnonzero(cum >= threshold - 1e-12)
-    return int(hits[0]) + 1 if hits.size else int(cum.size)
-
-
-def kaiser_count(result: PcaResult) -> int:
-    """Number of correlation-matrix eigenvalues greater than 1."""
-    return int((result.eigenvalues > 1.0).sum())
+    return int(hits[0]) + 1 if hits.size else None
 
 
 def loadings_frame(result: PcaResult, n_pcs: int | None = None) -> pd.DataFrame:

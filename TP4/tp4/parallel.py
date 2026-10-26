@@ -1,9 +1,4 @@
-"""CPU-parallel map over independent work items (spawn process pool).
-
-Used by the `sweep` experiment kind; Phase 2 (Kohonen hyperparameter grid) and
-Phase 4 (Hopfield noise sweeps) reuse it. Results come back in submission
-order so downstream CSVs are deterministic regardless of the worker count.
-"""
+"""Run independent experiments in separate CPU processes, preserving submission order."""
 
 from __future__ import annotations
 
@@ -17,11 +12,6 @@ import numpy as np
 
 T = TypeVar("T")
 R = TypeVar("R")
-
-
-def default_workers() -> int:
-    """One worker per CPU, leaving one core free (never below 1)."""
-    return max(1, (os.cpu_count() or 1) - 1)
 
 
 def spawn_seeds(seed: int, n: int) -> list[int]:

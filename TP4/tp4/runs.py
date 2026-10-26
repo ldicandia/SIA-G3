@@ -20,7 +20,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .backend import Backend
 from .config import EXPERIMENT_NAME_RE
 from .errors import RunDirError
 
@@ -45,7 +44,6 @@ class RunContext:
     params: Mapping[str, Any]
     run_dir: Path
     plots: bool
-    backend: Backend
 
     def artifact(self, name: str) -> Path:
         return self.run_dir / name

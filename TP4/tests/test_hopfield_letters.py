@@ -15,7 +15,6 @@ from tp4.analysis.hopfield_eval import (
     classify_states,
     dot_matrix,
     flip_bits,
-    mixture_states,
     n_flips_for,
     nearest_pattern,
     overlaps,
@@ -26,7 +25,7 @@ from tp4.analysis.hopfield_eval import (
 from tp4.cli import main
 from tp4.config import load_config
 from tp4.experiments.hopfield_letters import load_alphabet
-from tp4.models.hopfield import HopfieldConfig, is_fixed_point, recall, train
+from tp4.models.hopfield import HopfieldConfig, is_fixed_point, recall, hebbian_weights
 from tp4.runs import PROJECT_ROOT
 
 ARTIFACTS = (
@@ -39,8 +38,9 @@ ARTIFACTS = (
     "recall_rates.csv",
     "energy.csv",
     "energy_trace.csv",
-    "mixtures.csv",
     "capacity.csv",
+    "recall_by_seed.csv", "recall_repetitions.csv",
+    "capacity_by_seed.csv", "capacity_repetitions.csv", "final_energy.png",
     "alphabet.png",
     "dot_products.png",
     "capacity.png",
@@ -68,7 +68,11 @@ def _glyph_to_pattern(rows: list[str]) -> np.ndarray:
 def letters_run(tmp_path_factory) -> Path:
     base = tmp_path_factory.mktemp("hopfield_letters_e2e")
     out = base / "runs"
-    assert main(["run", "configs/hopfield_letters.json", "--out-root", str(out)]) == 0
+    config = load_config(PROJECT_ROOT / "configs/hopfield_letters.json")
+    config["params"]["n_repeats"] = 2
+    path = base / "letters.json"
+    path.write_text(json.dumps(config))
+    assert main(["run", str(path), "--out-root", str(out)]) == 0
     return out / "hopfield_letters"
 
 
@@ -145,7 +149,7 @@ def test_exhaustive_one_and_two_flip_queries_converge_to_target():
     letters, patterns, _ = load_alphabet("datos/letras_5x5.json")
     sel_idx = [letters.index(ch) for ch in ("G", "R", "T", "V")]
     P_sel = patterns[sel_idx]
-    W = train(P_sel, "hebb")
+    W = hebbian_weights(P_sel)
     n = P_sel.shape[1]
 
     one_flip_positions = [(i,) for i in range(n)]
@@ -165,7 +169,7 @@ def test_exhaustive_one_and_two_flip_queries_converge_to_target():
     T = np.vstack(targets_list)
 
     for seed in range(5):
-        res = recall(W, Q, HopfieldConfig(rule="hebb", update="async", max_iter=100), rng=np.random.default_rng(seed))
+        res = recall(W, Q, HopfieldConfig(update="async", max_iter=100), rng=np.random.default_rng(seed))
         assert np.all(res.status == "converged")
         assert np.array_equal(res.states, T)
 
@@ -190,19 +194,19 @@ def test_recall_and_recall_rates_tables_and_summary(letters_run: Path):
     worst = s["worst_async_recovery"]
     assert worst[:-1] == [0.25] * (n_levels - 1)
     assert 0.2 <= worst[-1] <= 0.25
-    assert s["n_async_cycles"] == 0
-    assert s["n_sync_cycles"] > 0
+    assert s["example_n_async_cycles"] == 0
+    assert s["example_n_sync_cycles"] > 0
     assert s["selected_max_level_full_recovery"] is not None and s["selected_max_level_full_recovery"] >= 0.08
 
 
-# --------------------------------------------------------------------------- spurious & mixtures
+# --------------------------------------------------------------------------- spurious states
 
 
-def test_spurious_state_and_mixtures(letters_run: Path):
+def test_spurious_state(letters_run: Path):
     letters, patterns, _ = load_alphabet("datos/letras_5x5.json")
     sel_idx = [letters.index(ch) for ch in ("G", "R", "T", "V")]
     P_sel = patterns[sel_idx]
-    W = train(P_sel, "hebb")
+    W = hebbian_weights(P_sel)
 
     s = _summary(letters_run)
     assert s["spurious_found"] is True
@@ -220,20 +224,13 @@ def test_spurious_state_and_mixtures(letters_run: Path):
     cls, idx = classify_states(sp_vec[np.newaxis, :], P_sel)
     assert str(cls[0]) == "spurious" and int(idx[0]) == -1
 
-    mix_rows = _read_csv(letters_run / "mixtures.csv")
-    assert len(mix_rows) == 16
-    assert all(r["stable"] == "True" and r["class"] == "spurious" for r in mix_rows)
-    assert s["n_stable_mixtures"] == 16
-
-
 # --------------------------------------------------------------------------- capacity & energy
 
 
 def test_capacity_and_energy_tables(letters_run: Path):
     s = _summary(letters_run)
-    assert s["capacity_0138"] == 3.45
     assert s["capacity_015"] == 3.75
-    assert s["n_store_exceeds_0138"] is True
+    assert s["n_store_exceeds_015"] is True
 
     cap_rows = _read_csv(letters_run / "capacity.csv")
     assert len(cap_rows) == 12
@@ -264,11 +261,11 @@ def test_capacity_and_energy_tables(letters_run: Path):
 
 
 def test_same_seed_gives_byte_identical_csvs(tmp_path: Path, write_config):
-    cfg = write_config(base="configs/hopfield_letters.json", plots=False)
+    cfg = write_config(base="configs/hopfield_letters.json", plots=False, **{"params.n_repeats": 2})
     out_a, out_b = tmp_path / "a", tmp_path / "b"
     assert main(["run", str(cfg), "--out-root", str(out_a)]) == 0
     assert main(["run", str(cfg), "--out-root", str(out_b)]) == 0
-    for name in ("recall.csv", "energy.csv", "capacity.csv", "summary.json"):
+    for name in ("recall.csv", "energy.csv", "capacity.csv", "recall_by_seed.csv", "recall_repetitions.csv", "summary.json"):
         assert (out_a / "hopfield_letters" / name).read_bytes() == (
             out_b / "hopfield_letters" / name
         ).read_bytes(), name
@@ -278,7 +275,7 @@ def test_manual_letter_selection(tmp_path: Path, write_config):
     cfg = write_config(
         base="configs/hopfield_letters.json",
         plots=False,
-        **{"params.letters": ["A", "E", "I", "O"], "params.trials": 5, "params.capacity_subsets": 10},
+        **{"params.letters": ["A", "E", "I", "O"], "params.trials": 5, "params.capacity_subsets": 10, "params.n_repeats": 2},
     )
     out = tmp_path / "out"
     assert main(["run", str(cfg), "--out-root", str(out)]) == 0
@@ -294,7 +291,7 @@ def test_hopfield_eval_helpers():
     assert n_flips_for(0.2, 25) == 5
     letters, patterns, shape = load_alphabet("datos/letras_5x5.json")
     P = patterns[:4]
-    W = train(P, "hebb")
+    W = hebbian_weights(P)
     q = flip_bits(P[0], 3, 10, np.random.default_rng(0))
     assert q.shape == (10, 25)
     assert np.all(np.sum(q != P[0], axis=1) == 3)
@@ -306,21 +303,16 @@ def test_hopfield_eval_helpers():
     assert margins.shape == (4,)
     ranked = rank_subsets(dot_matrix(patterns), 4)
     assert len(ranked) == 14950
-    mixes = mixture_states(P, order=3)
-    assert len(mixes) == 16
-    assert render_rows(patterns[letters.index("J")], shape) == ["#####", "...#.", "...#.", "#..#.", "###.."]
 
 
 # --------------------------------------------------------------------------- validation & boundaries
 
 
 INVALID_CASES = [
-    {"params.n_store": 1},
-    {"params.n_store": 7},
+    {"params.n_repeats": 1}, {"params.n_repeats": True},
     {"params.letters": ["A", "B", "C", "9"]},
     {"params.letters": ["A", "A", "B", "C"]},
     {"params.letters": ["A", "B", "C"]},
-    {"params.rule": "storkey"},
     {"params.updates": ["greedy"]},
     {"params.updates": []},
     {"params.updates": ["async", "async"]},
@@ -398,3 +390,19 @@ def test_boundary_values_pass_validation(write_config, overrides):
     cfg = write_config(base="configs/hopfield_letters.json", **overrides)
     config = runner.validate_config(load_config(cfg))
     assert config["kind"] == "hopfield_letters"
+
+
+def test_repeated_letter_metrics_report_sample_spread_between_seeds(letters_run):
+    summary = _summary(letters_run)
+    assert summary["n_repeats"] == 2 and summary["seeds"] == [42, 43]
+    observations = _read_csv(letters_run / "recall_by_seed.csv")
+    repeated = _read_csv(letters_run / "recall_repetitions.csv")
+    for row in repeated:
+        group = [r for r in observations if all(r[key] == row[key] for key in ("set", "update", "level"))]
+        assert len(group) == 2
+        assert all(int(r["n_queries"]) == 200 for r in group)
+        values = np.array([float(r["recovery_rate"]) for r in group])
+        assert float(row["recovery_rate_mean"]) == pytest.approx(values.mean())
+        assert float(row["recovery_rate_std"]) == pytest.approx(values.std(ddof=1), abs=1e-8)
+    capacity = _read_csv(letters_run / "capacity_by_seed.csv")
+    assert len(capacity) == 2 * 10

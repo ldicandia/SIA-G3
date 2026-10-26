@@ -1,21 +1,4 @@
-"""Oja's single neuron written by hand in numpy (no ML library, no eigen-solver).
-
-The course rule (clases/6 - Regla de Oja y Sanger, pages 12-16): with y = w . x,
-
-    w <- w + eta * y * (x - y * w)          (i.e. delta w = eta * (y x - y^2 w))
-
-applied online, one creator at a time, on standardized (zero-mean) data. The initial w is uniform
-in [0, 1), drawn from the seeded rng before the loop. Every epoch visits the creators in one
-`rng.permutation` order (D-02). eta is constant by default (the course's 10^-3); an optional
-decay goes through `tp4.models.som.decay` over all T = epochs * n iterations (D-03).
-
-The model knows nothing about PCA: an optional `reference` vector is used only to record
-|cos(w, reference)| per epoch, never to initialize, update or stop the training.
-
-A run that blows up is flagged (`diverged`, `divergence_epoch`, NaN weights), not raised: a
-non-finite weight or a norm above MAX_W_NORM at an epoch end stops the loop. numpy overflow
-warnings are suppressed only inside the training loop.
-"""
+"""Regla de Oja en línea, con η constante e inicio uniforme (clase 6, pp. 15–16)."""
 
 from __future__ import annotations
 
@@ -24,8 +7,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .som import DECAYS, decay
-
 MAX_W_NORM = 1e6
 
 
@@ -33,8 +14,6 @@ MAX_W_NORM = 1e6
 class OjaConfig:
     epochs: int = 200
     eta0: float = 1e-3
-    eta_min: float = 1e-5
-    eta_decay: str = "constant"
 
 
 @dataclass(frozen=True)
@@ -63,13 +42,8 @@ def _is_positive_real(v) -> bool:
 def _check_config(config: OjaConfig) -> None:
     if not (_is_count(config.epochs) and config.epochs >= 1):
         raise ValueError(f"epochs must be an integer >= 1, got {config.epochs!r}")
-    for name, value in (("eta0", config.eta0), ("eta_min", config.eta_min)):
-        if not _is_positive_real(value):
-            raise ValueError(f"{name} must be a finite number > 0, got {value!r}")
-    if config.eta_min > config.eta0:
-        raise ValueError(f"eta_min must be <= eta0, got eta_min={config.eta_min!r}, eta0={config.eta0!r}")
-    if config.eta_decay not in DECAYS:
-        raise ValueError(f"unknown eta_decay {config.eta_decay!r}; allowed: {list(DECAYS)}")
+    if not _is_positive_real(config.eta0):
+        raise ValueError(f"eta0 must be a finite number > 0, got {config.eta0!r}")
 
 
 def _check_data(X, reference) -> tuple[np.ndarray, np.ndarray | None]:
@@ -99,23 +73,19 @@ def train_oja(
     n, d = X.shape
     w = rng.uniform(0.0, 1.0, size=d)  # host RNG first: a fixed seed fixes the init and the orders
     w0 = w.copy()
-    total = config.epochs * n
     ref_norm = float(np.linalg.norm(ref)) if ref is not None else 1.0
 
     hist: dict[str, list[float]] = {"epoch": [], "eta": [], "w_norm": [], "delta_w": [], "cos_to_reference": []}
     diverged = False
     divergence_epoch: int | None = None
-    t = 0
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         for epoch in range(config.epochs):
             w_prev = w
             eta_t = config.eta0
             for i in rng.permutation(n):
-                eta_t = decay(config.eta0, config.eta_min, t, total, config.eta_decay)
                 x = X[int(i)]
                 y = float(w @ x)
                 w = w + eta_t * y * (x - y * w)
-                t += 1
             norm = float(np.linalg.norm(w))
             if not bool(np.isfinite(w).all()) or not norm <= MAX_W_NORM:
                 hist["epoch"].append(epoch + 1)
@@ -146,7 +116,7 @@ def train_oja(
     )
 
 
-def convergence_epoch(norms, tol: float) -> int | None:
+def norm_band_epoch(norms, tol: float) -> int | None:
     """First 1-based epoch e with |norms[j] - 1| <= tol for every j >= e - 1 (band inclusive).
 
     NaN never counts as inside. None when the sequence is empty or its last value is outside.

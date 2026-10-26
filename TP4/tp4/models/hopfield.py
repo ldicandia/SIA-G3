@@ -1,21 +1,7 @@
-"""Discrete Hopfield associative memory written by hand in numpy (no ML library).
+"""Bipolar Hopfield memory with Hebbian weights and zero diagonal.
 
-Course conventions (clases/4.2 - Modelo de Hopfield.pdf):
-- States in {-1, +1} (slides 6, 9).
-- Local field h_i = sum_{j != i} w_ij S_j (slide 14) and update rule S_i = sign(h_i) with
-  S_i unchanged when h_i == 0 (slide 15; implemented with |h_i| <= FIELD_TOL).
-- Hebbian weights w_ij = (1 / N) * sum_{mu=1}^p xi_i^mu xi_j^mu for i != j and w_ii = 0,
-  w_ji = w_ij (slides 18, 20). Slide 28 writes (1/N) K K^T - I, which zeroes the diagonal
-  only when p = N; the explicit zero diagonal of slide 20 is used here.
-- Synchronous updates S(t+1) = sign(W S(t)) (slide 22, worked example slides 25-30) with
-  period-2 cycle detection (slide 38).
-- Energy H(S) = -1/2 * sum_{i,j} w_ij S_i S_j (slides 34-36), non-increasing under
-  asynchronous updates (flipping S_i with local field h_i changes H by 2 * S_i_old * h_i < 0).
-- Asynchronous updates draw one random permutation of the N neurons per sweep from the
-  seeded Generator and share it across every active row of a batch (INFRA-04), so a row's
-  trajectory is identical whether recalled alone or in a batch.
-- `iterations` counts sweeps that changed at least one neuron; the final no-change sweep
-  is the convergence check and is not counted.
+See the Hopfield class, pp. 15, 20, 22 and 34–38. Zero local field keeps the
+previous state. Iterations count changing sweeps, excluding the final fixed-point check.
 """
 
 from __future__ import annotations
@@ -26,14 +12,11 @@ import numpy as np
 
 FIELD_TOL = 1e-9
 MAX_ITER = 1000
-RULES = ("hebb", "pseudoinverse")
 UPDATES = ("async", "sync")
-STATUSES = ("converged", "cycle", "max_iter")
 
 
 @dataclass(frozen=True)
 class HopfieldConfig:
-    rule: str = "hebb"
     update: str = "async"
     max_iter: int = 100
 
@@ -42,7 +25,7 @@ class HopfieldConfig:
 class RecallResult:
     states: np.ndarray  # (B, N) int8
     iterations: np.ndarray  # (B,) int
-    status: np.ndarray  # (B,) str from STATUSES
+    status: np.ndarray  # (B,) convergence status
     energies: list[np.ndarray]  # length B; initial energy + one per changing iteration
     update_energies: list[np.ndarray] | None = None
 
@@ -74,36 +57,6 @@ def hebbian_weights(patterns) -> np.ndarray:
     W = (P.T @ P) / float(n)
     np.fill_diagonal(W, 0.0)
     return W
-
-
-def pseudoinverse_weights(patterns) -> np.ndarray:
-    """Projection (pseudoinverse) weight matrix W = K (K^T K)^{-1} K^T with zero diagonal.
-
-    Every stored pattern satisfies W' xi = xi before the diagonal is removed. With the
-    diagonal removed, h_i = (1 - d_i) xi_i with d_i = W'_ii < 1, so stored patterns stay
-    fixed points even when correlated. This is a different learning rule from the course's
-    Hebb rule, used in plan 04-03 to show that correlation, not pattern count, breaks Hebb
-    on the QR codes.
-    """
-    P = check_patterns(patterns).astype(np.float64)
-    p = P.shape[0]
-    K = P.T
-    C = K.T @ K
-    if int(np.linalg.matrix_rank(C)) < p:
-        raise ValueError("patterns are linearly dependent; pseudoinverse_weights requires full row rank")
-    W = K @ np.linalg.solve(C, K.T)
-    W = 0.5 * (W + W.T)
-    np.fill_diagonal(W, 0.0)
-    return W
-
-
-def train(patterns, rule: str = "hebb") -> np.ndarray:
-    """Build the synaptic weight matrix W for `patterns` using `rule`."""
-    if rule not in RULES:
-        raise ValueError(f"unknown rule {rule!r}; allowed: {list(RULES)}")
-    if rule == "hebb":
-        return hebbian_weights(patterns)
-    return pseudoinverse_weights(patterns)
 
 
 def sign_keep(h, s) -> np.ndarray:
@@ -171,8 +124,6 @@ def recall(
     if S.shape[1] != n:
         raise ValueError(f"queries width {S.shape[1]} does not match W size {n}")
 
-    if config.rule not in RULES:
-        raise ValueError(f"unknown rule {config.rule!r}; allowed: {list(RULES)}")
     if config.update not in UPDATES:
         raise ValueError(f"unknown update {config.update!r}; allowed: {list(UPDATES)}")
     if not (_is_int(config.max_iter) and 1 <= config.max_iter <= MAX_ITER):
