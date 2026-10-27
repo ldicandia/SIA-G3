@@ -10,11 +10,12 @@ import pytest
 from tp4.analysis.pca import (
     components_for_threshold,
     fit_pca,
+    load_pca_input,
     orient_components,
     standardize,
 )
 from tp4.cli import main
-from tp4.errors import DataError
+from tp4.errors import ConfigError, DataError
 from tp4.runs import PROJECT_ROOT
 
 DATA_PATH = PROJECT_ROOT / "datos" / "creadores.csv"
@@ -243,3 +244,78 @@ def test_biplot_max_arrows_and_loadings_pcs_are_respected(tmp_path, write_config
     run = tmp_path / "r" / "pca"
     assert pd.read_csv(run / "loadings.csv").shape == (27, 5)
     assert (run / "biplot.png").stat().st_size > 0 and (run / "loadings_heatmap.png").stat().st_size > 0
+
+
+@pytest.mark.parametrize("threshold, expected_components", [(0.8, 6), (0.9, 10), (1.0, 25)])
+def test_pca_input_selects_components_from_the_complete_spectrum(threshold, expected_components):
+    representation = load_pca_input("configs/pca.json", threshold)
+
+    assert representation.n_components == expected_components
+    assert representation.pca.components.shape == (27, 27)
+    assert representation.scores.shape == (50, expected_components)
+    assert representation.design.X.shape == representation.Z.shape == (50, 27)
+    assert representation.retained_variance >= threshold - 1e-12
+    if expected_components > 1:
+        assert representation.pca.cumulative_ratio[expected_components - 2] < threshold - 1e-12
+    np.testing.assert_allclose(
+        representation.Z * representation.std + representation.mean,
+        representation.design.X.to_numpy(),
+        atol=1e-9,
+    )
+
+
+def test_pca_input_preserves_projection_scale_and_original_creator_order():
+    representation = load_pca_input("configs/pca.json")
+    scores = representation.scores
+
+    np.testing.assert_allclose(scores, representation.Z @ representation.pca.components[:10].T,
+                               atol=1e-12)
+    np.testing.assert_allclose(scores.var(axis=0, ddof=0), representation.pca.eigenvalues[:10],
+                               atol=1e-12)
+    assert scores.std(axis=0).max() > 3
+    assert scores.std(axis=0).min() < 1
+    source = pd.read_csv(DATA_PATH)
+    assert representation.design.raw["creator_id"].tolist() == source["creator_id"].tolist()
+    assert representation.design.raw["name"].tolist() == source["name"].tolist()
+
+
+def test_pca_input_reconstruction_accounts_for_the_discarded_variance():
+    representation = load_pca_input("configs/pca.json")
+    residual = representation.Z - representation.reconstructed_Z
+
+    np.testing.assert_allclose(residual @ representation.pca.components[:10].T, 0, atol=1e-12)
+    lost_variance = np.square(residual).sum() / np.square(representation.Z).sum()
+    assert lost_variance == pytest.approx(1 - representation.retained_variance, abs=1e-12)
+    assert lost_variance == pytest.approx(0.08472255, abs=1e-8)
+    assert representation.projection_rmse == pytest.approx(np.sqrt(np.mean(residual ** 2)))
+    full = load_pca_input("configs/pca.json", 1)
+    assert full.projection_rmse < 1e-12
+
+
+@pytest.mark.parametrize("threshold", [True, False, None, "0.9", 0, -0.1, 1.1, float("nan"), float("inf")])
+def test_pca_input_rejects_invalid_variance_thresholds(threshold):
+    with pytest.raises(ConfigError, match="variance_threshold"):
+        load_pca_input("configs/pca.json", threshold)
+
+
+@pytest.mark.parametrize("path", ["configs/eda.json", "configs/oja.json"])
+def test_pca_input_rejects_other_experiment_kinds(path):
+    with pytest.raises(ConfigError, match="PCA"):
+        load_pca_input(path)
+
+
+def test_pca_input_rejects_self_referencing_som_before_recursive_validation(write_config):
+    path = write_config("configs/som.json")
+    config = json.loads(path.read_text(encoding="utf-8"))
+    config["pca_config"] = str(path)
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="PCA"):
+        load_pca_input(str(path))
+
+
+@pytest.mark.parametrize("override", [{"params.standardize": False}, {"params.n_components": 10}])
+def test_pca_input_requires_standardized_data_and_a_complete_pca_fit(write_config, override):
+    path = write_config("configs/pca.json", **override)
+    with pytest.raises(ConfigError, match="standardize.*all components"):
+        load_pca_input(str(path))

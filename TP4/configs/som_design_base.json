@@ -3,9 +3,9 @@
   "kind": "som",
   "seed": 42,
   "plots": true,
-  "data": "datos/creadores.csv",
-  "feature_set": "configs/feature_set.json",
+  "pca_config": "configs/pca.json",
   "params": {
+    "variance_threshold": 0.9,
     "rows": 4,
     "cols": null,
     "topology": "hex",

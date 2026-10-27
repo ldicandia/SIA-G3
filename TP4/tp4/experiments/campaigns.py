@@ -5,10 +5,10 @@ import pandas as pd
 
 from ..analysis.campaigns import (RANKABLE_COLUMNS, build_evidence, describe_rule,
                                   followers_top, pick, cell_profiles, strategy_metrics)
-from ..analysis.pca import fit_pca, standardize
+from ..analysis.pca import load_pca_input
 from ..config import load_config
 from ..errors import ConfigError
-from ..features import TOPIC_COLUMNS, load_design
+from ..features import TOPIC_COLUMNS
 from ..plotting import plt, save_figure
 from ..runs import Experiment, resolve_project_path, write_csv
 from .oja import fit_index, oja_config_from_params
@@ -35,8 +35,10 @@ def validate(config):
     if not isinstance(som_path, str) or not som_path:
         raise ConfigError("campaigns: som_config is required")
     som = load_som_config(som_path, who="campaigns")
-    if any(base[key] != som[key] for key in ("data", "feature_set")):
-        raise ConfigError("campaigns: Oja and SOM must use the same data and feature_set")
+    pca_input = load_pca_input(som["pca_config"], som["params"]["variance_threshold"])
+    if any(resolve_project_path(base[key]).resolve() != resolve_project_path(pca_input.config[key]).resolve()
+           for key in ("data", "feature_set")):
+        raise ConfigError("campaigns: Oja and the PCA feeding SOM must use the same data and feature_set")
     n = config["params"]["n_picks"]
     if type(n) is not int or not 1 <= n <= 10:
         raise ConfigError("campaigns: n_picks must be an integer in [1, 10]")
@@ -78,14 +80,13 @@ def _plot_comparison(table, clients, path):
 def run(ctx):
     base = _load_oja_base(ctx.config)
     som_base = load_som_config(ctx.config["som_config"], who="campaigns")
-    design = load_design(base["data"], base["feature_set"])
-    Z = standardize(design.X)[0]
-    pca = fit_pca(Z, list(design.X.columns))
-    oja = fit_index(Z, oja_config_from_params(base["params"]),
+    pca_input = load_pca_input(som_base["pca_config"], som_base["params"]["variance_threshold"])
+    design, pca = pca_input.design, pca_input.pca
+    oja = fit_index(pca_input.Z, oja_config_from_params(base["params"]),
                     np.random.default_rng(base["seed"]), pca.components[0])
     if oja.index is None:
         raise ConfigError("campaigns: Oja diverged")
-    som = som_evidence(som_base, Z)
+    som = som_evidence(som_base, pca_input)
     evidence = build_evidence(design.raw, pca.scores[:, 0], pca.scores[:, 1], oja.index,
                               som.bmu, som.row, som.col)
     write_csv(ctx.artifact("evidence.csv"), evidence)
@@ -93,6 +94,9 @@ def run(ctx):
     clients = ctx.config["clients"]
     picks, baselines, comparisons, profiles = [], [], [], []
     summary = {"n_creators": len(evidence), "n_clients": len(clients), "n_picks": n,
+               "som_input": "pca", "som_n_components": pca_input.n_components,
+               "som_retained_variance": pca_input.retained_variance,
+               "oja_input": "standardized_original_features",
                "decision_type": "explicit commercial assumptions; no learned ranking"}
     for client in clients:
         try:

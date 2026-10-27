@@ -9,20 +9,21 @@ import numpy as np
 import pandas as pd
 from matplotlib.patheffects import withStroke
 
-from ..analysis.pca import fit_pca, standardize
-from ..analysis.som_maps import edge_feature_diffs, pc_projection, prototypes_original_units, u_edges, u_matrix
+from ..analysis.pca import PcaInput, load_pca_input
+from ..analysis.som_maps import edge_feature_diffs, prototypes_original_units, reconstruct_prototypes, u_edges, u_matrix
 from ..config import load_config
 from ..errors import ConfigError
-from ..features import dominant_topic, load_design
+from ..features import dominant_topic
 from ..models.som import DECAYS, INITS, TOPOLOGIES, SomConfig, matching_units, train_som
 from ..plotting import draw_grid_cells, grid_shape, plt, save_figure
 from ..runs import Experiment, RunContext, resolve_project_path, write_csv
 from .pca import TOPIC_COLORS, TOPIC_LABELS
 from .som_sweep_report import report
 
-EXTRA_KEYS = frozenset({"data", "feature_set"})
+EXTRA_KEYS = frozenset({"pca_config"})
 PARAM_DEFAULTS: dict[str, Any] = {
     "n_repeats": 30,
+    "variance_threshold": 0.9,
     "rows": 6,
     "cols": None,
     "topology": "hex",
@@ -49,11 +50,15 @@ def _grid_dims(p: dict) -> tuple[int, int]:
 
 
 def validate(config: dict) -> None:
-    for key in ("data", "feature_set"):
-        v = config.get(key)
-        if not isinstance(v, str) or not v:
-            raise ConfigError(f"som: {key} must be a non-empty string path, got {v!r}")
+    path = config.get("pca_config")
+    if not isinstance(path, str) or not path:
+        raise ConfigError(f"som: pca_config must be a non-empty string path, got {path!r}")
     p = config["params"]
+    if not (_is_real(p["variance_threshold"]) and 0 < p["variance_threshold"] <= 1):
+        raise ConfigError("som: variance_threshold must be in (0, 1]")
+    pca_input = load_pca_input(path, p["variance_threshold"])
+    if pca_input.n_components < 2:
+        raise ConfigError("som: retain at least two principal components to draw the PC1-PC2 planes")
     if type(p["n_repeats"]) is not int or not 2 <= p["n_repeats"] <= 100:
         raise ConfigError("som: n_repeats must be an integer in [2, 100]")
     if not (_is_int(p["rows"]) and p["rows"] >= 1):
@@ -118,10 +123,13 @@ def load_som_config(path: str, who: str) -> dict[str, Any]:
     return runner.validate_config(loaded)
 
 
-def som_evidence(som_config: dict[str, Any], Z: np.ndarray) -> SomEvidence:
+def som_evidence(som_config: dict[str, Any], pca_input: PcaInput | None = None) -> SomEvidence:
+    if pca_input is None:
+        pca_input = load_pca_input(som_config["pca_config"], som_config["params"]["variance_threshold"])
+    scores = pca_input.scores
     cfg = som_config_from_params(som_config["params"])
-    result = train_som(Z, cfg, np.random.default_rng(som_config["seed"]))
-    bmu = matching_units(Z, result.weights)[0]
+    result = train_som(scores, cfg, np.random.default_rng(som_config["seed"]))
+    bmu = matching_units(scores, result.weights)[0]
     return SomEvidence(bmu, bmu // cfg.cols, bmu % cfg.cols)
 
 
@@ -179,7 +187,7 @@ def _plot_u_matrix(grid, u, hits, topology, seed, path) -> None:
     vmin, vmax = float(np.nanmin(u)), float(np.nanmax(u))
     collection = draw_grid_cells(ax, grid.positions, topology, u, cmap="viridis", vmin=vmin, vmax=vmax)
     cbar = fig.colorbar(collection, ax=ax, shrink=0.7)
-    cbar.set_label("distancia media a las neuronas vecinas (unidades z)")
+    cbar.set_label("distancia media a las neuronas vecinas (espacio PCA retenido)")
     span = (vmax - vmin) or 1.0
     for (x, y), value, count in zip(grid.positions, u, hits):
         dark = (value - vmin) / span < 0.5
@@ -208,7 +216,7 @@ def _plot_component_planes(grid, prototypes, topology, seed, path) -> None:
     for ax in flat[n_panels:]:
         ax.axis("off")
     fig.suptitle(
-        f"Variables de los prototipos (unidades originales); semilla {seed} (ejemplo)",
+        f"Reconstrucción aproximada de prototipos (unidades originales); semilla {seed} (ejemplo)",
         fontsize=12,
     )
     fig.tight_layout()
@@ -224,7 +232,7 @@ def _plot_pc_planes(grid, neuron_pcs, explained_pct, topology, seed, path) -> No
         collection = draw_grid_cells(ax, grid.positions, topology, values, cmap="vlag", vmin=-bound, vmax=bound)
         fig.colorbar(collection, ax=ax, shrink=0.7)
         ax.set_title(f"PC{i + 1} ({explained_pct[i]:.1f}%) del prototipo de cada neurona", fontsize=10)
-    fig.suptitle(f"Proyección de prototipos; semilla {seed} (ejemplo)")
+    fig.suptitle(f"Coordenadas PCA de los prototipos; semilla {seed} (ejemplo)")
     fig.tight_layout()
     save_figure(fig, path)
 
@@ -236,7 +244,7 @@ def _plot_training_curve(history, n_repeats, path) -> None:
     std = history["mean_bmu_distance_std"].to_numpy()
     top.plot(epoch, mean, label="media")
     top.fill_between(epoch, mean - std, mean + std, alpha=0.2, label="±1 desvío entre semillas")
-    top.set_ylabel("distancia media al ganador")
+    top.set_ylabel("distancia media al ganador (PCA)")
     top.set_title(f"Kohonen: {n_repeats} entrenamientos independientes")
     top.legend()
     top.grid(alpha=0.3)
@@ -263,26 +271,29 @@ def _plot_biplot_cells(scores, bmu, names, grid, explained_pct, seed, path) -> N
 
 
 REPEAT_METRICS = (
-    "mean_bmu_distance", "n_empty_neurons", "empty_neuron_frac", "max_hits",
+    "mean_bmu_distance", "mean_bmu_distance_original", "n_empty_neurons", "empty_neuron_frac", "max_hits",
     "mean_hits_occupied", "u_mean", "u_max",
 )
 
 
-def repeat_training(Z, cfg, seed, n_repeats):
+def repeat_training(scores, cfg, seed, n_repeats, *, original_Z, components):
     records, curves = [], []
     representative = None
     for run_seed in range(seed, seed + n_repeats):
-        result = train_som(Z, cfg, np.random.default_rng(run_seed))
+        result = train_som(scores, cfg, np.random.default_rng(run_seed))
         if representative is None:
             representative = result
-        bmu, distance = matching_units(Z, result.weights)
+        bmu, distance = matching_units(scores, result.weights)
+        reconstructed = reconstruct_prototypes(result.weights, components)
+        original_distance = np.linalg.norm(original_Z - reconstructed[bmu], axis=1)
         hits = np.bincount(bmu, minlength=result.grid.n_neurons)
         n_empty = int((hits == 0).sum())
         u = u_matrix(result.weights, result.grid)
         records.append({
             "seed": run_seed, "mean_bmu_distance": float(distance.mean()),
+            "mean_bmu_distance_original": float(original_distance.mean()),
             "n_empty_neurons": n_empty, "empty_neuron_frac": n_empty / len(hits),
-            "max_hits": int(hits.max()), "mean_hits_occupied": len(Z) / (len(hits) - n_empty),
+            "max_hits": int(hits.max()), "mean_hits_occupied": len(scores) / (len(hits) - n_empty),
             "u_mean": float(np.nanmean(u)), "u_max": float(np.nanmax(u)),
         })
         curves.append(result.history["mean_bmu_distance"])
@@ -298,21 +309,26 @@ def repeat_training(Z, cfg, seed, n_repeats):
 
 def run(ctx: RunContext) -> dict:
     params = ctx.params
-    design = load_design(ctx.config["data"], ctx.config["feature_set"])
-    Z, mean, std = standardize(design.X)
+    pca_input = load_pca_input(ctx.config["pca_config"], params["variance_threshold"])
+    design, Z = pca_input.design, pca_input.Z
+    pca, scores = pca_input.pca, pca_input.scores
+    mean, std = pca_input.mean, pca_input.std
     cfg = som_config_from_params(params)
-    result, per_seed, history_repeats = repeat_training(Z, cfg, ctx.seed, params["n_repeats"])
+    result, per_seed, history_repeats = repeat_training(
+        scores, cfg, ctx.seed, params["n_repeats"], original_Z=Z, components=pca.components
+    )
     write_csv(ctx.artifact("per_seed.csv"), per_seed)
     write_csv(ctx.artifact("history_repeats.csv"), history_repeats)
     grid, W = result.grid, result.weights
     n_neurons = grid.n_neurons
 
     feature_names = list(design.X.columns)
-    pca = fit_pca(Z, feature_names)
-    neuron_pcs = pc_projection(W, pca.components, 2)
+    neuron_pcs = W[:, :2]
     creator_pcs = pca.scores[:, :2]
+    reconstructed = reconstruct_prototypes(W, pca.components)
 
-    bmu, bmu_dist = matching_units(Z, W)
+    bmu, bmu_dist = matching_units(scores, W)
+    bmu_dist_original = np.linalg.norm(Z - reconstructed[bmu], axis=1)
     hits = np.bincount(bmu, minlength=n_neurons)
     topics = dominant_topic(design.raw)
     names = design.raw["name"].tolist()
@@ -327,6 +343,7 @@ def run(ctx: RunContext) -> dict:
                     "row": bmu // grid.cols,
                     "col": bmu % grid.cols,
                     "bmu_distance": bmu_dist,
+                    "bmu_distance_original": bmu_dist_original,
                     "pc1": creator_pcs[:, 0],
                     "pc2": creator_pcs[:, 1],
                 }
@@ -355,7 +372,7 @@ def run(ctx: RunContext) -> dict:
     )
     write_csv(ctx.artifact("neurons.csv"), neurons)
 
-    prototypes = prototypes_original_units(W, mean, std, feature_names)
+    prototypes = prototypes_original_units(reconstructed, mean, std, feature_names)
     proto_table = prototypes.copy()
     proto_table.insert(0, "col", idx % grid.cols)
     proto_table.insert(0, "row", idx // grid.cols)
@@ -375,16 +392,21 @@ def run(ctx: RunContext) -> dict:
             "distance": edges["distance"].to_numpy(),
             "creators_a": [";".join(labels[a]) for a in ea],
             "creators_b": [";".join(labels[b]) for b in eb],
-            "top_diff": [edge_feature_diffs(W, feature_names, int(a), int(b)) for a, b in zip(ea, eb)],
+            "top_diff": [edge_feature_diffs(reconstructed, feature_names, int(a), int(b)) for a, b in zip(ea, eb)],
         }
     )
     write_csv(ctx.artifact("u_edges.csv"), edge_table)
 
-    weights = pd.DataFrame(W, columns=list(design.X.columns))
+    weights = pd.DataFrame(W, columns=[f"PC{i + 1}" for i in range(pca_input.n_components)])
     weights.insert(0, "col", idx % grid.cols)
     weights.insert(0, "row", idx // grid.cols)
     weights.insert(0, "neuron", idx)
     write_csv(ctx.artifact("weights.csv"), weights)
+    reconstructed_weights = pd.DataFrame(reconstructed, columns=feature_names)
+    reconstructed_weights.insert(0, "col", idx % grid.cols)
+    reconstructed_weights.insert(0, "row", idx // grid.cols)
+    reconstructed_weights.insert(0, "neuron", idx)
+    write_csv(ctx.artifact("reconstructed_weights.csv"), reconstructed_weights)
 
     history = pd.DataFrame(result.history)
     write_csv(ctx.artifact("history.csv"), history)
@@ -413,13 +435,20 @@ def run(ctx: RunContext) -> dict:
         aggregates[f"{metric}_mean"] = float(per_seed[metric].mean())
         aggregates[f"{metric}_std"] = float(per_seed[metric].std(ddof=1))
     return {
-        "input": "features",
+        "input": "pca",
+        "pca_config": ctx.config["pca_config"],
+        "variance_threshold": params["variance_threshold"],
+        "retained_variance": pca_input.retained_variance,
+        "n_components": pca_input.n_components,
+        "n_original_features": int(Z.shape[1]),
+        "projection_rmse": pca_input.projection_rmse,
+        "prototype_interpretation": "approximate reconstruction from retained principal components",
         "n_repeats": params["n_repeats"],
         "representative_seed": ctx.seed,
         "seeds": per_seed["seed"].tolist(),
         **aggregates,
         "n_samples": int(Z.shape[0]),
-        "n_features": int(Z.shape[1]),
+        "n_features": int(scores.shape[1]),
         "rows": grid.rows,
         "cols": grid.cols,
         "n_neurons": n_neurons,
@@ -431,6 +460,7 @@ def run(ctx: RunContext) -> dict:
         "radius0": round(cfg.radius0, 4),
         "radius_decay": cfg.radius_decay,
         "mean_bmu_distance": round(float(result.history["mean_bmu_distance"][-1]), 4),
+        "mean_bmu_distance_original": float(bmu_dist_original.mean()),
         "n_empty_neurons": n_empty,
         "empty_neuron_frac": round(n_empty / n_neurons, 4),
         "max_hits": int(hits.max()),

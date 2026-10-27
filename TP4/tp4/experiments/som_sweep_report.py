@@ -7,9 +7,9 @@ import pandas as pd
 from ..plotting import plt, save_figure
 from ..runs import RunContext, write_csv
 
-METRICS = ("mean_bmu_distance", "n_empty_neurons", "empty_neuron_frac", "u_mean", "u_max")
+METRICS = ("mean_bmu_distance", "mean_bmu_distance_original", "n_empty_neurons", "empty_neuron_frac", "u_mean", "u_max")
 PLOT_METRICS = (
-    ("mean_bmu_distance", "Distancia media al ganador"),
+    ("mean_bmu_distance_original", "Distancia al ganador reconstruido (espacio z original)"),
     ("empty_neuron_frac", "Fracción de neuronas vacías"),
     ("u_mean", "Distancia media entre vecinos (U)"),
 )
@@ -20,12 +20,14 @@ PARAMETER_LABELS = {
     "params.epochs": "Épocas",
     "params.topology": "Topología",
     "params.init": "Inicialización",
+    "params.variance_threshold": "Varianza acumulada requerida en PCA",
 }
 
 
 def report(ctx: RunContext, table: pd.DataFrame) -> dict:
     keys = list(ctx.config["grid"])
-    columns = ["child", *keys, "varied_parameter", "parameter_value", "n_repeats", "representative_seed"]
+    columns = ["child", *keys, "varied_parameter", "parameter_value", "n_repeats", "representative_seed",
+               "n_components", "n_original_features", "retained_variance", "projection_rmse"]
     columns += [f"{metric}_{stat}" for metric in METRICS for stat in ("mean", "std")]
     write_csv(ctx.artifact("comparison.csv"), table[columns])
     if ctx.plots:
@@ -36,6 +38,9 @@ def report(ctx: RunContext, table: pd.DataFrame) -> dict:
             values = rows["parameter_value"].tolist()
             labels = [f"{value:g}" if isinstance(value, (int, float)) and not isinstance(value, bool)
                       else str(value) for value in values]
+            if key == "params.variance_threshold":
+                labels = [f"{int(k)} PC\n{100 * fraction:.1f}%" for k, fraction in
+                          zip(rows["n_components"], rows["retained_variance"])]
             if key == "params.rows":
                 labels = [f"{value}×{value}" for value in labels]
             for row, (metric, label) in enumerate(PLOT_METRICS):

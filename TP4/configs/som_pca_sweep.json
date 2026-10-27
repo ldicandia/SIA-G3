@@ -1,0 +1,12 @@
+{
+  "experiment": "som_pca_sweep",
+  "kind": "sweep",
+  "seed": 42,
+  "plots": true,
+  "base": "configs/som.json",
+  "grid": {
+    "params.variance_threshold": [0.8, 0.9, 1.0]
+  },
+  "workers": 3,
+  "child_plots": false
+}

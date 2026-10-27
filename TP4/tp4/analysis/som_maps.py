@@ -67,6 +67,7 @@ def prototypes_original_units(
     return pd.DataFrame(np.asarray(mean, dtype=float) + W * np.asarray(std, dtype=float), columns=list(features))
 
 
-def pc_projection(weights: np.ndarray, components: np.ndarray, n: int = 2) -> np.ndarray:
-    """Project each row of `weights` on the first `n` principal axes: W @ components[:n].T."""
-    return np.asarray(weights, dtype=float) @ np.asarray(components, dtype=float)[:n].T
+def reconstruct_prototypes(weights: np.ndarray, components: np.ndarray) -> np.ndarray:
+    """Reconstruct standardized feature coordinates from the retained PC weights."""
+    W = np.asarray(weights, dtype=float)
+    return W @ np.asarray(components, dtype=float)[: W.shape[1]]

@@ -117,8 +117,8 @@ def test_neurons_u_distance_matches_the_edge_table(som_run):
         assert float(row["u_distance"]) == pytest.approx(expected, rel=1e-8)
 
 
-from tp4.analysis.pca import fit_pca, standardize  # noqa: E402
-from tp4.analysis.som_maps import pc_projection, prototypes_original_units  # noqa: E402
+from tp4.analysis.pca import fit_pca, load_pca_input, standardize  # noqa: E402
+from tp4.analysis.som_maps import prototypes_original_units, reconstruct_prototypes  # noqa: E402
 from tp4.features import load_design  # noqa: E402
 
 
@@ -133,19 +133,15 @@ def test_prototypes_original_units_zero_and_one_weights():
     assert one.to_numpy() == pytest.approx(np.tile(mean + std, (4, 1)))
 
 
-def test_pc_projection_is_weights_times_components_transposed():
-    rng = np.random.default_rng(0)
-    W = rng.normal(size=(7, 5))
-    components = rng.normal(size=(4, 5))
-    assert pc_projection(W, components, 2) == pytest.approx(W @ components[:2].T, abs=1e-12)
-    assert pc_projection(W, components).shape == (7, 2)
-
-
-def test_pc_projection_of_the_creator_rows_equals_pca_scores():
+def test_reconstructed_prototypes_restore_retained_coordinates_and_drop_omitted_axes():
     design = load_design(DATA_PATH, PROJECT_ROOT / "configs" / "feature_set.json")
     Z, _mean, _std = standardize(design.X)
     pca = fit_pca(Z, list(design.X.columns))
-    assert pc_projection(Z, pca.components, 2) == pytest.approx(pca.scores[:, :2], abs=1e-10)
+    scores = pca.scores[:, :10]
+    reconstructed = reconstruct_prototypes(scores, pca.components)
+    assert reconstructed @ pca.components[:10].T == pytest.approx(scores, abs=1e-10)
+    assert reconstructed @ pca.components[10:].T == pytest.approx(np.zeros((len(Z), 17)), abs=1e-10)
+    assert reconstruct_prototypes(pca.scores, pca.components) == pytest.approx(Z, abs=1e-10)
 
 
 def test_cli_prototypes_planes_and_pc_columns(som_run):
@@ -162,15 +158,19 @@ def test_cli_prototypes_planes_and_pc_columns(som_run):
         assert "pc1" in header and "pc2" in header, table
 
 
-def test_prototype_values_are_weights_in_original_units(som_run):
-    design = load_design(DATA_PATH, PROJECT_ROOT / "configs" / "feature_set.json")
-    features = list(design.X.columns)
-    Z, mean, std = standardize(design.X)
+def test_prototype_values_are_inverse_pca_reconstructions_in_original_units(som_run):
+    data = load_pca_input(_config()["pca_config"], _config()["params"]["variance_threshold"])
+    features = list(data.design.X.columns)
     weights = _read(som_run / "weights.csv")
+    reconstructed = _read(som_run / "reconstructed_weights.csv")
     protos = _read(som_run / "prototypes.csv")
-    w = np.array([[float(r[f]) for f in features] for r in weights])
+    pc_names = [f"PC{i + 1}" for i in range(data.n_components)]
+    assert list(weights[0]) == ["neuron", "row", "col", *pc_names]
+    w = np.array([[float(r[f]) for f in pc_names] for r in weights])
+    w_reconstructed = np.array([[float(r[f]) for f in features] for r in reconstructed])
     p = np.array([[float(r[f]) for f in features] for r in protos])
-    assert p == pytest.approx(mean + w * std, rel=1e-6, abs=1e-6)
+    assert w_reconstructed == pytest.approx(w @ data.pca.components[:data.n_components], rel=1e-6, abs=1e-6)
+    assert p == pytest.approx(data.mean + w_reconstructed * data.std, rel=1e-6, abs=1e-6)
 
 
 def test_pc_columns_and_summary_agree_with_pca(som_run):
@@ -185,13 +185,23 @@ def test_pc_columns_and_summary_agree_with_pca(som_run):
     assert summary["pc2_explained_variance_pct"] == round(float(pca.explained_variance_ratio[1]) * 100, 1)
 
 
-def test_neuron_pc_columns_are_the_prototype_projection(som_run):
-    design = load_design(DATA_PATH, PROJECT_ROOT / "configs" / "feature_set.json")
-    features = list(design.X.columns)
-    Z, _mean, _std = standardize(design.X)
-    pca = fit_pca(Z, features)
+def test_neuron_pc_columns_are_the_trained_pc_coordinates(som_run):
     weights = _read(som_run / "weights.csv")
-    w = np.array([[float(r[f]) for f in features] for r in weights])
+    w = np.array([[float(r[f]) for f in ("PC1", "PC2")] for r in weights])
     neurons = _read(som_run / "neurons.csv")
     got = np.array([[float(r["pc1"]), float(r["pc2"])] for r in neurons])
-    assert got == pytest.approx(pc_projection(w, pca.components, 2), abs=1e-6)
+    assert got == pytest.approx(w, abs=1e-6)
+
+
+def test_bmus_use_retained_scores_and_original_distance_includes_projection_residual(som_run):
+    data = load_pca_input(_config()["pca_config"], _config()["params"]["variance_threshold"])
+    weights = pd.read_csv(som_run / "weights.csv").filter(regex=r"^PC\d+$").to_numpy()
+    distances = np.linalg.norm(data.scores[:, None, :] - weights[None, :, :], axis=2)
+    bmus = pd.read_csv(som_run / "bmus.csv")
+    winner = np.argmin(distances, axis=1)
+    assert bmus["bmu"].to_numpy() == pytest.approx(winner)
+    assert bmus["bmu_distance"].to_numpy() == pytest.approx(distances[np.arange(len(winner)), winner], abs=1e-6)
+    reconstructed = reconstruct_prototypes(weights, data.pca.components)
+    original_distance = np.linalg.norm(data.Z - reconstructed[winner], axis=1)
+    assert bmus["bmu_distance_original"].to_numpy() == pytest.approx(original_distance, abs=1e-6)
+    assert np.all(original_distance >= bmus["bmu_distance"].to_numpy() - 1e-6)

@@ -13,7 +13,7 @@ from tp4.experiments.som import labels_by_neuron
 from tp4.runs import PROJECT_ROOT
 
 DATA_PATH = PROJECT_ROOT / "datos" / "creadores.csv"
-ARTIFACTS = ("run.json", "summary.json", "bmus.csv", "neurons.csv", "weights.csv", "hit_map.png", "per_seed.csv", "history_repeats.csv")
+ARTIFACTS = ("run.json", "summary.json", "bmus.csv", "neurons.csv", "weights.csv", "reconstructed_weights.csv", "hit_map.png", "per_seed.csv", "history_repeats.csv")
 
 
 def _read(path):
@@ -48,7 +48,7 @@ def test_bmus_has_every_creator_exactly_once(som_run):
     assert [r["creator_id"] for r in bmus] == [r["creator_id"] for r in creators]
     assert [r["name"] for r in bmus] == [r["name"] for r in creators]
     assert list(bmus[0]) == [
-        "creator_id", "name", "dominant_topic", "bmu", "row", "col", "bmu_distance", "pc1", "pc2",
+        "creator_id", "name", "dominant_topic", "bmu", "row", "col", "bmu_distance", "bmu_distance_original", "pc1", "pc2",
     ]
 
 
@@ -77,13 +77,16 @@ def test_summary_counts(som_run):
     summary = json.loads((som_run / "summary.json").read_text(encoding="utf-8"))
     assert summary["n_creators_mapped"] == len(_read(DATA_PATH))
     assert summary["n_samples"] == summary["n_creators_mapped"]
-    assert summary["n_features"] == 27
+    assert summary["input"] == "pca"
+    assert summary["n_original_features"] == 27
+    assert summary["n_features"] == summary["n_components"] == 10
+    assert summary["retained_variance"] >= 0.9
     assert summary["topology"] == "hex"
     records = _read(som_run / "per_seed.csv")
     assert summary["n_repeats"] == 2
     assert summary["seeds"] == [42, 43]
     assert [int(r["seed"]) for r in records] == summary["seeds"]
-    for metric in ("mean_bmu_distance", "empty_neuron_frac", "u_mean"):
+    for metric in ("mean_bmu_distance", "mean_bmu_distance_original", "empty_neuron_frac", "u_mean"):
         values = np.array([float(r[metric]) for r in records])
         assert summary[f"{metric}_mean"] == pytest.approx(values.mean(), abs=1e-8)
         assert summary[f"{metric}_std"] == pytest.approx(values.std(ddof=1), abs=1e-8)
@@ -126,6 +129,12 @@ INVALID_CASES = [
     {"params.n_repeats": 1},
     {"params.n_repeats": 101},
     {"params.n_repeats": True},
+    {"params.variance_threshold": 0},
+    {"params.variance_threshold": 1.1},
+    {"params.variance_threshold": True},
+    {"params.variance_threshold": 0.1},
+    {"pca_config": "configs/som.json"},
+    {"pca_config": ""},
 ]
 
 @pytest.mark.parametrize("overrides", INVALID_CASES, ids=lambda o: ",".join(f"{k}={v}" for k, v in o.items()))

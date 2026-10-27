@@ -14,7 +14,9 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 
-from ..errors import DataError
+from ..errors import ConfigError, DataError
+from ..features import Design, load_design
+from ..runs import resolve_project_path
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,51 @@ def components_for_threshold(cumulative: np.ndarray, threshold: float) -> int | 
     cum = np.asarray(cumulative, dtype=float)
     hits = np.flatnonzero(cum >= threshold - 1e-12)
     return int(hits[0]) + 1 if hits.size else None
+
+
+@dataclass(frozen=True)
+class PcaInput:
+    config: dict
+    design: Design
+    Z: np.ndarray
+    mean: np.ndarray
+    std: np.ndarray
+    pca: PcaResult
+    scores: np.ndarray
+    n_components: int
+    retained_variance: float
+
+    @property
+    def reconstructed_Z(self) -> np.ndarray:
+        return self.scores @ self.pca.components[:self.n_components]
+
+    @property
+    def projection_rmse(self) -> float:
+        return float(np.sqrt(np.mean((self.Z - self.reconstructed_Z) ** 2)))
+
+
+def load_pca_input(path: str, variance_threshold: float = .9) -> PcaInput:
+    from ..config import load_config
+    from ..runner import validate_config
+
+    if not isinstance(path, str) or not path:
+        raise ConfigError("pca_config must be a nonempty path")
+    if type(variance_threshold) not in (int, float) or not np.isfinite(variance_threshold) or not 0 < variance_threshold <= 1:
+        raise ConfigError("variance_threshold must be a finite number in (0, 1]")
+    raw = load_config(resolve_project_path(path))
+    if raw.get("kind") != "pca":
+        raise ConfigError("pca_config must refer to a PCA experiment")
+    config = validate_config(raw)
+    if not config["params"]["standardize"] or config["params"]["n_components"] is not None:
+        raise ConfigError("pca_config must standardize and compute all components before selecting variance")
+    design = load_design(config["data"], config["feature_set"])
+    Z, mean, std = standardize(design.X)
+    pca = fit_pca(Z, list(design.X.columns))
+    k = components_for_threshold(pca.cumulative_ratio, float(variance_threshold))
+    if k is None:
+        raise ConfigError("PCA components do not reach the requested cumulative variance")
+    return PcaInput(config, design, Z, mean, std, pca, pca.scores[:, :k], k,
+                    float(pca.cumulative_ratio[k - 1]))
 
 
 def loadings_frame(result: PcaResult, n_pcs: int | None = None) -> pd.DataFrame:
