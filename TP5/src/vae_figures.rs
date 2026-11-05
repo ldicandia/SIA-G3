@@ -10,6 +10,7 @@ use crate::emoji::{EmojiDataset, EMOJI_COUNT, EMOJI_SIDE};
 use crate::plots::{plot_gray_tiles, plot_series, Series};
 use crate::report::wrong_pixel_counts;
 use crate::vae::{Vae, VaeHistory};
+use crate::vae_eval::SampleSearch;
 
 /// Nombres fijos de los archivos (no se interpola texto del usuario en la ruta).
 pub const EMOJIS_PNG: &str = "emojis.png";
@@ -17,8 +18,48 @@ pub const RECON_PNG: &str = "vae_reconstruction.png";
 pub const LOSS_CSV: &str = "vae_loss.csv";
 pub const LOSS_PNG: &str = "vae_loss.png";
 
+pub const NEW_EMOJI_PNG: &str = "vae_new_emoji.png";
+
 /// Emojis por banda de `build_reconstruction_tiles` (columnas de la figura).
 const RECON_COLS: usize = 12;
+
+/// Con k muestras aceptadas: 2k imagenes en dos bandas de k. Primero las imagenes decodificadas con el
+/// pie `nuevo {i}: {d} px` y despues el emoji del dataset mas cercano de cada una con su nombre.
+pub fn build_new_emoji_tiles(search: &SampleSearch, ds: &EmojiDataset) -> Vec<(String, Array1<f64>)> {
+    let mut tiles: Vec<(String, Array1<f64>)> = search
+        .accepted
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (format!("nuevo {}: {} px", i + 1, s.judgement.distance), s.image.clone()))
+        .collect();
+    tiles.extend(
+        search
+            .accepted
+            .iter()
+            .map(|s| (ds.names[s.judgement.nearest_index].clone(), ds.x.row(s.judgement.nearest_index).to_owned())),
+    );
+    tiles
+}
+
+/// Escribe `vae_new_emoji.png`: los emojis nuevos arriba y el emoji del dataset mas cercano abajo.
+pub fn export_new_emoji(search: &SampleSearch, ds: &EmojiDataset, out_dir: &Path) -> Result<PathBuf> {
+    if search.accepted.is_empty() {
+        return Err(anyhow!(
+            "no se encontro ningun emoji nuevo y plausible en {} sorteos; no se escribe {NEW_EMOJI_PNG}",
+            search.examined
+        ));
+    }
+    let path = out_dir.join(NEW_EMOJI_PNG);
+    plot_gray_tiles(
+        &path,
+        "Ej 2 - emojis nuevos muestreados del prior (arriba) y el emoji del dataset mas cercano (abajo)",
+        &build_new_emoji_tiles(search, ds),
+        EMOJI_SIDE,
+        search.accepted.len(),
+        4,
+    )?;
+    Ok(path)
+}
 
 /// Escribe `emojis.png`: tabla de 6 x 6 con un estilo de ojos por fila y un estilo de boca por columna.
 pub fn export_emoji_montage(ds: &EmojiDataset, out_dir: &Path) -> Result<PathBuf> {

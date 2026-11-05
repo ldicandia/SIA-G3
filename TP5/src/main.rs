@@ -33,8 +33,12 @@ use tp5::vae::{
     chosen_vae_config, config_line, loss_summary_line, reconstruction_line, reconstruction_summary, render_loss_table,
     standard_normal_matrix, train_vae, validate_epochs, SAMPLE_SEED,
 };
+use tp5::vae_eval::{
+    new_emoji_line, prior_line, prior_stats, search_new_emoji, validate_draws, DEFAULT_DRAWS,
+};
 use tp5::vae_figures::{
-    export_emoji_montage, export_loss_chart, export_reconstruction, write_loss_csv, LOSS_CSV, RECON_PNG,
+    export_emoji_montage, export_loss_chart, export_new_emoji, export_reconstruction, write_loss_csv, LOSS_CSV,
+    NEW_EMOJI_PNG, RECON_PNG,
 };
 
 #[derive(Parser)]
@@ -133,6 +137,21 @@ enum Command {
         /// Semilla de la muestra del prior
         #[arg(long, default_value_t = SAMPLE_SEED)]
         seed: u64,
+        /// Directorio de salida
+        #[arg(long, default_value = EJ2_OUT)]
+        out: PathBuf,
+    },
+    /// Muestrea el prior N(0, I) del VAE y busca un emoji nuevo que se juzga perteneciente al dataset
+    VaeSample {
+        /// Sorteos del prior a examinar (entre 1 y 100000)
+        #[arg(long, default_value_t = DEFAULT_DRAWS)]
+        draws: usize,
+        /// Semilla del flujo de sorteos
+        #[arg(long, default_value_t = SAMPLE_SEED)]
+        seed: u64,
+        /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
+        #[arg(long)]
+        epochs: Option<usize>,
         /// Directorio de salida
         #[arg(long, default_value = EJ2_OUT)]
         out: PathBuf,
@@ -478,6 +497,44 @@ fn vae(epochs: Option<usize>, seed: u64, out: &Path) -> Result<()> {
     Ok(())
 }
 
+fn separation_line(sep: &tp5::emoji::Separation) -> String {
+    format!(
+        "separacion: minima {} px, mediana {:.1} px, radio de cercania {} px",
+        sep.min, sep.median, sep.near_radius
+    )
+}
+
+fn vae_sample(draws: usize, seed: u64, epochs: Option<usize>, out: &Path) -> Result<()> {
+    let draws = validate_draws(draws)?;
+    let mut cfg = chosen_vae_config();
+    if let Some(n) = epochs {
+        cfg.epochs = validate_epochs(n)?;
+    }
+    let ds = build_emojis();
+    let (model, _) = train_vae(&ds, &cfg)?;
+    let sep = separation(&ds);
+    println!("== Ej 2: emoji nuevo muestreado del prior del VAE ==");
+    println!("{}", config_line(&cfg, &model));
+    println!("{}", separation_line(&sep));
+    let search = search_new_emoji(&model, &ds, seed, draws);
+    println!("{}", new_emoji_line(&search, &ds, &sep));
+    if let Some(first) = search.accepted.first() {
+        let nearest = ds.x.row(first.judgement.nearest_index).to_owned();
+        let binarized = first.image.mapv(|v| if v >= 0.5 { 1.0 } else { 0.0 });
+        println!("nuevo (izquierda) y {} (derecha):", ds.names[first.judgement.nearest_index]);
+        println!("{}", format_emojis_side_by_side(&[binarized, nearest]));
+    }
+    let decode = |z: &ndarray::Array2<f64>| model.decode(z);
+    let stats = prior_stats(&decode, cfg.spec.latent_dim, &ds, &sep, seed, DEFAULT_DRAWS);
+    println!("{}", prior_line(&stats, &sep));
+    if search.accepted.is_empty() {
+        bail!("no se encontro ningun emoji nuevo y plausible en {} sorteos", search.examined);
+    }
+    export_new_emoji(&search, &ds, out)?;
+    println!("nuevo emoji -> {}/{NEW_EMOJI_PNG}", out.display());
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
@@ -491,5 +548,6 @@ fn main() -> Result<()> {
         Command::Generate { point, steps, out } => generate(point, steps, &out),
         Command::Emojis { out } => emojis(&out),
         Command::Vae { epochs, seed, out } => vae(epochs, seed, &out),
+        Command::VaeSample { draws, seed, epochs, out } => vae_sample(draws, seed, epochs, &out),
     }
 }

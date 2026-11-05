@@ -13,4 +13,5 @@ pub mod optimizer;
 pub mod plots;
 pub mod report;
 pub mod vae;
+pub mod vae_eval;
 pub mod vae_figures;
