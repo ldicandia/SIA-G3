@@ -3,4 +3,5 @@ pub mod data;
 pub mod experiments;
 pub mod mlp;
 pub mod optimizer;
+pub mod plots;
 pub mod report;

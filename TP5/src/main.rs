@@ -10,6 +10,7 @@ use tp5::autoencoder::{ArchSpec, Autoencoder};
 use tp5::experiments::{render_comparison_md, run_sweep, sweep_grid, write_sweep_csv};
 use tp5::data::{format_grid, load_font, N_PIXELS};
 use tp5::mlp::{Activation, Loss};
+use tp5::plots::write_study_curves;
 use tp5::optimizer::OptimizerKind;
 use tp5::report::{wrong_pixel_counts, Report};
 
@@ -57,6 +58,8 @@ fn sweep(quick: bool, out: &Path, workers: Option<usize>) -> Result<()> {
     let md = render_comparison_md(&results);
     std::fs::write(out.join(COMPARISON_MD), &md)?;
     println!("{md}");
+    let n_img = write_study_curves(out, &results)?;
+    println!("curvas: {n_img} imagenes -> {}", out.display());
     println!("sweep: {} corridas en {:.1} s -> {}", results.len(), start.elapsed().as_secs_f64(), out.display());
     Ok(())
 }
