@@ -411,3 +411,101 @@ pub fn write_dae_study_curves(out_dir: &Path, results: &[DaeResult]) -> Result<u
     }
     Ok(written)
 }
+
+/// Geometria de `plot_gray_tiles` (en pixeles de pantalla).
+const GRAY_TITLE_H: i64 = 44;
+const GRAY_CAPTION_H: i64 = 18;
+const GRAY_GAP_CAPTIONED: i64 = 8;
+const GRAY_GAP_DENSE: i64 = 2;
+const GRAY_MARGIN: i64 = 16;
+/// Tope de ancho y alto de la imagen, para que un argumento erroneo no reserve un bitmap enorme.
+const GRAY_MAX_SIDE_PX: i64 = 6000;
+
+/// Dibuja un PNG con un titulo centrado en una banda de 44 px y debajo los `tiles` en orden fila
+/// mayor, `cols` por fila (la ultima fila puede quedar incompleta). Cada tile es una imagen de
+/// `side x side` valores en escala de grises ampliada `scale` veces (un cuadrado de `scale x scale`
+/// por valor; nivel de gris 255 - round(255 * valor acotado a [0, 1]), asi 1.0 es tinta negra sobre
+/// blanco), con un marco gris claro de 1 px y su pie centrado debajo (banda de 18 px). Si todos los
+/// pies son cadenas vacias se omite la banda de pies y el hueco entre tiles baja a 2 px, de modo que
+/// una grilla densa se lee como una sola imagen continua.
+pub fn plot_gray_tiles(
+    path: &Path,
+    title: &str,
+    tiles: &[(String, Array1<f64>)],
+    side: usize,
+    cols: usize,
+    scale: usize,
+) -> Result<()> {
+    if tiles.is_empty() {
+        bail!("no hay imagenes para graficar");
+    }
+    if cols == 0 || scale == 0 || side == 0 {
+        bail!("el lado ({side}), las columnas ({cols}) y la escala ({scale}) deben ser positivos");
+    }
+    for (caption, tile) in tiles {
+        if tile.len() != side * side {
+            bail!("la imagen '{caption}' tiene {} valores y se esperaban {}", tile.len(), side * side);
+        }
+        if tile.iter().any(|v| !v.is_finite()) {
+            bail!("la imagen '{caption}' tiene valores no finitos");
+        }
+    }
+    let dense = tiles.iter().all(|(c, _)| c.is_empty());
+    let gap = if dense { GRAY_GAP_DENSE } else { GRAY_GAP_CAPTIONED };
+    let caption_h = if dense { 0 } else { GRAY_CAPTION_H };
+    let tile_px = (side as i64).saturating_mul(scale as i64);
+    let n_cols = cols.min(tiles.len()) as i64;
+    let n_rows = tiles.len().div_ceil(cols) as i64;
+    let width = (2 * GRAY_MARGIN).saturating_add(n_cols.saturating_mul(tile_px)).saturating_add((n_cols - 1) * gap);
+    let height = GRAY_MARGIN
+        .saturating_add(GRAY_TITLE_H)
+        .saturating_add(n_rows.saturating_mul(tile_px + caption_h))
+        .saturating_add((n_rows - 1) * gap)
+        .saturating_add(GRAY_MARGIN);
+    if width > GRAY_MAX_SIDE_PX || height > GRAY_MAX_SIDE_PX {
+        bail!("la imagen de {width} x {height} px supera el maximo de {GRAY_MAX_SIDE_PX} px por lado");
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("no se pudo crear {}", parent.display()))?;
+    }
+
+    let root = BitMapBackend::new(path, (width as u32, height as u32)).into_drawing_area();
+    root.fill(&WHITE).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let title_style = ("sans-serif", 18).into_font().color(&BLACK).pos(Pos::new(HPos::Center, VPos::Center));
+    root.draw(&Text::new(title.to_string(), ((width / 2) as i32, (GRAY_MARGIN / 2 + GRAY_TITLE_H / 2) as i32), title_style))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let caption_style = ("sans-serif", 12).into_font().color(&BLACK).pos(Pos::new(HPos::Center, VPos::Top));
+    let frame = RGBColor(200, 200, 200);
+
+    for (k, (caption, tile)) in tiles.iter().enumerate() {
+        let (row, col) = ((k / cols) as i64, (k % cols) as i64);
+        let x0 = GRAY_MARGIN + col * (tile_px + gap);
+        let y0 = GRAY_MARGIN + GRAY_TITLE_H + row * (tile_px + caption_h + gap);
+        for r in 0..side {
+            for c in 0..side {
+                let level = 255 - (255.0 * tile[r * side + c].clamp(0.0, 1.0)).round() as u8;
+                let (px, py) = (x0 + c as i64 * scale as i64, y0 + r as i64 * scale as i64);
+                root.draw(&Rectangle::new(
+                    [(px as i32, py as i32), ((px + scale as i64) as i32, (py + scale as i64) as i32)],
+                    RGBColor(level, level, level).filled(),
+                ))
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+        }
+        root.draw(&Rectangle::new(
+            [(x0 as i32, y0 as i32), ((x0 + tile_px) as i32, (y0 + tile_px) as i32)],
+            frame.stroke_width(1),
+        ))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if !dense {
+            root.draw(&Text::new(
+                caption.clone(),
+                ((x0 + tile_px / 2) as i32, (y0 + tile_px + 3) as i32),
+                caption_style.clone(),
+            ))
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+    }
+    root.present().map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(())
+}

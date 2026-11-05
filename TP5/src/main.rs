@@ -30,6 +30,7 @@ use tp5::plots::{write_dae_study_curves, write_study_curves};
 use tp5::optimizer::OptimizerKind;
 use tp5::report::{wrong_pixel_counts, write_report_csv, Report};
 use tp5::vae::{chosen_vae_config, config_line, standard_normal_matrix, train_vae, validate_epochs, SAMPLE_SEED};
+use tp5::vae_figures::{export_emoji_montage, export_reconstruction, RECON_PNG};
 
 #[derive(Parser)]
 #[command(name = "tp5", about = "SIA TP5: autoencoders con backprop propio sobre ndarray")]
@@ -114,7 +115,11 @@ enum Command {
         out: PathBuf,
     },
     /// Muestra el dataset de 36 emojis de 24x24 construido por codigo (texto)
-    Emojis,
+    Emojis {
+        /// Directorio de salida
+        #[arg(long, default_value = EJ2_OUT)]
+        out: PathBuf,
+    },
     /// Entrena el autoencoder variacional (VAE) sobre los emojis y decodifica una muestra del prior
     Vae {
         /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
@@ -123,8 +128,14 @@ enum Command {
         /// Semilla de la muestra del prior
         #[arg(long, default_value_t = SAMPLE_SEED)]
         seed: u64,
+        /// Directorio de salida
+        #[arg(long, default_value = EJ2_OUT)]
+        out: PathBuf,
     },
 }
+
+/// Directorio de salida por defecto del Ej 2 (compartido por todos sus subcomandos).
+const EJ2_OUT: &str = "output/ej2";
 
 /// Lado por defecto de la grilla de barrido para buscar la letra nueva.
 const DEFAULT_STEPS: usize = 81;
@@ -407,7 +418,7 @@ fn noise(levels: Option<Vec<f64>>, seed: u64, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn emojis() -> Result<()> {
+fn emojis(out: &Path) -> Result<()> {
     let ds = build_emojis();
     println!("emojis: {EMOJI_COUNT} imagenes de 24x24 (576 valores en [0,1], 1 = tinta)");
     let sep = separation(&ds);
@@ -425,10 +436,12 @@ fn emojis() -> Result<()> {
         })
         .collect();
     println!("{}", format_emojis_side_by_side(&rows));
+    let path = export_emoji_montage(&ds, out)?;
+    println!("emojis.png: {}", path.display());
     Ok(())
 }
 
-fn vae(epochs: Option<usize>, seed: u64) -> Result<()> {
+fn vae(epochs: Option<usize>, seed: u64, out: &Path) -> Result<()> {
     let ds = build_emojis();
     let mut cfg = chosen_vae_config();
     if let Some(n) = epochs {
@@ -441,6 +454,8 @@ fn vae(epochs: Option<usize>, seed: u64) -> Result<()> {
         let i = e - 1;
         println!("epoca {e} recon={:.4} kl={:.4} total={:.4}", hist.recon[i], hist.kl[i], hist.total(i));
     }
+    export_reconstruction(&model, &ds, out)?;
+    println!("reconstruccion: {EMOJI_COUNT} emojis -> {}/{RECON_PNG}", out.display());
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let z = standard_normal_matrix(&mut rng, 1, cfg.spec.latent_dim);
     let decoded = model.decode(&z);
@@ -462,7 +477,7 @@ fn main() -> Result<()> {
         Command::Noise { levels, seed, out } => noise(levels, seed, &out),
         Command::Latent { out } => latent(&out),
         Command::Generate { point, steps, out } => generate(point, steps, &out),
-        Command::Emojis => emojis(),
-        Command::Vae { epochs, seed } => vae(epochs, seed),
+        Command::Emojis { out } => emojis(&out),
+        Command::Vae { epochs, seed, out } => vae(epochs, seed, &out),
     }
 }

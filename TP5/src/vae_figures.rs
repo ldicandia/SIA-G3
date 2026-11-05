@@ -1,0 +1,70 @@
+//! Exportadores de las figuras del Ej 2 (VAE): montaje del dataset y reconstrucciones. Paralelo a
+//! `dae_figures`; el dibujo lo hace `plots`. No contiene codigo del modelo.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use ndarray::Array1;
+
+use crate::emoji::{EmojiDataset, EMOJI_COUNT, EMOJI_SIDE};
+use crate::plots::plot_gray_tiles;
+use crate::report::wrong_pixel_counts;
+use crate::vae::Vae;
+
+/// Nombres fijos de los archivos (no se interpola texto del usuario en la ruta).
+pub const EMOJIS_PNG: &str = "emojis.png";
+pub const RECON_PNG: &str = "vae_reconstruction.png";
+pub const LOSS_CSV: &str = "vae_loss.csv";
+pub const LOSS_PNG: &str = "vae_loss.png";
+
+/// Emojis por banda de `build_reconstruction_tiles` (columnas de la figura).
+const RECON_COLS: usize = 12;
+
+/// Escribe `emojis.png`: tabla de 6 x 6 con un estilo de ojos por fila y un estilo de boca por columna.
+pub fn export_emoji_montage(ds: &EmojiDataset, out_dir: &Path) -> Result<PathBuf> {
+    let tiles: Vec<(String, Array1<f64>)> =
+        ds.names.iter().cloned().zip(ds.x.rows().into_iter().map(|r| r.to_owned())).collect();
+    let path = out_dir.join(EMOJIS_PNG);
+    plot_gray_tiles(
+        &path,
+        "Ej 2 - dataset de 36 emojis (filas: ojos, columnas: boca)",
+        &tiles,
+        EMOJI_SIDE,
+        6,
+        4,
+    )?;
+    Ok(path)
+}
+
+/// 72 imagenes en bandas de 12 originales seguidas de 12 reconstrucciones. Las reconstrucciones son
+/// la decodificacion de la media del codificador (probabilidades en gris, sin binarizar) y su pie es
+/// `{k} px`, con k los pixeles que difieren del original tras binarizar en 0.5.
+pub fn build_reconstruction_tiles(vae: &Vae, ds: &EmojiDataset) -> Vec<(String, Array1<f64>)> {
+    let recon = vae.reconstruct_mean(&ds.x);
+    let counts = wrong_pixel_counts(&ds.x, &recon);
+    let mut tiles = Vec::with_capacity(2 * EMOJI_COUNT);
+    for band in (0..EMOJI_COUNT).step_by(RECON_COLS) {
+        let end = (band + RECON_COLS).min(EMOJI_COUNT);
+        for i in band..end {
+            tiles.push((ds.names[i].clone(), ds.x.row(i).to_owned()));
+        }
+        for i in band..end {
+            tiles.push((format!("{} px", counts[i]), recon.row(i).to_owned()));
+        }
+    }
+    tiles
+}
+
+/// Escribe `vae_reconstruction.png` con originales (filas impares) y reconstrucciones (filas pares).
+pub fn export_reconstruction(vae: &Vae, ds: &EmojiDataset, out_dir: &Path) -> Result<PathBuf> {
+    let path = out_dir.join(RECON_PNG);
+    plot_gray_tiles(
+        &path,
+        "Ej 2 - originales (filas impares) y reconstrucciones desde la media del codificador (filas pares)",
+        &build_reconstruction_tiles(vae, ds),
+        EMOJI_SIDE,
+        RECON_COLS,
+        3,
+    )?;
+    Ok(path)
+}
