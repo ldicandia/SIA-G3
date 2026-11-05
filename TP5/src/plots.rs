@@ -7,6 +7,7 @@ use ndarray::Array1;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
+use crate::dae_experiments::{dae_variants_of, DaeResult, DAE_STUDIES};
 use crate::experiments::{variants_of, ExperimentResult, STUDIES};
 
 const PALETTE: [RGBColor; 8] = [
@@ -367,4 +368,46 @@ pub fn plot_pattern_rows(path: &Path, title: &str, rows: &[PatternRow]) -> Resul
     }
     root.present().map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
+}
+
+/// Curvas de perdida de entrenamiento del estudio del DAE: una imagen `dae_curves_{estudio}_loss.png`
+/// por estudio con resultados, con la corrida de semilla 0 de cada variante. Devuelve cuantas
+/// imagenes escribio.
+pub fn write_dae_study_curves(out_dir: &Path, results: &[DaeResult]) -> Result<usize> {
+    let mut written = 0;
+    for study in DAE_STUDIES {
+        let mut loss_series = Vec::new();
+        for key in dae_variants_of(results, study) {
+            let Some(r) = results
+                .iter()
+                .find(|r| r.config.study == study && r.config.variant_key() == key && r.config.seed == 0)
+            else {
+                continue;
+            };
+            let n = r.history.loss.len();
+            let step = (n / 500).max(1);
+            let pts: Vec<(f64, f64)> = r
+                .history
+                .loss
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % step == 0 || *i + 1 == n)
+                .map(|(i, &l)| ((i + 1) as f64, l))
+                .collect();
+            loss_series.push(Series { name: key, points: pts });
+        }
+        if loss_series.is_empty() {
+            continue;
+        }
+        plot_series(
+            &out_dir.join(format!("dae_curves_{study}_loss.png")),
+            &format!("Perdida de entrenamiento (lote ruidoso) - estudio {study}"),
+            "epoca",
+            "perdida",
+            &loss_series,
+            true,
+        )?;
+        written += 1;
+    }
+    Ok(written)
 }

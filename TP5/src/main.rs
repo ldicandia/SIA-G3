@@ -9,7 +9,9 @@ use rand_chacha::ChaCha8Rng;
 use tp5::autoencoder::{ArchSpec, Autoencoder};
 use tp5::analysis::{analyze, export_latent, LATENT_PNG};
 use tp5::experiments::{loss_label, render_comparison_md, run_sweep, sweep_grid, train_chosen, write_sweep_csv};
-use tp5::dae_experiments::{dae_sweep_grid, run_dae_sweep, write_dae_sweep_csv};
+use tp5::dae_experiments::{
+    dae_sweep_grid, render_dae_comparison_md, run_dae_sweep, select_dae_variant, selection_line, write_dae_sweep_csv,
+};
 use tp5::dae_figures::{
     build_noise_examples, export_noise_examples, format_grids_side_by_side, EXAMPLES_NOISE_SEED, NOISE_EXAMPLES_PNG,
 };
@@ -21,7 +23,7 @@ use tp5::denoising::{
 use tp5::noise::validate_levels;
 use tp5::generate::{export_new_letter, scan_novel, top_candidates, NEW_LETTER_PNG, NOVELTY_MIN_HAMMING};
 use tp5::mlp::{Activation, Loss};
-use tp5::plots::write_study_curves;
+use tp5::plots::{write_dae_study_curves, write_study_curves};
 use tp5::optimizer::OptimizerKind;
 use tp5::report::{wrong_pixel_counts, write_report_csv, Report};
 
@@ -118,6 +120,7 @@ const SWEEP_CSV: &str = "sweep.csv";
 const COMPARISON_MD: &str = "comparison.md";
 const REPORT_CSV: &str = "report.csv";
 const DAE_SWEEP_CSV: &str = "dae_sweep.csv";
+const DAE_COMPARISON_MD: &str = "dae_comparison.md";
 
 fn sweep(quick: bool, out: &Path, workers: Option<usize>) -> Result<()> {
     let ds = load_font()?;
@@ -154,6 +157,12 @@ fn dae_sweep(quick: bool, out: &Path, workers: Option<usize>) -> Result<()> {
             if r.eligible { "si" } else { "no" }
         );
     }
+    let md = render_dae_comparison_md(&results);
+    std::fs::write(out.join(DAE_COMPARISON_MD), &md)?;
+    println!("{md}");
+    let n_img = write_dae_study_curves(out, &results)?;
+    println!("curvas: {n_img} imagenes -> {}", out.display());
+    println!("{}", selection_line(select_dae_variant(&results).as_ref()));
     println!(
         "dae-sweep: {} corridas en {:.1} s -> {}",
         results.len(),

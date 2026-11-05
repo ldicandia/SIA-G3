@@ -232,3 +232,128 @@ pub fn write_dae_sweep_csv(path: &Path, results: &[DaeResult]) -> Result<()> {
     }
     std::fs::write(path, out).with_context(|| format!("no se pudo escribir {}", path.display()))
 }
+
+// ---------------------------------------------------------------------------------------------
+// Comparacion y regla de seleccion
+// ---------------------------------------------------------------------------------------------
+
+fn median(mut v: Vec<f64>) -> Option<f64> {
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(|a, b| a.total_cmp(b));
+    let n = v.len();
+    Some(if n % 2 == 1 { v[n / 2] } else { (v[n / 2 - 1] + v[n / 2]) / 2.0 })
+}
+
+/// Entrada de estadisticas del nivel pedido (comparacion exacta: los niveles vienen de `SWEEP_LEVELS`).
+fn stat_at(r: &DaeResult, level: f64) -> Option<&LevelStats> {
+    r.stats.iter().find(|s| s.level == level)
+}
+
+fn fmt_median(v: Vec<f64>, decimals: usize) -> String {
+    median(v).map(|m| format!("{m:.decimals$}")).unwrap_or_else(|| "-".to_string())
+}
+
+/// Una tabla por estudio: por variante, semillas elegibles y medianas de puntaje, pixeles
+/// incorrectos a 0.10 / 0.20 / 0.30, porcentaje dentro de 1 pixel a 0.10 y perdida final.
+pub fn render_dae_comparison_md(results: &[DaeResult]) -> String {
+    let mut out = String::new();
+    for study in DAE_STUDIES {
+        let keys = dae_variants_of(results, study);
+        if keys.is_empty() {
+            continue;
+        }
+        let _ = writeln!(out, "## Estudio: {study}\n");
+        let _ = writeln!(
+            out,
+            "| variante | semillas elegibles | puntaje (mediana) | px a nivel 0.10 | px a nivel 0.20 | px a nivel 0.30 | dentro de 1 px a nivel 0.10 (%) | perdida final (mediana) |"
+        );
+        let _ = writeln!(out, "|---|---|---|---|---|---|---|---|");
+        for key in keys {
+            let rs: Vec<&DaeResult> =
+                results.iter().filter(|r| r.config.study == study && r.config.variant_key() == key).collect();
+            let ok = rs.iter().filter(|r| r.eligible).count();
+            let wrong_at = |level: f64| -> Vec<f64> {
+                rs.iter().filter_map(|r| stat_at(r, level).map(|s| s.output_mean_wrong)).collect()
+            };
+            let within: Vec<f64> =
+                rs.iter().filter_map(|r| stat_at(r, 0.10).map(|s| s.frac_within * 100.0)).collect();
+            let _ = writeln!(
+                out,
+                "| {key} | {ok}/{} | {} | {} | {} | {} | {} | {} |",
+                rs.len(),
+                fmt_median(rs.iter().map(|r| r.score).collect(), 4),
+                fmt_median(wrong_at(0.10), 3),
+                fmt_median(wrong_at(0.20), 3),
+                fmt_median(wrong_at(0.30), 3),
+                fmt_median(within, 1),
+                fmt_median(rs.iter().map(|r| r.history.tail_loss).collect(), 6),
+            );
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Resultado de aplicar la regla de seleccion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Selection {
+    pub variant: String,
+    /// Nombre de la corrida ganadora (variante + semilla).
+    pub name: String,
+    pub seed: u64,
+    pub median_score: f64,
+    pub n_eligible: usize,
+    pub n_runs: usize,
+}
+
+/// Regla de seleccion: se agrupan las corridas por variante en orden de aparicion; una variante es
+/// elegible solo si todas sus corridas lo son; gana la de menor mediana de puntaje (empate: la
+/// primera en el orden de la grilla) y dentro de ella la corrida de menor puntaje (empate: menor
+/// semilla). `None` si ninguna variante es elegible.
+pub fn select_dae_variant(results: &[DaeResult]) -> Option<Selection> {
+    let mut keys: Vec<String> = Vec::new();
+    for r in results {
+        let k = r.config.variant_key();
+        if !keys.contains(&k) {
+            keys.push(k);
+        }
+    }
+    let mut best: Option<(String, f64)> = None;
+    for key in keys {
+        let rs: Vec<&DaeResult> = results.iter().filter(|r| r.config.variant_key() == key).collect();
+        if !rs.iter().all(|r| r.eligible) {
+            continue;
+        }
+        let Some(m) = median(rs.iter().map(|r| r.score).collect()) else { continue };
+        if best.as_ref().is_none_or(|(_, b)| m < *b) {
+            best = Some((key, m));
+        }
+    }
+    let (variant, median_score) = best?;
+    let rs: Vec<&DaeResult> = results.iter().filter(|r| r.config.variant_key() == variant).collect();
+    let winner = rs
+        .iter()
+        .min_by(|a, b| a.score.total_cmp(&b.score).then(a.config.seed.cmp(&b.config.seed)))
+        .copied()?;
+    Some(Selection {
+        variant,
+        name: winner.config.name.clone(),
+        seed: winner.config.seed,
+        median_score,
+        n_eligible: rs.iter().filter(|r| r.eligible).count(),
+        n_runs: rs.len(),
+    })
+}
+
+/// Linea `SELECCION: ...` con el veredicto de la regla.
+pub fn selection_line(sel: Option<&Selection>) -> String {
+    match sel {
+        Some(s) => format!(
+            "SELECCION: {} (variante {}, puntaje mediano {:.4}, {}/{} semillas elegibles)",
+            s.name, s.variant, s.median_score, s.n_eligible, s.n_runs
+        ),
+        None => "SELECCION: ninguna variante elegible (se necesita que todas las semillas dejen los 32 patrones limpios con a lo sumo 1 pixel incorrecto)".to_string(),
+    }
+}
