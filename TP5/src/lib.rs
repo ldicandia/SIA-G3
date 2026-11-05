@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod autoencoder;
+pub mod dae_experiments;
 pub mod dae_figures;
 pub mod data;
 pub mod denoising;

@@ -9,6 +9,7 @@ use rand_chacha::ChaCha8Rng;
 use tp5::autoencoder::{ArchSpec, Autoencoder};
 use tp5::analysis::{analyze, export_latent, LATENT_PNG};
 use tp5::experiments::{loss_label, render_comparison_md, run_sweep, sweep_grid, train_chosen, write_sweep_csv};
+use tp5::dae_experiments::{dae_sweep_grid, run_dae_sweep, write_dae_sweep_csv};
 use tp5::dae_figures::{
     build_noise_examples, export_noise_examples, format_grids_side_by_side, EXAMPLES_NOISE_SEED, NOISE_EXAMPLES_PNG,
 };
@@ -61,6 +62,18 @@ enum Command {
         #[arg(long, value_delimiter = ',', allow_negative_numbers = true)]
         levels: Option<Vec<f64>>,
     },
+    /// Barrido de arquitecturas y calendarios de ruido del DAE (tamano latente, capacidad, ruido de entrenamiento)
+    DaeSweep {
+        /// Grilla reducida (200 epocas, 2 copias, semilla 0)
+        #[arg(long)]
+        quick: bool,
+        /// Directorio de salida
+        #[arg(long, default_value = EJ1B_OUT)]
+        out: PathBuf,
+        /// Hilos de trabajo (por defecto el paralelismo disponible, maximo 16)
+        #[arg(long)]
+        workers: Option<usize>,
+    },
     /// Muestra letras distorsionadas a cada nivel de ruido (texto y PNG), sin entrenar nada
     Noise {
         /// Niveles de ruido (probabilidad de invertir cada pixel, entre 0.0 y 0.5), separados por comas
@@ -104,6 +117,7 @@ const EJ1B_OUT: &str = "output/ej1b";
 const SWEEP_CSV: &str = "sweep.csv";
 const COMPARISON_MD: &str = "comparison.md";
 const REPORT_CSV: &str = "report.csv";
+const DAE_SWEEP_CSV: &str = "dae_sweep.csv";
 
 fn sweep(quick: bool, out: &Path, workers: Option<usize>) -> Result<()> {
     let ds = load_font()?;
@@ -120,6 +134,32 @@ fn sweep(quick: bool, out: &Path, workers: Option<usize>) -> Result<()> {
     let n_img = write_study_curves(out, &results)?;
     println!("curvas: {n_img} imagenes -> {}", out.display());
     println!("sweep: {} corridas en {:.1} s -> {}", results.len(), start.elapsed().as_secs_f64(), out.display());
+    Ok(())
+}
+
+fn dae_sweep(quick: bool, out: &Path, workers: Option<usize>) -> Result<()> {
+    let ds = load_font()?;
+    let configs = dae_sweep_grid(quick);
+    let workers = workers
+        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(16))
+        .clamp(1, 16);
+    let start = Instant::now();
+    let results = run_dae_sweep(&ds, &configs, workers);
+    write_dae_sweep_csv(&out.join(DAE_SWEEP_CSV), &results)?;
+    for r in &results {
+        println!(
+            "{} | puntaje {:.4} | elegible {}",
+            r.config.name,
+            r.score,
+            if r.eligible { "si" } else { "no" }
+        );
+    }
+    println!(
+        "dae-sweep: {} corridas en {:.1} s -> {}",
+        results.len(),
+        start.elapsed().as_secs_f64(),
+        out.display()
+    );
     Ok(())
 }
 
@@ -332,6 +372,7 @@ fn main() -> Result<()> {
         Command::Sweep { quick, out, workers } => sweep(quick, &out, workers),
         Command::Ej1a { out } => ej1a(&out),
         Command::Ej1b { levels } => ej1b(levels),
+        Command::DaeSweep { quick, out, workers } => dae_sweep(quick, &out, workers),
         Command::Noise { levels, seed, out } => noise(levels, seed, &out),
         Command::Latent { out } => latent(&out),
         Command::Generate { point, steps, out } => generate(point, steps, &out),
