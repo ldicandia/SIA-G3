@@ -222,6 +222,58 @@ pub fn separation(ds: &EmojiDataset) -> Separation {
     Separation { min: nearest[0], median, near_radius: median.ceil() as usize }
 }
 
+/// Estructura de factores del dataset: el dataset es el producto completo de 6 estilos de ojos por 6
+/// estilos de boca dentro de un mismo marco, asi que cada pixel pertenece a una de tres regiones.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleRegions {
+    /// Pixeles que cambian con el estilo de ojos (a boca fija).
+    pub eyes: Vec<usize>,
+    /// Pixeles que cambian con el estilo de boca (a ojos fijos).
+    pub mouth: Vec<usize>,
+    /// Pixeles identicos en los 36 emojis.
+    pub frame: Vec<usize>,
+}
+
+/// Estilo de ojos del emoji de fila `index` (la fila es `EMOJI_MOUTHS.len() * ojos + boca`).
+pub fn eye_style_of(index: usize) -> usize {
+    index / EMOJI_MOUTHS.len()
+}
+
+/// Estilo de boca del emoji de fila `index`.
+pub fn mouth_style_of(index: usize) -> usize {
+    index % EMOJI_MOUTHS.len()
+}
+
+/// Posiciones de `pixels` donde los dos vectores difieren tras binarizar en 0.5 (misma regla que `hamming`).
+pub fn region_hamming(a: ArrayView1<f64>, b: ArrayView1<f64>, pixels: &[usize]) -> usize {
+    pixels.iter().filter(|&&k| (a[k] >= 0.5) != (b[k] >= 0.5)).count()
+}
+
+/// Separa los 576 pixeles en ojos, boca y marco a partir de los datos (binarizando en 0.5): un pixel es de
+/// ojos si cambia entre dos emojis con la misma boca, de boca si cambia entre dos emojis con los mismos
+/// ojos y de marco si es igual en los 36. Las listas salen en orden ascendente.
+pub fn style_regions(ds: &EmojiDataset) -> StyleRegions {
+    let (n_eyes, n_mouths) = (EMOJI_EYES.len(), EMOJI_MOUTHS.len());
+    let mut regions = StyleRegions { eyes: Vec::new(), mouth: Vec::new(), frame: Vec::new() };
+    for k in 0..EMOJI_PIXELS {
+        let on = |e: usize, m: usize| ds.x[[n_mouths * e + m, k]] >= 0.5;
+        let eyes = (0..n_mouths).any(|m| (1..n_eyes).any(|e| on(e, m) != on(0, m)));
+        let mouth = (0..n_eyes).any(|e| (1..n_mouths).any(|m| on(e, m) != on(e, 0)));
+        assert!(
+            !(eyes && mouth),
+            "el pixel {k} cambia con los ojos y con la boca: el dataset debe ser un producto puro de estilos"
+        );
+        if eyes {
+            regions.eyes.push(k);
+        } else if mouth {
+            regions.mouth.push(k);
+        } else {
+            regions.frame.push(k);
+        }
+    }
+    regions
+}
+
 /// 24 lineas de 24 caracteres: `#` si el valor es al menos 0.5, `.` si no.
 pub fn format_emoji(pattern: ArrayView1<f64>) -> String {
     (0..EMOJI_SIDE)

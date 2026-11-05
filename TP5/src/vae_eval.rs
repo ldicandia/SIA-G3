@@ -7,7 +7,10 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::autoencoder::{train, Autoencoder, TrainConfig};
-use crate::emoji::{hamming, nearest_emoji, EmojiDataset, Separation, EMOJI_PIXELS};
+use crate::emoji::{
+    hamming, nearest_emoji, region_hamming, separation, style_regions, EmojiDataset, Separation, StyleRegions,
+    EMOJI_MOUTHS, EMOJI_PIXELS,
+};
 use crate::report::TOLERANCE_PX;
 use crate::vae::{standard_normal_matrix, ReconSummary, Vae, VaeConfig, VaeHistory};
 
@@ -61,6 +64,182 @@ pub fn judge(ds: &EmojiDataset, sep: &Separation, pattern: ArrayView1<f64>) -> J
         is_new: distance >= sep.min,
         plausible: distance <= PLAUSIBLE_FACTOR * sep.near_radius,
     }
+}
+
+/// Una region fuera de estilo solo es plausible si queda entre sus dos estilos mas cercanos: distancia al
+/// mas cercano mas distancia al segundo, a lo sumo este factor por la distancia entre esos dos estilos.
+pub const BLEND_SLACK: f64 = 1.5;
+
+/// Piso de ruido de reconstruccion por region: el mayor error que el VAE comete en esa region al
+/// reconstruir los 36 emojis de entrenamiento desde la media posterior.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoiseFloors {
+    pub eyes: usize,
+    pub mouth: usize,
+    pub frame: usize,
+}
+
+/// `recon` tiene en la fila `i` la reconstruccion del emoji de entrenamiento `i`.
+pub fn noise_floors(ds: &EmojiDataset, regions: &StyleRegions, recon: &Array2<f64>) -> NoiseFloors {
+    let worst = |pixels: &[usize]| {
+        (0..ds.x.nrows()).map(|i| region_hamming(recon.row(i), ds.x.row(i), pixels)).max().unwrap_or(0)
+    };
+    NoiseFloors { eyes: worst(&regions.eyes), mouth: worst(&regions.mouth), frame: worst(&regions.frame) }
+}
+
+/// Veredicto de una region (ojos o boca) frente a sus 6 estilos.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegionVerdict {
+    /// Estilo mas cercano de la region (ante empates, el de menor indice).
+    pub style: usize,
+    pub distance: usize,
+    /// Segundo estilo mas cercano (ante empates, el de menor indice entre el resto).
+    pub second_style: usize,
+    pub second_distance: usize,
+    /// Mas lejos que el piso de ruido de los 6 estilos de la region.
+    pub off_style: bool,
+    /// La region no es fuera de estilo, o queda entre sus dos estilos mas cercanos (`BLEND_SLACK`).
+    pub blend_ok: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleVerdict {
+    pub eyes: RegionVerdict,
+    pub mouth: RegionVerdict,
+    /// Distancia Hamming sobre los pixeles del marco a la fila 0 del dataset.
+    pub frame_distance: usize,
+    pub plausible: bool,
+    /// "Nuevo": alguna region fuera de estilo y la cara plausible.
+    pub hybrid: bool,
+    /// Mayor `distancia - piso` entre las regiones fuera de estilo (0 si ninguna lo esta).
+    pub margin: usize,
+}
+
+/// Juez de novedad por region. Los prototipos son filas del dataset: el estilo de ojos `e` es la fila
+/// `e * 6` y el de boca `m` es la fila `m` (cada region depende solo de su propio estilo).
+#[derive(Debug, Clone)]
+pub struct StyleJudge {
+    ds: EmojiDataset,
+    sep: Separation,
+    regions: StyleRegions,
+    floors: NoiseFloors,
+    eyes_gap: [[usize; 6]; 6],
+    mouth_gap: [[usize; 6]; 6],
+}
+
+fn eyes_prototype(style: usize) -> usize {
+    style * EMOJI_MOUTHS.len()
+}
+
+fn mouth_prototype(style: usize) -> usize {
+    style
+}
+
+fn prototype_gaps(ds: &EmojiDataset, pixels: &[usize], row_of: fn(usize) -> usize) -> [[usize; 6]; 6] {
+    let mut gap = [[0usize; 6]; 6];
+    for a in 0..6 {
+        for b in 0..6 {
+            gap[a][b] = region_hamming(ds.x.row(row_of(a)), ds.x.row(row_of(b)), pixels);
+        }
+    }
+    gap
+}
+
+impl StyleJudge {
+    /// Pisos medidos sobre `recon`, las reconstrucciones del modelo de los 36 emojis de entrenamiento.
+    pub fn new(ds: &EmojiDataset, recon: &Array2<f64>) -> StyleJudge {
+        let floors = noise_floors(ds, &style_regions(ds), recon);
+        StyleJudge::with_floors(ds, floors)
+    }
+
+    pub fn with_floors(ds: &EmojiDataset, floors: NoiseFloors) -> StyleJudge {
+        let regions = style_regions(ds);
+        let eyes_gap = prototype_gaps(ds, &regions.eyes, eyes_prototype);
+        let mouth_gap = prototype_gaps(ds, &regions.mouth, mouth_prototype);
+        StyleJudge { ds: ds.clone(), sep: separation(ds), regions, floors, eyes_gap, mouth_gap }
+    }
+
+    pub fn floors(&self) -> NoiseFloors {
+        self.floors
+    }
+
+    pub fn regions(&self) -> &StyleRegions {
+        &self.regions
+    }
+
+    pub fn dataset(&self) -> &EmojiDataset {
+        &self.ds
+    }
+
+    pub fn separation(&self) -> &Separation {
+        &self.sep
+    }
+
+    /// Menor distancia entre dos prototipos de estilos distintos dentro de la region de ojos y de boca.
+    pub fn min_style_separation(&self) -> (usize, usize) {
+        let min_gap = |gap: &[[usize; 6]; 6]| {
+            (0..6).flat_map(|a| ((a + 1)..6).map(move |b| gap[a][b])).min().expect("hay mas de un estilo")
+        };
+        (min_gap(&self.eyes_gap), min_gap(&self.mouth_gap))
+    }
+
+    fn region_verdict(
+        &self,
+        pattern: ArrayView1<f64>,
+        pixels: &[usize],
+        floor: usize,
+        row_of: fn(usize) -> usize,
+        gap: &[[usize; 6]; 6],
+    ) -> RegionVerdict {
+        let dists: Vec<usize> =
+            (0..6).map(|s| region_hamming(pattern, self.ds.x.row(row_of(s)), pixels)).collect();
+        let mut style = 0usize;
+        for s in 1..6 {
+            if dists[s] < dists[style] {
+                style = s;
+            }
+        }
+        let mut second_style = usize::MAX;
+        for s in 0..6 {
+            if s != style && (second_style == usize::MAX || dists[s] < dists[second_style]) {
+                second_style = s;
+            }
+        }
+        let (distance, second_distance) = (dists[style], dists[second_style]);
+        let off_style = distance > floor;
+        let between = (distance + second_distance) as f64 <= BLEND_SLACK * gap[style][second_style] as f64;
+        RegionVerdict { style, distance, second_style, second_distance, off_style, blend_ok: !off_style || between }
+    }
+
+    pub fn judge(&self, pattern: ArrayView1<f64>) -> StyleVerdict {
+        let eyes =
+            self.region_verdict(pattern, &self.regions.eyes, self.floors.eyes, eyes_prototype, &self.eyes_gap);
+        let mouth =
+            self.region_verdict(pattern, &self.regions.mouth, self.floors.mouth, mouth_prototype, &self.mouth_gap);
+        let frame_distance = region_hamming(pattern, self.ds.x.row(0), &self.regions.frame);
+        let plausible = frame_distance <= self.floors.frame && eyes.blend_ok && mouth.blend_ok;
+        let hybrid = (eyes.off_style || mouth.off_style) && plausible;
+        let excess = |r: &RegionVerdict, floor: usize| if r.off_style { r.distance - floor } else { 0 };
+        let margin = excess(&eyes, self.floors.eyes).max(excess(&mouth, self.floors.mouth));
+        StyleVerdict { eyes, mouth, frame_distance, plausible, hybrid, margin }
+    }
+}
+
+/// Linea `REGIONES:` con el tamano de cada region, los pisos de ruido y la separacion entre estilos.
+pub fn regions_line(judge: &StyleJudge) -> String {
+    let (r, f) = (judge.regions(), judge.floors());
+    let (se, sm) = judge.min_style_separation();
+    format!(
+        "REGIONES: ojos {} px, boca {} px, marco {} px | piso de ruido de reconstruccion (maximo sobre los 36 emojis): ojos {} px, boca {} px, marco {} px | separacion minima entre estilos: ojos {} px, boca {} px",
+        r.eyes.len(),
+        r.mouth.len(),
+        r.frame.len(),
+        f.eyes,
+        f.mouth,
+        f.frame,
+        se,
+        sm
+    )
 }
 
 #[derive(Debug, Clone)]

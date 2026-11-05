@@ -37,7 +37,8 @@ use tp5::vae::{
 use tp5::vae_eval::{
     acceptance_checks, contrast_line, decode_grid, manifold_line, manifold_metrics, plain_grid_points, render_acceptance,
     train_plain_ae, validate_grid, Contrast, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
-    new_emoji_line, prior_line, prior_stats, search_new_emoji, validate_draws, DEFAULT_DRAWS,
+    new_emoji_line, prior_line, prior_stats, regions_line, search_new_emoji, validate_draws, StyleJudge,
+    DEFAULT_DRAWS,
 };
 use tp5::vae_figures::{
     export_emoji_montage, export_loss_chart, export_manifold, export_new_emoji, export_reconstruction, write_loss_csv,
@@ -555,6 +556,8 @@ fn vae_sample(draws: usize, seed: u64, epochs: Option<usize>, out: &Path) -> Res
     println!("== Ej 2: emoji nuevo muestreado del prior del VAE ==");
     println!("{}", config_line(&cfg, &model));
     println!("{}", separation_line(&sep));
+    let style_judge = StyleJudge::new(&ds, &model.reconstruct_mean(&ds.x));
+    println!("{}", regions_line(&style_judge));
     let search = search_new_emoji(&model, &ds, seed, draws);
     println!("{}", new_emoji_line(&search, &ds, &sep));
     if let Some(first) = search.accepted.first() {
