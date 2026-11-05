@@ -18,6 +18,7 @@ use tp5::dae_figures::{
     write_levels_csv, EXAMPLES_NOISE_SEED, LEVELS_CSV, NOISE_EXAMPLES_PNG,
 };
 use tp5::data::{format_grid, load_font, N_PIXELS};
+use tp5::emoji::{build_emojis, format_emoji, format_emojis_side_by_side, nearest_emoji, separation, EMOJI_COUNT};
 use tp5::denoising::{
     evaluate_levels, max_level_line, render_level_table, DEFAULT_LEVELS, N_EVAL_SAMPLES,
     TEST_NOISE_SEED,
@@ -28,6 +29,7 @@ use tp5::mlp::{Activation, Loss};
 use tp5::plots::{write_dae_study_curves, write_study_curves};
 use tp5::optimizer::OptimizerKind;
 use tp5::report::{wrong_pixel_counts, write_report_csv, Report};
+use tp5::vae::{chosen_vae_config, config_line, standard_normal_matrix, train_vae, validate_epochs, SAMPLE_SEED};
 
 #[derive(Parser)]
 #[command(name = "tp5", about = "SIA TP5: autoencoders con backprop propio sobre ndarray")]
@@ -110,6 +112,17 @@ enum Command {
         /// Directorio de salida
         #[arg(long, default_value = DEFAULT_OUT)]
         out: PathBuf,
+    },
+    /// Muestra el dataset de 36 emojis de 24x24 construido por codigo (texto)
+    Emojis,
+    /// Entrena el autoencoder variacional (VAE) sobre los emojis y decodifica una muestra del prior
+    Vae {
+        /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
+        #[arg(long)]
+        epochs: Option<usize>,
+        /// Semilla de la muestra del prior
+        #[arg(long, default_value_t = SAMPLE_SEED)]
+        seed: u64,
     },
 }
 
@@ -394,6 +407,50 @@ fn noise(levels: Option<Vec<f64>>, seed: u64, out: &Path) -> Result<()> {
     Ok(())
 }
 
+fn emojis() -> Result<()> {
+    let ds = build_emojis();
+    println!("emojis: {EMOJI_COUNT} imagenes de 24x24 (576 valores en [0,1], 1 = tinta)");
+    let sep = separation(&ds);
+    println!(
+        "separacion: minima {} px, mediana {:.1} px, radio de cercania {} px",
+        sep.min, sep.median, sep.near_radius
+    );
+    let shown = ["dots-smile", "happy-grin", "wide-open", "x-frown"];
+    println!("{}", shown.join(" "));
+    let rows: Vec<_> = shown
+        .iter()
+        .map(|n| {
+            let i = ds.names.iter().position(|m| m == n).expect("emoji del dataset");
+            ds.x.row(i).to_owned()
+        })
+        .collect();
+    println!("{}", format_emojis_side_by_side(&rows));
+    Ok(())
+}
+
+fn vae(epochs: Option<usize>, seed: u64) -> Result<()> {
+    let ds = build_emojis();
+    let mut cfg = chosen_vae_config();
+    if let Some(n) = epochs {
+        cfg.epochs = validate_epochs(n)?;
+    }
+    let (model, hist) = train_vae(&ds, &cfg)?;
+    println!("== Ej 2: autoencoder variacional (VAE) sobre emojis ==");
+    println!("{}", config_line(&cfg, &model));
+    for e in [1, cfg.epochs] {
+        let i = e - 1;
+        println!("epoca {e} recon={:.4} kl={:.4} total={:.4}", hist.recon[i], hist.kl[i], hist.total(i));
+    }
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let z = standard_normal_matrix(&mut rng, 1, cfg.spec.latent_dim);
+    let decoded = model.decode(&z);
+    println!("muestra del prior (semilla {seed}): z=({:.4}, {:.4})", z[[0, 0]], z[[0, 1]]);
+    println!("{}", format_emoji(decoded.row(0)));
+    let (idx, dist) = nearest_emoji(&ds, decoded.row(0));
+    println!("emoji mas cercano: {} (distancia {dist} px)", ds.names[idx]);
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
@@ -405,5 +462,7 @@ fn main() -> Result<()> {
         Command::Noise { levels, seed, out } => noise(levels, seed, &out),
         Command::Latent { out } => latent(&out),
         Command::Generate { point, steps, out } => generate(point, steps, &out),
+        Command::Emojis => emojis(),
+        Command::Vae { epochs, seed } => vae(epochs, seed),
     }
 }
