@@ -148,6 +148,8 @@ impl Mlp {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Loss {
     Mse,
+    /// Entropia cruzada binaria; requiere salida sigmoide.
+    Bce,
 }
 
 impl Loss {
@@ -156,6 +158,18 @@ impl Loss {
         let batch = pred.nrows() as f64;
         match self {
             Loss::Mse => (pred - target).mapv(|d| d * d).sum() / (2.0 * batch),
+            Loss::Bce => {
+                const EPS: f64 = 1e-12;
+                let total: f64 = pred
+                    .iter()
+                    .zip(target.iter())
+                    .map(|(&p, &t)| {
+                        let p = p.clamp(EPS, 1.0 - EPS);
+                        t * p.ln() + (1.0 - t) * (1.0 - p).ln()
+                    })
+                    .sum();
+                -total / batch
+            }
         }
     }
 
@@ -164,6 +178,16 @@ impl Loss {
         let batch = pred.nrows() as f64;
         match self {
             Loss::Mse => ((pred - target) / batch) * out_act.derivative_from_output(pred),
+            // La derivada de la sigmoide se cancela analiticamente: dL/dz = (p - t) / batch.
+            Loss::Bce => (pred - target) / batch,
         }
+    }
+
+    /// BCE solo es coherente con salida sigmoide (el delta asume la derivada cancelada).
+    pub fn validate(&self, out_act: Activation) -> anyhow::Result<()> {
+        if *self == Loss::Bce && out_act != Activation::Sigmoid {
+            anyhow::bail!("la perdida BCE requiere activacion de salida Sigmoid, no {out_act:?}");
+        }
+        Ok(())
     }
 }

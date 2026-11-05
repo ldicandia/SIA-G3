@@ -4,7 +4,8 @@ use ndarray::Array2;
 use rand_chacha::ChaCha8Rng;
 
 use crate::mlp::{Activation, Grads, Loss, Mlp};
-use crate::optimizer::Optimizer;
+use crate::optimizer::{Optimizer, OptimizerKind};
+use crate::report::wrong_pixel_counts;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArchSpec {
@@ -70,12 +71,15 @@ impl Autoencoder {
 
     /// Valor de la perdida y gradientes de todos los parametros (encoder y decoder).
     pub fn loss_and_grads(&self, x: &Array2<f64>, target: &Array2<f64>, loss: Loss) -> (f64, AeGrads) {
+        let out_act = self.decoder.layers.last().expect("decoder vacio").act;
+        if let Err(e) = loss.validate(out_act) {
+            panic!("combinacion de perdida y activacion de salida invalida: {e}");
+        }
         let enc_cache = self.encoder.forward_cached(x);
         let dec_cache = self.decoder.forward_cached(enc_cache.last());
         let pred = dec_cache.last();
         let value = loss.value(pred, target);
 
-        let out_act = self.decoder.layers.last().expect("decoder vacio").act;
         let dec_delta = loss.output_delta(pred, target, out_act);
         let (dec_grads, grad_latent) = self.decoder.backward(&dec_cache, dec_delta);
 
@@ -101,4 +105,74 @@ impl Autoencoder {
         opt_dec.step(&mut self.decoder, &grads.dec);
         value
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TrainConfig {
+    pub epochs: usize,
+    /// Se evalua (pixeles incorrectos) cada `eval_every` epocas y en la ultima.
+    pub eval_every: usize,
+    pub tolerance_px: usize,
+    /// Corta en la primera evaluacion dentro de tolerancia.
+    pub early_stop: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvalPoint {
+    pub epoch: usize,
+    pub max_wrong: usize,
+    pub n_within: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrainHistory {
+    pub loss: Vec<f64>,
+    pub evals: Vec<EvalPoint>,
+    pub first_epoch_within: Option<usize>,
+    pub epochs_run: usize,
+    pub final_loss: f64,
+}
+
+/// Entrenamiento full-batch. Las evaluaciones se toman con los parametros ya actualizados.
+pub fn train(
+    ae: &mut Autoencoder,
+    input: &Array2<f64>,
+    target: &Array2<f64>,
+    loss: Loss,
+    optimizer: &OptimizerKind,
+    cfg: &TrainConfig,
+) -> TrainHistory {
+    let mut opt_enc = optimizer.build(&ae.encoder);
+    let mut opt_dec = optimizer.build(&ae.decoder);
+    let eval_every = cfg.eval_every.max(1);
+    let mut hist = TrainHistory {
+        loss: Vec::with_capacity(cfg.epochs),
+        evals: Vec::new(),
+        first_epoch_within: None,
+        epochs_run: 0,
+        final_loss: f64::NAN,
+    };
+
+    for epoch in 1..=cfg.epochs {
+        let l = ae.train_step(input, target, loss, opt_enc.as_mut(), opt_dec.as_mut());
+        hist.loss.push(l);
+        hist.epochs_run = epoch;
+
+        if epoch % eval_every == 0 || epoch == cfg.epochs {
+            let counts = wrong_pixel_counts(target, &ae.reconstruct(input));
+            let max_wrong = counts.iter().copied().max().unwrap_or(0);
+            let n_within = counts.iter().filter(|&&c| c <= cfg.tolerance_px).count();
+            hist.evals.push(EvalPoint { epoch, max_wrong, n_within });
+            let within = max_wrong <= cfg.tolerance_px;
+            if within && hist.first_epoch_within.is_none() {
+                hist.first_epoch_within = Some(epoch);
+            }
+            if within && cfg.early_stop {
+                break;
+            }
+        }
+    }
+
+    hist.final_loss = loss.value(&ae.reconstruct(input), target);
+    hist
 }
