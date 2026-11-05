@@ -37,7 +37,7 @@ use tp5::vae::{
 use tp5::vae_eval::{
     acceptance_checks, contrast_line, decode_grid, manifold_line, manifold_metrics, plain_grid_points, render_acceptance,
     train_plain_ae, validate_grid, Contrast, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
-    new_emoji_line, prior_line, prior_stats, regions_line, search_new_emoji, validate_draws, StyleJudge,
+    new_emoji_line, prior_line, prior_stats, regions_line, render_gallery, search_new_emoji, validate_draws, StyleJudge,
     DEFAULT_DRAWS,
 };
 use tp5::vae_figures::{
@@ -560,15 +560,13 @@ fn vae_sample(draws: usize, seed: u64, epochs: Option<usize>, out: &Path) -> Res
     println!("{}", regions_line(&style_judge));
     let search = search_new_emoji(&model, &ds, seed, draws);
     println!("{}", new_emoji_line(&search, &ds, &sep));
+    println!("{}", render_gallery(&search, &ds));
     if let Some(first) = search.accepted.first() {
         let nearest = ds.x.row(first.judgement.nearest_index).to_owned();
         let binarized = first.image.mapv(|v| if v >= 0.5 { 1.0 } else { 0.0 });
         println!("nuevo (izquierda) y {} (derecha):", ds.names[first.judgement.nearest_index]);
         println!("{}", format_emojis_side_by_side(&[binarized, nearest]));
     }
-    let decode = |z: &ndarray::Array2<f64>| model.decode(z);
-    let stats = prior_stats(&decode, cfg.spec.latent_dim, &ds, &sep, seed, DEFAULT_DRAWS);
-    println!("{}", prior_line(&stats, &sep));
     if search.accepted.is_empty() {
         bail!("no se encontro ningun emoji nuevo y plausible en {} sorteos", search.examined);
     }

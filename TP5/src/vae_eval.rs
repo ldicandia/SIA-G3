@@ -2,6 +2,8 @@
 //! el dataset con umbrales derivados del propio dataset, busqueda de un emoji nuevo en el prior y
 //! estadisticas de los sorteos del prior. Modulo numerico: no dibuja ni parsea argumentos.
 
+use std::collections::HashMap;
+
 use ndarray::{Array1, Array2, ArrayView1};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -9,7 +11,7 @@ use rand_chacha::ChaCha8Rng;
 use crate::autoencoder::{train, Autoencoder, TrainConfig};
 use crate::emoji::{
     hamming, nearest_emoji, region_hamming, separation, style_regions, EmojiDataset, Separation, StyleRegions,
-    EMOJI_MOUTHS, EMOJI_PIXELS,
+    EMOJI_EYES, EMOJI_MOUTHS, EMOJI_PIXELS,
 };
 use crate::report::TOLERANCE_PX;
 use crate::vae::{standard_normal_matrix, ReconSummary, Vae, VaeConfig, VaeHistory};
@@ -249,7 +251,10 @@ pub struct NewEmoji {
     pub z: Array1<f64>,
     /// Salida del decodificador (probabilidades en gris, sin binarizar).
     pub image: Array1<f64>,
+    /// Emoji del dataset mas cercano sobre los 576 pixeles.
     pub judgement: Judgement,
+    /// Veredicto por region (ojos / boca / marco).
+    pub verdict: StyleVerdict,
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +262,13 @@ pub struct SampleSearch {
     pub seed: u64,
     pub max_draws: usize,
     pub examined: usize,
+    /// Pisos de ruido de reconstruccion del VAE usados para juzgar.
+    pub floors: NoiseFloors,
+    /// Sorteos que resultaron hibridos (nuevos y plausibles).
+    pub candidates: usize,
+    /// Combinaciones distintas (emoji mas cercano, estilo de ojos, estilo de boca) entre los hibridos.
+    pub distinct_keys: usize,
+    /// A lo sumo `GALLERY_SIZE`, una por combinacion, ordenadas por margen descendente y luego por sorteo.
     pub accepted: Vec<NewEmoji>,
 }
 
@@ -286,39 +298,89 @@ fn walk_prior(
     done
 }
 
-/// Busca en el flujo semillado del prior los primeros sorteos que decodifican a un emoji nuevo y
-/// plausible, hasta `GALLERY_SIZE` muestras o `max_draws` sorteos. El emoji principal es `accepted[0]`.
+/// Recorre los `max_draws` sorteos del flujo semillado (sin corte anticipado: el ranking necesita todo el
+/// recorrido) y juzga cada imagen decodificada por region. De los sorteos hibridos conserva, por cada
+/// combinacion (emoji mas cercano, estilo de ojos, estilo de boca), el de mayor margen (ante empates, el
+/// sorteo anterior). La galeria son las `GALLERY_SIZE` mejores combinaciones por margen descendente y luego
+/// por sorteo; el emoji principal es `accepted[0]`. La memoria crece con las combinaciones, no con
+/// `max_draws`, y el resultado no depende del tamano de la tanda.
 pub fn search_new_emoji(vae: &Vae, ds: &EmojiDataset, seed: u64, max_draws: usize) -> SampleSearch {
-    let sep = crate::emoji::separation(ds);
-    let mut accepted: Vec<NewEmoji> = Vec::new();
+    let style_judge = StyleJudge::new(ds, &vae.reconstruct_mean(&ds.x));
+    let sep = style_judge.separation().clone();
+    let mut best: HashMap<(usize, usize, usize), NewEmoji> = HashMap::new();
+    let mut candidates = 0usize;
     let decode = |z: &Array2<f64>| vae.decode(z);
     let examined = walk_prior(&decode, vae.latent_dim, seed, max_draws, &mut |idx, z, img| {
-        let j = judge(ds, &sep, img);
-        if j.new_and_plausible() {
-            accepted.push(NewEmoji { draw_index: idx, z: z.to_owned(), image: img.to_owned(), judgement: j });
+        let verdict = style_judge.judge(img);
+        if verdict.hybrid {
+            candidates += 1;
+            let judgement = judge(ds, &sep, img);
+            let key = (judgement.nearest_index, verdict.eyes.style, verdict.mouth.style);
+            let better = best.get(&key).map_or(true, |current| verdict.margin > current.verdict.margin);
+            if better {
+                best.insert(
+                    key,
+                    NewEmoji { draw_index: idx, z: z.to_owned(), image: img.to_owned(), judgement, verdict },
+                );
+            }
         }
-        accepted.len() < GALLERY_SIZE
+        true
     });
-    SampleSearch { seed, max_draws, examined, accepted }
+    let distinct_keys = best.len();
+    let mut accepted: Vec<NewEmoji> = best.into_values().collect();
+    accepted.sort_by(|a, b| b.verdict.margin.cmp(&a.verdict.margin).then(a.draw_index.cmp(&b.draw_index)));
+    accepted.truncate(GALLERY_SIZE);
+    SampleSearch { seed, max_draws, examined, floors: style_judge.floors(), candidates, distinct_keys, accepted }
 }
 
+const NEW_CRITERION: &str = "alguna region a mas de su piso de ruido de todos los estilos de esa region, con el marco intacto y cada region en un estilo o entre dos";
+
 pub fn new_emoji_line(search: &SampleSearch, ds: &EmojiDataset, sep: &Separation) -> String {
-    let criterion = format!(
-        "criterio: a al menos {} px de todo el dataset y a lo sumo {} px del mas cercano",
-        sep.min,
-        PLAUSIBLE_FACTOR * sep.near_radius
-    );
     match search.accepted.first() {
-        Some(first) => format!(
-            "EMOJI NUEVO: z=({:.4}, {:.4}) tras {} sorteos | emoji mas cercano: {} a {} px | {criterion}",
-            first.z[0],
-            first.z[1],
-            first.draw_index + 1,
-            ds.names[first.judgement.nearest_index],
-            first.judgement.distance
+        Some(h) => format!(
+            "EMOJI NUEVO: z=({:.4}, {:.4}) sorteo {} de {} | emoji mas cercano: {} a {} px (radio de cercania {} px) | ojos: {} a {} px del estilo mas cercano (piso {} px), boca: {} a {} px (piso {} px) | criterio: {NEW_CRITERION}",
+            h.z[0],
+            h.z[1],
+            h.draw_index + 1,
+            search.examined,
+            ds.names[h.judgement.nearest_index],
+            h.judgement.distance,
+            sep.near_radius,
+            EMOJI_EYES[h.verdict.eyes.style],
+            h.verdict.eyes.distance,
+            search.floors.eyes,
+            EMOJI_MOUTHS[h.verdict.mouth.style],
+            h.verdict.mouth.distance,
+            search.floors.mouth
         ),
-        None => format!("EMOJI NUEVO: ninguno en {} sorteos ({criterion})", search.max_draws),
+        None => format!("EMOJI NUEVO: ninguno en {} sorteos (criterio: {NEW_CRITERION})", search.max_draws),
     }
+}
+
+/// Galeria de las muestras aceptadas: una linea de encabezado y una por muestra, con dos espacios al inicio.
+pub fn render_gallery(search: &SampleSearch, ds: &EmojiDataset) -> String {
+    let mut lines = vec![format!(
+        "GALERIA: {} sorteos candidatos de {}, {} combinaciones distintas (emoji mas cercano, estilo de ojos, estilo de boca); se muestran {} ordenadas por margen sobre el piso de ruido",
+        search.candidates,
+        search.examined,
+        search.distinct_keys,
+        search.accepted.len()
+    )];
+    for (i, s) in search.accepted.iter().enumerate() {
+        lines.push(format!(
+            "  nuevo {}: sorteo {} | emoji mas cercano {} a {} px | ojos {} a {} px | boca {} a {} px | margen {} px",
+            i + 1,
+            s.draw_index + 1,
+            ds.names[s.judgement.nearest_index],
+            s.judgement.distance,
+            EMOJI_EYES[s.verdict.eyes.style],
+            s.verdict.eyes.distance,
+            EMOJI_MOUTHS[s.verdict.mouth.style],
+            s.verdict.mouth.distance,
+            s.verdict.margin
+        ));
+    }
+    lines.join("\n")
 }
 
 /// Participacion de los sorteos del prior en cada categoria.
