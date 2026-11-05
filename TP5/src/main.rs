@@ -35,8 +35,8 @@ use tp5::vae::{
     standard_normal_matrix, train_vae, validate_epochs, SAMPLE_SEED,
 };
 use tp5::vae_eval::{
-    acceptance_checks, contrast_line, decode_grid, manifold_line, manifold_metrics, plain_grid_points, render_acceptance,
-    train_plain_ae, validate_grid, Contrast, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
+    acceptance_checks, contrast_line, control_line, decode_grid, manifold_line, manifold_metrics, negative_control,
+    plain_grid_points, render_acceptance, train_plain_ae, validate_grid, Contrast, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
     new_emoji_line, prior_line, prior_stats, regions_line, render_gallery, search_new_emoji, validate_draws, StyleJudge,
     DEFAULT_DRAWS,
 };
@@ -570,6 +570,7 @@ fn vae_sample(draws: usize, seed: u64, epochs: Option<usize>, out: &Path) -> Res
     let vae_decode = |z: &ndarray::Array2<f64>| model.decode(z);
     let prior = prior_stats(&vae_decode, cfg.spec.latent_dim, &style_judge, seed, DEFAULT_DRAWS);
     println!("{}", prior_line(&prior, &sep));
+    println!("{}", control_line(&negative_control(&model, &style_judge)));
     if search.accepted.is_empty() {
         bail!("no se encontro ningun emoji nuevo y plausible en {} sorteos", search.examined);
     }
@@ -639,12 +640,14 @@ fn vae_baseline(grid: usize, epochs: Option<usize>, seed: u64, out: &Path) -> Re
         vae_recon_mean: recon.mean_wrong,
         plain_recon_mean,
     };
+    let control = negative_control(&model, &judge);
+    println!("{}", control_line(&control));
     println!("{}", contrast_line(&contrast));
 
     export_plain_manifold(&plain_grid_img, grid, out)?;
     println!("contraste: {}/{PLAIN_MANIFOLD_PNG}", out.display());
 
-    let checks = acceptance_checks(&recon, &hist, &vae_grid, &vae_prior, &plain_prior, &sep);
+    let checks = acceptance_checks(&recon, &hist, &vae_grid, &vae_prior, &plain_prior, &control, &sep);
     println!("{}", render_acceptance(&checks));
     if checks.iter().any(|c| !c.pass) {
         bail!("fallaron {} verificaciones de aceptacion", checks.iter().filter(|c| !c.pass).count());
@@ -677,7 +680,9 @@ fn ej2(opts: &Ej2Options, out: &Path) -> Result<()> {
     export_manifold(&run.grid_decoded, run.grid.side, out)?;
     println!("manifold: {}/{MANIFOLD_PNG}", out.display());
 
+    println!("{}", regions_line(&run.judge));
     println!("{}", new_emoji_line(&run.search, ds, &run.sep));
+    println!("{}", render_gallery(&run.search, ds));
     if let Some(first) = run.search.accepted.first() {
         let nearest = ds.x.row(first.judgement.nearest_index).to_owned();
         let binarized = first.image.mapv(|v| if v >= 0.5 { 1.0 } else { 0.0 });
@@ -689,6 +694,7 @@ fn ej2(opts: &Ej2Options, out: &Path) -> Result<()> {
 
     println!("VAE {}", prior_line(&run.prior, &run.sep));
     println!("AE simple {}", prior_line(&run.plain_prior, &run.sep));
+    println!("{}", control_line(&run.control));
     println!("{}", contrast_line(&run.contrast));
     export_plain_manifold(&run.plain_grid_decoded, run.plain_grid.side, out)?;
     println!("contraste: {}/{PLAIN_MANIFOLD_PNG}", out.display());

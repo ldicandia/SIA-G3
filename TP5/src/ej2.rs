@@ -13,9 +13,9 @@ use crate::vae::{
     SAMPLE_SEED,
 };
 use crate::vae_eval::{
-    acceptance_checks, decode_grid, manifold_metrics, plain_grid_points, prior_stats, search_new_emoji,
-    train_plain_ae, validate_draws, validate_grid, AcceptanceCheck, Contrast, GridMetrics, PriorStats, SampleSearch,
-    StyleJudge, DEFAULT_DRAWS, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
+    acceptance_checks, decode_grid, manifold_metrics, negative_control, plain_grid_points, prior_stats,
+    search_new_emoji, train_plain_ae, validate_draws, validate_grid, AcceptanceCheck, Contrast, ControlStats,
+    GridMetrics, PriorStats, SampleSearch, StyleJudge, DEFAULT_DRAWS, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
 };
 
 /// Linea del dataset, construida con las constantes del modulo `emoji`.
@@ -72,6 +72,8 @@ pub struct Ej2Run {
     pub plain_grid_decoded: Array2<f64>,
     pub plain_grid: GridMetrics,
     pub contrast: Contrast,
+    /// Control negativo: reconstrucciones de los emojis de entrenamiento no deben aceptarse como nuevas.
+    pub control: ControlStats,
     pub checks: Vec<AcceptanceCheck>,
 }
 
@@ -115,7 +117,8 @@ pub fn run_ej2(opts: &Ej2Options) -> anyhow::Result<Ej2Run> {
         vae_recon_mean: recon.mean_wrong,
         plain_recon_mean,
     };
-    let checks = acceptance_checks(&recon, &history, &grid, &prior, &plain_prior, &sep);
+    let control = negative_control(&vae, &judge);
+    let checks = acceptance_checks(&recon, &history, &grid, &prior, &plain_prior, &control, &sep);
 
     Ok(Ej2Run {
         ds,
@@ -135,6 +138,7 @@ pub fn run_ej2(opts: &Ej2Options) -> anyhow::Result<Ej2Run> {
         plain_grid_decoded,
         plain_grid,
         contrast,
+        control,
         checks,
     })
 }

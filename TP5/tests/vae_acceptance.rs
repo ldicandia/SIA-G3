@@ -8,9 +8,9 @@ use tp5::emoji::{build_emojis, separation, EmojiDataset, Separation};
 use tp5::report::wrong_pixel_counts;
 use tp5::vae::{chosen_vae_config, reconstruction_summary, train_vae, Vae, VaeHistory, SAMPLE_SEED};
 use tp5::vae_eval::{
-    acceptance_checks, contrast_line, decode_grid, manifold_metrics, plain_grid_points, prior_stats,
-    render_acceptance, search_new_emoji, train_plain_ae, AcceptanceCheck, Contrast, PriorStats, DEFAULT_DRAWS,
-    StyleJudge, GRID_HALF_RANGE, GRID_SIDE_DEFAULT, MAX_MEAN_WRONG_PX, MIN_CONTRAST_GAP, MIN_VALID_GAP,
+    acceptance_checks, contrast_line, control_line, decode_grid, manifold_metrics, negative_control,
+    plain_grid_points, prior_stats, render_acceptance, search_new_emoji, train_plain_ae, AcceptanceCheck, Contrast,
+    PriorStats, CONTROL_POSTERIOR_SAMPLES, DEFAULT_DRAWS, StyleJudge, GRID_HALF_RANGE, GRID_SIDE_DEFAULT, MAX_MEAN_WRONG_PX, MIN_CONTRAST_GAP, MIN_VALID_GAP,
 };
 
 struct Trained {
@@ -78,14 +78,72 @@ fn acceptance_holds_for_seeds_0_1_2() {
         let recon = reconstruction_summary(vae, &t.ds);
         let grid = manifold_metrics(&decode_grid(vae, GRID_SIDE_DEFAULT, GRID_HALF_RANGE), GRID_SIDE_DEFAULT, &t.ds, &t.sep);
         let prior = vae_prior(t, seed);
-        let checks = acceptance_checks(&recon, hist, &grid, &prior, &plain, &t.sep);
-        assert_eq!(checks.len(), 7);
+        let control = negative_control(vae, &vae_judge(t, seed));
+        let checks = acceptance_checks(&recon, hist, &grid, &prior, &plain, &control, &t.sep);
+        assert_eq!(checks.len(), 11);
         println!("semilla {seed}:\n{}", render_acceptance(&checks));
         for c in checks.iter().filter(|c| !c.pass) {
             failures.push(format!("semilla {seed}: {} = {:.3}", c.name, c.value));
         }
     }
     assert!(failures.is_empty(), "verificaciones que fallan: {failures:?}");
+}
+
+#[test]
+fn negative_control_rejects_every_training_reconstruction_while_the_pixel_band_accepts_some() {
+    let t = trained();
+    for seed in 0..3 {
+        let c = negative_control(&t.models[seed].0, &vae_judge(t, seed));
+        println!("semilla {seed}: {}", control_line(&c));
+        assert_eq!(c.n_mean, 36);
+        assert_eq!(c.mean_accepted, 0, "semilla {seed}: {c:?}");
+        // la banda de pixeles que se reemplaza si acepta reconstrucciones: el control puede fallar
+        assert!(c.mean_accepted_by_band >= 1, "semilla {seed}: {c:?}");
+    }
+}
+
+#[test]
+fn posterior_samples_are_accepted_less_often_than_prior_draws() {
+    let t = trained();
+    for seed in 0..3 {
+        let c = negative_control(&t.models[seed].0, &vae_judge(t, seed));
+        assert_eq!(c.n_posterior, 36 * CONTROL_POSTERIOR_SAMPLES);
+        let posterior = c.posterior_accepted as f64 / c.n_posterior as f64;
+        let prior = vae_prior(t, seed).hybrid_frac;
+        println!("semilla {seed}: posterior {posterior:.3} contra prior {prior:.3}");
+        assert!(posterior < prior, "semilla {seed}: posterior {posterior} no es menor que prior {prior}");
+    }
+}
+
+#[test]
+fn predicate_separates_vae_from_plain_through_plausibility() {
+    let t = trained();
+    let plain = plain_prior(t);
+    for seed in 0..3 {
+        let vae = vae_prior(t, seed);
+        println!(
+            "semilla {seed}: plausibles VAE {:.3} contra {:.3} | hibridos VAE {:.3} contra {:.3}",
+            vae.plausible_frac, plain.plausible_frac, vae.hybrid_frac, plain.hybrid_frac
+        );
+        assert!(
+            vae.plausible_frac - plain.plausible_frac >= MIN_VALID_GAP,
+            "semilla {seed}: ventaja de plausibilidad {}",
+            vae.plausible_frac - plain.plausible_frac
+        );
+    }
+}
+
+#[test]
+fn control_line_format() {
+    let t = trained();
+    let c = negative_control(&t.models[0].0, &vae_judge(t, 0));
+    let line = control_line(&c);
+    assert!(
+        line.starts_with("CONTROL NEGATIVO: reconstrucciones de los 36 emojis del entrenamiento aceptadas como nuevas: "),
+        "{line}"
+    );
+    assert!(line.contains("criterio anterior de banda de pixeles: "), "{line}");
+    assert!(line.ends_with(" % aceptadas como nuevas"), "{line}");
 }
 
 #[test]

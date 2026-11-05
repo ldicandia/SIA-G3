@@ -11,8 +11,8 @@ use tp5::vae::{
     chosen_vae_config, loss_summary_line, reconstruction_line, render_loss_table, train_vae,
 };
 use tp5::vae_eval::{
-    contrast_line, decode_grid, manifold_line, manifold_metrics, new_emoji_line, prior_line, render_acceptance,
-    search_new_emoji, GRID_HALF_RANGE,
+    contrast_line, control_line, decode_grid, manifold_line, manifold_metrics, negative_control, new_emoji_line,
+    prior_line, regions_line, render_acceptance, render_gallery, search_new_emoji, GRID_HALF_RANGE,
 };
 
 const QUICK_EPOCHS: usize = 100;
@@ -32,9 +32,12 @@ fn report_lines(run: &Ej2Run) -> Vec<String> {
         loss_summary_line(&run.history),
         reconstruction_line(&run.recon),
         manifold_line(&run.grid, &run.sep),
+        regions_line(&run.judge),
         new_emoji_line(&run.search, &run.ds, &run.sep),
+        render_gallery(&run.search, &run.ds),
         prior_line(&run.prior, &run.sep),
         prior_line(&run.plain_prior, &run.sep),
+        control_line(&run.control),
         contrast_line(&run.contrast),
         render_acceptance(&run.checks),
         result_line(run),
@@ -54,7 +57,9 @@ fn ej2_run_fields_are_consistent() {
     assert_eq!(run.grid.n_cells, 49);
     assert_eq!(run.grid_decoded.nrows(), 49);
     assert_eq!(run.plain_grid_decoded.nrows(), 49);
-    assert_eq!(run.checks.len(), 7);
+    assert_eq!(run.checks.len(), 11);
+    assert_eq!(run.control, negative_control(&run.vae, &run.judge));
+    assert_eq!(run.search.floors, run.judge.floors());
     assert_eq!(run.contrast.vae_prior, run.prior);
     assert_eq!(run.contrast.plain_prior, run.plain_prior);
     assert_eq!(run.contrast.vae_grid, run.grid);

@@ -14,7 +14,7 @@ use crate::emoji::{
     EMOJI_EYES, EMOJI_MOUTHS, EMOJI_PIXELS,
 };
 use crate::report::TOLERANCE_PX;
-use crate::vae::{standard_normal_matrix, ReconSummary, Vae, VaeConfig, VaeHistory};
+use crate::vae::{reparameterize, standard_normal_matrix, ReconSummary, Vae, VaeConfig, VaeHistory};
 
 /// Un salto entre celdas vecinas es grande si supera `LARGE_STEP_FACTOR` veces el radio de cercania.
 pub const LARGE_STEP_FACTOR: usize = 3;
@@ -607,6 +607,77 @@ pub fn contrast_line(c: &Contrast) -> String {
     )
 }
 
+/// Muestras de la posterior q(z|x) por emoji de entrenamiento en el control negativo.
+pub const CONTROL_POSTERIOR_SAMPLES: usize = 30;
+/// Semilla del flujo de ruido del control negativo.
+pub const CONTROL_SEED: u64 = 77;
+/// Maximo de reconstrucciones (media posterior) de emojis de entrenamiento aceptadas como nuevas: ninguna.
+pub const MAX_CONTROL_MEAN: f64 = 0.0;
+/// Maximo de muestras de la posterior aceptadas como nuevas (calibrado: 4.4 a 5.3 % en las semillas 0 a 2).
+pub const MAX_CONTROL_POSTERIOR: f64 = 0.10;
+
+/// El predicado que esta correccion reemplaza, conservado solo como referencia del control: la distancia
+/// global al emoji mas cercano es al menos `sep.min` y a lo sumo `2 * sep.near_radius`.
+pub fn pixel_band_accepts(ds: &EmojiDataset, sep: &Separation, pattern: ArrayView1<f64>) -> bool {
+    let distance = nearest_emoji(ds, pattern).1;
+    distance >= sep.min && distance <= 2 * sep.near_radius
+}
+
+/// Resultado del control negativo: las reconstrucciones de los emojis de entrenamiento no deben aceptarse
+/// como nuevas.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ControlStats {
+    pub n_mean: usize,
+    /// Reconstrucciones de la media posterior aceptadas como nuevas (hibridas) por el juez por region.
+    pub mean_accepted: usize,
+    /// Las mismas reconstrucciones aceptadas por la banda de pixeles que esta correccion reemplaza.
+    pub mean_accepted_by_band: usize,
+    pub n_posterior: usize,
+    /// Muestras de la posterior (reconstrucciones estocasticas) aceptadas como nuevas.
+    pub posterior_accepted: usize,
+}
+
+/// Control negativo: (1) las reconstrucciones de la media posterior de los emojis de entrenamiento; (2)
+/// `CONTROL_POSTERIOR_SAMPLES` reconstrucciones estocasticas por emoji, con ruido de `CONTROL_SEED`.
+pub fn negative_control(vae: &Vae, style_judge: &StyleJudge) -> ControlStats {
+    let (ds, sep) = (style_judge.dataset(), style_judge.separation());
+    let n = ds.x.nrows();
+    let recon = vae.reconstruct_mean(&ds.x);
+    let mut mean_accepted = 0usize;
+    let mut mean_accepted_by_band = 0usize;
+    for row in recon.rows() {
+        mean_accepted += usize::from(style_judge.judge(row).hybrid);
+        mean_accepted_by_band += usize::from(pixel_band_accepts(ds, sep, row));
+    }
+    let (mu, logvar) = vae.encode_params(&ds.x);
+    let mut rng = ChaCha8Rng::seed_from_u64(CONTROL_SEED);
+    let mut posterior_accepted = 0usize;
+    for _ in 0..CONTROL_POSTERIOR_SAMPLES {
+        let eps = standard_normal_matrix(&mut rng, n, vae.latent_dim);
+        let decoded = vae.decode(&reparameterize(&mu, &logvar, &eps));
+        posterior_accepted += decoded.rows().into_iter().filter(|r| style_judge.judge(*r).hybrid).count();
+    }
+    ControlStats {
+        n_mean: n,
+        mean_accepted,
+        mean_accepted_by_band,
+        n_posterior: n * CONTROL_POSTERIOR_SAMPLES,
+        posterior_accepted,
+    }
+}
+
+pub fn control_line(c: &ControlStats) -> String {
+    format!(
+        "CONTROL NEGATIVO: reconstrucciones de los {} emojis del entrenamiento aceptadas como nuevas: {}/{} (criterio anterior de banda de pixeles: {}/{}) | muestras de la posterior q(z|x), {CONTROL_POSTERIOR_SAMPLES} por emoji: {:.1} % aceptadas como nuevas",
+        c.n_mean,
+        c.mean_accepted,
+        c.n_mean,
+        c.mean_accepted_by_band,
+        c.n_mean,
+        100.0 * c.posterior_accepted as f64 / c.n_posterior.max(1) as f64
+    )
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AcceptanceCheck {
     pub name: &'static str,
@@ -622,13 +693,14 @@ fn check(name: &'static str, value: f64, threshold: f64, at_least: bool) -> Acce
     AcceptanceCheck { name, value, threshold, at_least, pass }
 }
 
-/// Las siete verificaciones de aceptacion del resultado generativo, en orden fijo.
+/// Las once verificaciones de aceptacion del resultado generativo, en orden fijo.
 pub fn acceptance_checks(
     recon: &ReconSummary,
     history: &VaeHistory,
     grid: &GridMetrics,
     prior: &PriorStats,
     plain_prior: &PriorStats,
+    control: &ControlStats,
     sep: &Separation,
 ) -> Vec<AcceptanceCheck> {
     vec![
@@ -648,6 +720,25 @@ pub fn acceptance_checks(
             prior.recognizable_frac - plain_prior.recognizable_frac,
             MIN_CONTRAST_GAP,
             true,
+        ),
+        check(
+            "ventaja sobre el autoencoder simple (sorteos plausibles)",
+            prior.plausible_frac - plain_prior.plausible_frac,
+            MIN_VALID_GAP,
+            true,
+        ),
+        check("combinaciones distintas entre los hibridos del prior", prior.hybrid_keys as f64, GALLERY_SIZE as f64, true),
+        check(
+            "control negativo: reconstrucciones del entrenamiento aceptadas como nuevas",
+            control.mean_accepted as f64 / control.n_mean.max(1) as f64,
+            MAX_CONTROL_MEAN,
+            false,
+        ),
+        check(
+            "control negativo: muestras de la posterior aceptadas como nuevas",
+            control.posterior_accepted as f64 / control.n_posterior.max(1) as f64,
+            MAX_CONTROL_POSTERIOR,
+            false,
         ),
     ]
 }
