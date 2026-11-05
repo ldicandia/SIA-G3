@@ -1,9 +1,18 @@
 //! AE-04: subconjunto aprendido y evidencia de por que fallan los demas patrones.
 
+use std::path::Path;
+
+use anyhow::{bail, Context, Result};
 use ndarray::Array2;
 
-use crate::autoencoder::TrainHistory;
+use crate::autoencoder::{Autoencoder, TrainHistory};
+use crate::data::Dataset;
+use crate::plots::plot_latent_scatter;
 use crate::report::{Report, TOLERANCE_PX};
+
+/// Nombres fijos de los archivos del espacio latente.
+pub const LATENT_PNG: &str = "latent.png";
+pub const LATENT_CSV: &str = "latent_codes.csv";
 
 #[derive(Debug, Clone)]
 pub struct FailedPattern {
@@ -157,6 +166,40 @@ impl SubsetAnalysis {
         ));
         out
     }
+}
+
+fn csv_field(label: &str) -> String {
+    if label.contains(',') || label.contains('"') {
+        format!("\"{}\"", label.replace('"', "\"\""))
+    } else {
+        label.to_string()
+    }
+}
+
+/// Escribe `label,z1,z2` con una fila por patron (coordenadas a 6 decimales).
+pub fn write_latent_csv(path: &Path, labels: &[String], codes: &Array2<f64>) -> Result<()> {
+    if labels.len() != codes.nrows() || codes.ncols() != 2 {
+        bail!("se esperaban {} codigos de 2 dimensiones y hay {}x{}", labels.len(), codes.nrows(), codes.ncols());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("no se pudo crear {}", parent.display()))?;
+    }
+    let mut out = String::from("label,z1,z2\n");
+    for (l, row) in labels.iter().zip(codes.rows()) {
+        out.push_str(&format!("{},{:.6},{:.6}\n", csv_field(l), row[0], row[1]));
+    }
+    std::fs::write(path, out).with_context(|| format!("no se pudo escribir {}", path.display()))
+}
+
+/// AE-05: codifica los 32 patrones, escribe `latent.png` y `latent_codes.csv` en `out_dir` y
+/// devuelve los codigos.
+pub fn export_latent(ae: &Autoencoder, ds: &Dataset, out_dir: &Path) -> Result<Array2<f64>> {
+    let codes = ae.encode(&ds.x);
+    let points: Vec<(String, f64, f64)> =
+        ds.labels.iter().zip(codes.rows()).map(|(l, r)| (l.clone(), r[0], r[1])).collect();
+    plot_latent_scatter(&out_dir.join(LATENT_PNG), &points)?;
+    write_latent_csv(&out_dir.join(LATENT_CSV), &ds.labels, &codes)?;
+    Ok(codes)
 }
 
 #[cfg(test)]

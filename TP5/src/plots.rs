@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use plotters::prelude::*;
+use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use crate::experiments::{variants_of, ExperimentResult, STUDIES};
 
@@ -118,6 +119,62 @@ pub fn plot_series(
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         draw!(chart);
     }
+    root.present().map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(())
+}
+
+/// Rango de un eje: minimo y maximo de los datos con 8 % del rango de relleno (+-1 si el rango es 0).
+fn padded_range(values: impl Iterator<Item = f64> + Clone) -> (f64, f64) {
+    let lo = values.clone().fold(f64::INFINITY, f64::min);
+    let hi = values.fold(f64::NEG_INFINITY, f64::max);
+    let span = hi - lo;
+    if span <= 0.0 {
+        (lo - 1.0, hi + 1.0)
+    } else {
+        (lo - 0.08 * span, hi + 0.08 * span)
+    }
+}
+
+/// AE-05: dibuja los puntos `(etiqueta, z1, z2)` en el plano latente (PNG de 1000 x 1000), cada
+/// uno como un circulo relleno con su caracter al lado.
+pub fn plot_latent_scatter(path: &Path, points: &[(String, f64, f64)]) -> Result<()> {
+    if points.is_empty() {
+        bail!("no hay puntos latentes para graficar");
+    }
+    if points.iter().any(|(_, x, y)| !x.is_finite() || !y.is_finite()) {
+        bail!("hay coordenadas latentes no finitas");
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("no se pudo crear {}", parent.display()))?;
+    }
+    let (x0, x1) = padded_range(points.iter().map(|p| p.1));
+    let (y0, y1) = padded_range(points.iter().map(|p| p.2));
+
+    let root = BitMapBackend::new(path, (1000, 1000)).into_drawing_area();
+    root.fill(&WHITE).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Espacio latente 2D - 32 patrones de font.h", ("sans-serif", 28))
+        .margin(20)
+        .x_label_area_size(50)
+        .y_label_area_size(70)
+        .build_cartesian_2d(x0..x1, y0..y1)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    chart
+        .configure_mesh()
+        .x_desc("z1")
+        .y_desc("z2")
+        .draw()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    chart
+        .draw_series(points.iter().map(|(_, x, y)| Circle::new((*x, *y), 5, PALETTE[0].filled())))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let label_style = ("sans-serif", 20)
+        .into_font()
+        .color(&RGBColor(180, 30, 30))
+        .pos(Pos::new(HPos::Left, VPos::Bottom));
+    chart
+        .draw_series(points.iter().map(|(l, x, y)| Text::new(l.clone(), (*x, *y), label_style.clone())))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     root.present().map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }

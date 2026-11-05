@@ -7,7 +7,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use tp5::autoencoder::{ArchSpec, Autoencoder};
-use tp5::analysis::analyze;
+use tp5::analysis::{analyze, export_latent, LATENT_PNG};
 use tp5::experiments::{loss_label, render_comparison_md, run_sweep, sweep_grid, train_chosen, write_sweep_csv};
 use tp5::data::{format_grid, load_font, N_PIXELS};
 use tp5::mlp::{Activation, Loss};
@@ -42,6 +42,12 @@ enum Command {
     },
     /// Entrena la configuracion elegida del Ej 1a y muestra el reporte y el analisis de subconjunto
     Ej1a {
+        /// Directorio de salida
+        #[arg(long, default_value = DEFAULT_OUT)]
+        out: PathBuf,
+    },
+    /// Grafica los 32 patrones en el plano latente de 2 dimensiones (PNG y CSV)
+    Latent {
         /// Directorio de salida
         #[arg(long, default_value = DEFAULT_OUT)]
         out: PathBuf,
@@ -157,11 +163,29 @@ fn ej1a(out: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Imprime la tabla de codigos latentes y la linea final `latente: ...`.
+fn print_latent(ds: &tp5::data::Dataset, codes: &ndarray::Array2<f64>, out: &Path) {
+    println!("idx  caracter  z1  z2");
+    for (i, (l, r)) in ds.labels.iter().zip(codes.rows()).enumerate() {
+        println!("{:>3}  {:<8}  {:.4}  {:.4}", i, l, r[0], r[1]);
+    }
+    println!("latente: {} patrones -> {}/{}", ds.labels.len(), out.display(), LATENT_PNG);
+}
+
+fn latent(out: &Path) -> Result<()> {
+    let ds = load_font()?;
+    let (ae, _) = train_chosen(&ds);
+    let codes = export_latent(&ae, &ds, out)?;
+    print_latent(&ds, &codes, out);
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
         Command::Smoke => smoke(),
         Command::Sweep { quick, out, workers } => sweep(quick, &out, workers),
         Command::Ej1a { out } => ej1a(&out),
+        Command::Latent { out } => latent(&out),
     }
 }
