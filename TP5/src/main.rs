@@ -567,6 +567,9 @@ fn vae_sample(draws: usize, seed: u64, epochs: Option<usize>, out: &Path) -> Res
         println!("nuevo (izquierda) y {} (derecha):", ds.names[first.judgement.nearest_index]);
         println!("{}", format_emojis_side_by_side(&[binarized, nearest]));
     }
+    let vae_decode = |z: &ndarray::Array2<f64>| model.decode(z);
+    let prior = prior_stats(&vae_decode, cfg.spec.latent_dim, &style_judge, seed, DEFAULT_DRAWS);
+    println!("{}", prior_line(&prior, &sep));
     if search.accepted.is_empty() {
         bail!("no se encontro ningun emoji nuevo y plausible en {} sorteos", search.examined);
     }
@@ -613,8 +616,10 @@ fn vae_baseline(grid: usize, epochs: Option<usize>, seed: u64, out: &Path) -> Re
     let vae_decode = |z: &ndarray::Array2<f64>| model.decode(z);
     let plain_decode = |z: &ndarray::Array2<f64>| plain.decode(z);
     let latent_dim = cfg.spec.latent_dim;
-    let vae_prior = prior_stats(&vae_decode, latent_dim, &ds, &sep, seed, DEFAULT_DRAWS);
-    let plain_prior = prior_stats(&plain_decode, latent_dim, &ds, &sep, seed, DEFAULT_DRAWS);
+    let judge = StyleJudge::new(&ds, &model.reconstruct_mean(&ds.x));
+    let plain_judge = StyleJudge::new(&ds, &plain.reconstruct(&ds.x));
+    let vae_prior = prior_stats(&vae_decode, latent_dim, &judge, seed, DEFAULT_DRAWS);
+    let plain_prior = prior_stats(&plain_decode, latent_dim, &plain_judge, seed, DEFAULT_DRAWS);
     println!("VAE {}", prior_line(&vae_prior, &sep));
     println!("AE simple {}", prior_line(&plain_prior, &sep));
 

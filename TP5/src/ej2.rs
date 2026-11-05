@@ -15,7 +15,7 @@ use crate::vae::{
 use crate::vae_eval::{
     acceptance_checks, decode_grid, manifold_metrics, plain_grid_points, prior_stats, search_new_emoji,
     train_plain_ae, validate_draws, validate_grid, AcceptanceCheck, Contrast, GridMetrics, PriorStats, SampleSearch,
-    DEFAULT_DRAWS, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
+    StyleJudge, DEFAULT_DRAWS, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
 };
 
 /// Linea del dataset, construida con las constantes del modulo `emoji`.
@@ -62,8 +62,12 @@ pub struct Ej2Run {
     pub grid_decoded: Array2<f64>,
     pub grid: GridMetrics,
     pub search: SampleSearch,
+    /// Juez por region con los pisos de ruido de las reconstrucciones del VAE.
+    pub judge: StyleJudge,
     pub prior: PriorStats,
     pub plain: Autoencoder,
+    /// Juez por region con los pisos de ruido de las reconstrucciones del autoencoder simple.
+    pub plain_judge: StyleJudge,
     pub plain_prior: PriorStats,
     pub plain_grid_decoded: Array2<f64>,
     pub plain_grid: GridMetrics,
@@ -90,12 +94,14 @@ pub fn run_ej2(opts: &Ej2Options) -> anyhow::Result<Ej2Run> {
     let search = search_new_emoji(&vae, &ds, opts.seed, draws);
 
     let latent_dim = cfg.spec.latent_dim;
+    let judge = StyleJudge::new(&ds, &vae.reconstruct_mean(&ds.x));
     let vae_decode = |z: &Array2<f64>| vae.decode(z);
-    let prior = prior_stats(&vae_decode, latent_dim, &ds, &sep, opts.seed, DEFAULT_DRAWS);
+    let prior = prior_stats(&vae_decode, latent_dim, &judge, opts.seed, DEFAULT_DRAWS);
 
     let plain = train_plain_ae(&ds, &cfg);
+    let plain_judge = StyleJudge::new(&ds, &plain.reconstruct(&ds.x));
     let plain_decode = |z: &Array2<f64>| plain.decode(z);
-    let plain_prior = prior_stats(&plain_decode, latent_dim, &ds, &sep, opts.seed, DEFAULT_DRAWS);
+    let plain_prior = prior_stats(&plain_decode, latent_dim, &plain_judge, opts.seed, DEFAULT_DRAWS);
     let plain_grid_decoded = plain.decode(&plain_grid_points(&plain, &ds, grid_side));
     let plain_grid = manifold_metrics(&plain_grid_decoded, grid_side, &ds, &sep);
     let plain_counts = wrong_pixel_counts(&ds.x, &plain.reconstruct(&ds.x));
@@ -121,8 +127,10 @@ pub fn run_ej2(opts: &Ej2Options) -> anyhow::Result<Ej2Run> {
         grid_decoded,
         grid,
         search,
+        judge,
         prior,
         plain,
+        plain_judge,
         plain_prior,
         plain_grid_decoded,
         plain_grid,

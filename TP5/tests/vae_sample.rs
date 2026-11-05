@@ -9,7 +9,7 @@ use tp5::emoji::{build_emojis, separation, style_regions, EmojiDataset, Separati
 use tp5::vae::{chosen_vae_config, train_vae, Vae, SAMPLE_SEED};
 use tp5::vae_eval::{
     judge, new_emoji_line, prior_line, prior_stats, render_gallery, search_new_emoji, validate_draws, NoiseFloors,
-    SampleSearch, BLEND_SLACK, DEFAULT_DRAWS, GALLERY_SIZE,
+    SampleSearch, StyleJudge, BLEND_SLACK, DEFAULT_DRAWS, GALLERY_SIZE,
 };
 use tp5::vae_figures::{build_new_emoji_tiles, export_new_emoji, NEW_EMOJI_PNG};
 
@@ -53,14 +53,13 @@ fn best_margin(search: &SampleSearch) -> usize {
 }
 
 #[test]
-fn judge_of_a_dataset_emoji_is_recognizable_and_not_new() {
+fn judge_of_a_dataset_emoji_is_recognizable() {
     let (ds, sep, _) = model();
     for i in 0..ds.x.nrows() {
         let j = judge(ds, sep, ds.x.row(i));
         assert_eq!(j.nearest_index, i);
         assert_eq!(j.distance, 0);
-        assert!(j.recognizable && j.plausible && !j.is_new);
-        assert!(!j.new_and_plausible());
+        assert!(j.recognizable);
     }
 }
 
@@ -225,16 +224,33 @@ fn gallery_lines_have_the_exact_format() {
 }
 
 #[test]
-fn prior_line_format_and_fractions_are_consistent() {
-    let (ds, sep, vae) = model();
+fn prior_stats_are_consistent_and_deterministic() {
+    let (ds, _, vae) = model();
+    let judge = StyleJudge::new(ds, &vae.reconstruct_mean(&ds.x));
     let decode = |z: &ndarray::Array2<f64>| vae.decode(z);
-    let s = prior_stats(&decode, 2, ds, sep, SAMPLE_SEED, 1000);
+    let s = prior_stats(&decode, 2, &judge, SAMPLE_SEED, 1000);
     assert_eq!(s.n, 1000);
-    assert!(s.new_plausible_frac <= s.new_frac && s.new_frac <= 1.0);
-    assert!(s.recognizable_frac <= 1.0 && s.recognizable_frac >= 0.0);
-    assert!(prior_line(&s, sep).starts_with("PRIOR: de 1000 puntos"));
-    let again = prior_stats(&decode, 2, ds, sep, SAMPLE_SEED, 1000);
-    assert_eq!(s, again);
+    assert!(s.hybrid_frac <= s.plausible_frac, "{s:?}");
+    assert!(s.hybrid_frac <= s.off_style_frac, "{s:?}");
+    for f in [s.recognizable_frac, s.plausible_frac, s.off_style_frac, s.hybrid_frac] {
+        assert!((0.0..=1.0).contains(&f), "{s:?}");
+    }
+    let hybrids = (s.hybrid_frac * s.n as f64).round() as usize;
+    assert!(s.hybrid_keys <= hybrids, "{s:?}");
+    assert_eq!(s, prior_stats(&decode, 2, &judge, SAMPLE_SEED, 1000));
+}
+
+#[test]
+fn prior_line_has_the_exact_format() {
+    let (ds, sep, vae) = model();
+    let judge = StyleJudge::new(ds, &vae.reconstruct_mean(&ds.x));
+    let decode = |z: &ndarray::Array2<f64>| vae.decode(z);
+    let s = prior_stats(&decode, 2, &judge, SAMPLE_SEED, 1000);
+    let line = prior_line(&s, sep);
+    assert!(line.starts_with("PRIOR: de 1000 puntos"), "{line}");
+    assert!(line.contains("a una cara plausible (marco intacto y cada region en un estilo o entre dos)"), "{line}");
+    assert!(line.contains("a un hibrido plausible"), "{line}");
+    assert!(line.ends_with("combinaciones distintas"), "{line}");
 }
 
 #[test]

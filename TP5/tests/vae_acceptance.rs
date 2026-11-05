@@ -10,7 +10,7 @@ use tp5::vae::{chosen_vae_config, reconstruction_summary, train_vae, Vae, VaeHis
 use tp5::vae_eval::{
     acceptance_checks, contrast_line, decode_grid, manifold_metrics, plain_grid_points, prior_stats,
     render_acceptance, search_new_emoji, train_plain_ae, AcceptanceCheck, Contrast, PriorStats, DEFAULT_DRAWS,
-    GRID_HALF_RANGE, GRID_SIDE_DEFAULT, MAX_MEAN_WRONG_PX, MIN_CONTRAST_GAP,
+    StyleJudge, GRID_HALF_RANGE, GRID_SIDE_DEFAULT, MAX_MEAN_WRONG_PX, MIN_CONTRAST_GAP, MIN_VALID_GAP,
 };
 
 struct Trained {
@@ -44,9 +44,17 @@ fn trained() -> &'static Trained {
     })
 }
 
+fn plain_judge(t: &Trained) -> StyleJudge {
+    StyleJudge::new(&t.ds, &t.plain.reconstruct(&t.ds.x))
+}
+
+fn vae_judge(t: &Trained, seed: usize) -> StyleJudge {
+    StyleJudge::new(&t.ds, &t.models[seed].0.reconstruct_mean(&t.ds.x))
+}
+
 fn plain_prior(t: &Trained) -> PriorStats {
     let decode = |z: &ndarray::Array2<f64>| t.plain.decode(z);
-    prior_stats(&decode, 2, &t.ds, &t.sep, SAMPLE_SEED, DEFAULT_DRAWS)
+    prior_stats(&decode, 2, &plain_judge(t), SAMPLE_SEED, DEFAULT_DRAWS)
 }
 
 fn plain_recon_mean(t: &Trained) -> f64 {
@@ -57,7 +65,7 @@ fn plain_recon_mean(t: &Trained) -> f64 {
 fn vae_prior(t: &Trained, seed: usize) -> PriorStats {
     let vae = &t.models[seed].0;
     let decode = |z: &ndarray::Array2<f64>| vae.decode(z);
-    prior_stats(&decode, 2, &t.ds, &t.sep, SAMPLE_SEED, DEFAULT_DRAWS)
+    prior_stats(&decode, 2, &vae_judge(t, seed), SAMPLE_SEED, DEFAULT_DRAWS)
 }
 
 #[test]
@@ -94,9 +102,19 @@ fn plain_autoencoder_reconstructs_but_samples_the_prior_worse() {
     assert!(plain_recon <= MAX_MEAN_WRONG_PX, "reconstruccion del autoencoder simple {plain_recon}");
     let vae_recon = reconstruction_summary(&t.models[0].0, &t.ds).mean_wrong;
     assert!(vae_recon <= MAX_MEAN_WRONG_PX);
-    let (v, p) = (vae_prior(t, 0).recognizable_frac, plain_prior(t).recognizable_frac);
+    let (vae, plain) = (vae_prior(t, 0), plain_prior(t));
+    let (v, p) = (vae.recognizable_frac, plain.recognizable_frac);
     println!("sorteos reconocibles: VAE {v:.3}, autoencoder simple {p:.3}");
     assert!(v - p >= MIN_CONTRAST_GAP, "ventaja {} menor que {MIN_CONTRAST_GAP}", v - p);
+    println!(
+        "sorteos plausibles: VAE {:.3}, autoencoder simple {:.3} | hibridos: VAE {:.3}, autoencoder simple {:.3}",
+        vae.plausible_frac, plain.plausible_frac, vae.hybrid_frac, plain.hybrid_frac
+    );
+    assert!(
+        vae.plausible_frac - plain.plausible_frac >= MIN_VALID_GAP,
+        "ventaja de plausibilidad {} menor que {MIN_VALID_GAP}",
+        vae.plausible_frac - plain.plausible_frac
+    );
 }
 
 #[test]
@@ -136,6 +154,8 @@ fn contrast_line_format() {
     };
     let line = contrast_line(&c);
     assert!(line.starts_with("CONTRASTE: puntos z ~ N(0, I)"), "{line}");
+    assert!(line.contains("a una cara plausible: VAE "), "{line}");
+    assert!(line.contains("a un hibrido plausible: VAE "), "{line}");
     assert!(line.contains("reconstruccion media: VAE 5.00 px contra 6.00 px por emoji"), "{line}");
 }
 

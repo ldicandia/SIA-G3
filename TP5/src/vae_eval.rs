@@ -2,7 +2,7 @@
 //! el dataset con umbrales derivados del propio dataset, busqueda de un emoji nuevo en el prior y
 //! estadisticas de los sorteos del prior. Modulo numerico: no dibuja ni parsea argumentos.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ndarray::{Array1, Array2, ArrayView1};
 use rand::SeedableRng;
@@ -16,8 +16,6 @@ use crate::emoji::{
 use crate::report::TOLERANCE_PX;
 use crate::vae::{standard_normal_matrix, ReconSummary, Vae, VaeConfig, VaeHistory};
 
-/// Un emoji es plausible si esta a lo sumo `PLAUSIBLE_FACTOR` veces el radio de cercania del mas cercano.
-pub const PLAUSIBLE_FACTOR: usize = 2;
 /// Un salto entre celdas vecinas es grande si supera `LARGE_STEP_FACTOR` veces el radio de cercania.
 pub const LARGE_STEP_FACTOR: usize = 3;
 /// Sorteos por defecto del prior.
@@ -45,26 +43,16 @@ pub struct Judgement {
     pub distance: usize,
     /// A lo sumo `near_radius` px del emoji mas cercano.
     pub recognizable: bool,
-    /// Al menos `min` px de todos los emojis (tan lejos como los dos emojis mas cercanos entre si).
-    pub is_new: bool,
-    /// A lo sumo `PLAUSIBLE_FACTOR * near_radius` px del emoji mas cercano.
-    pub plausible: bool,
 }
 
-impl Judgement {
-    pub fn new_and_plausible(&self) -> bool {
-        self.is_new && self.plausible
-    }
-}
-
+/// Emoji global mas cercano sobre los 576 pixeles; lo usan el conteo de reconocibles, las metricas de la
+/// grilla y las figuras. Que una imagen sea "nueva" lo decide `StyleJudge`, region por region.
 pub fn judge(ds: &EmojiDataset, sep: &Separation, pattern: ArrayView1<f64>) -> Judgement {
     let (nearest_index, distance) = nearest_emoji(ds, pattern);
     Judgement {
         nearest_index,
         distance,
         recognizable: distance <= sep.near_radius,
-        is_new: distance >= sep.min,
-        plausible: distance <= PLAUSIBLE_FACTOR * sep.near_radius,
     }
 }
 
@@ -387,48 +375,62 @@ pub fn render_gallery(search: &SampleSearch, ds: &EmojiDataset) -> String {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PriorStats {
     pub n: usize,
+    /// A lo sumo `near_radius` px (distancia global) de un emoji del dataset.
     pub recognizable_frac: f64,
-    pub new_frac: f64,
-    pub new_plausible_frac: f64,
+    /// Cara valida: marco dentro de su piso y cada region en un estilo o entre dos.
+    pub plausible_frac: f64,
+    /// Alguna region fuera de estilo (plausible o no).
+    pub off_style_frac: f64,
+    /// Alguna region fuera de estilo y la cara plausible: el predicado que acepta un sorteo como nuevo.
+    pub hybrid_frac: f64,
+    /// Combinaciones distintas (emoji mas cercano, estilo de ojos, estilo de boca) entre los hibridos.
+    pub hybrid_keys: usize,
 }
 
 /// Estadisticas de los primeros `n` sorteos del flujo semillado, decodificados por `decode` (asi el
-/// autoencoder simple reutiliza la misma funcion).
+/// autoencoder simple reutiliza la misma funcion con su propio juez).
 pub fn prior_stats(
     decode: &dyn Fn(&Array2<f64>) -> Array2<f64>,
     latent_dim: usize,
-    ds: &EmojiDataset,
-    sep: &Separation,
+    style_judge: &StyleJudge,
     seed: u64,
     n: usize,
 ) -> PriorStats {
-    let (mut rec, mut new, mut both) = (0usize, 0usize, 0usize);
+    let (ds, sep) = (style_judge.dataset(), style_judge.separation());
+    let (mut rec, mut plausible, mut off_style, mut hybrid) = (0usize, 0usize, 0usize, 0usize);
+    let mut keys: HashSet<(usize, usize, usize)> = HashSet::new();
     let examined = walk_prior(decode, latent_dim, seed, n, &mut |_, _, img| {
-        let j = judge(ds, sep, img);
-        rec += usize::from(j.recognizable);
-        new += usize::from(j.is_new);
-        both += usize::from(j.new_and_plausible());
+        let global = judge(ds, sep, img);
+        rec += usize::from(global.recognizable);
+        let verdict = style_judge.judge(img);
+        plausible += usize::from(verdict.plausible);
+        off_style += usize::from(verdict.eyes.off_style || verdict.mouth.off_style);
+        if verdict.hybrid {
+            hybrid += 1;
+            keys.insert((global.nearest_index, verdict.eyes.style, verdict.mouth.style));
+        }
         true
     });
     let total = examined.max(1) as f64;
     PriorStats {
         n: examined,
         recognizable_frac: rec as f64 / total,
-        new_frac: new as f64 / total,
-        new_plausible_frac: both as f64 / total,
+        plausible_frac: plausible as f64 / total,
+        off_style_frac: off_style as f64 / total,
+        hybrid_frac: hybrid as f64 / total,
+        hybrid_keys: keys.len(),
     }
 }
 
 pub fn prior_line(s: &PriorStats, sep: &Separation) -> String {
     format!(
-        "PRIOR: de {} puntos z ~ N(0, I): {:.1} % decodifican a un emoji reconocible (a lo sumo {} px de un emoji del dataset), {:.1} % a un emoji nuevo (al menos {} px de todos) y {:.1} % a un emoji nuevo y plausible (a lo sumo {} px)",
+        "PRIOR: de {} puntos z ~ N(0, I): {:.1} % decodifican a un emoji reconocible (a lo sumo {} px de un emoji del dataset), {:.1} % a una cara plausible (marco intacto y cada region en un estilo o entre dos), {:.1} % a un hibrido plausible (alguna region fuera del piso de ruido de todos los estilos) en {} combinaciones distintas",
         s.n,
         100.0 * s.recognizable_frac,
         sep.near_radius,
-        100.0 * s.new_frac,
-        sep.min,
-        100.0 * s.new_plausible_frac,
-        PLAUSIBLE_FACTOR * sep.near_radius
+        100.0 * s.plausible_frac,
+        100.0 * s.hybrid_frac,
+        s.hybrid_keys
     )
 }
 
@@ -535,8 +537,12 @@ pub const MIN_KL: f64 = 1.0;
 pub const MIN_GRID_RECOGNIZABLE: f64 = 0.5;
 pub const MAX_ADJACENT_FACTOR: f64 = 1.5;
 pub const MIN_PRIOR_RECOGNIZABLE: f64 = 0.6;
-pub const MIN_NEW_RATE: f64 = 0.10;
+/// Participacion minima de sorteos hibridos y plausibles. Reemplaza la tasa de banda de pixeles (0.10), que
+/// el autoencoder simple tambien cumplia (31.9 % contra 30.7 %) y por eso no distinguia los modelos.
+pub const MIN_NEW_RATE: f64 = 0.05;
 pub const MIN_CONTRAST_GAP: f64 = 0.3;
+/// Ventaja minima de sorteos plausibles del VAE sobre el autoencoder simple (calibrada: unos 0.64).
+pub const MIN_VALID_GAP: f64 = 0.3;
 
 /// Autoencoder simple con la misma arquitectura, optimizador, perdida, epocas y semilla que el VAE,
 /// pero sin capa estocastica ni termino KL.
@@ -587,9 +593,13 @@ pub struct Contrast {
 
 pub fn contrast_line(c: &Contrast) -> String {
     format!(
-        "CONTRASTE: puntos z ~ N(0, I) que decodifican a un emoji reconocible: VAE {:.1} % contra autoencoder sin esquema variacional {:.1} % | salto medio entre celdas vecinas: VAE {:.1} px contra {:.1} px | reconstruccion media: VAE {:.2} px contra {:.2} px por emoji",
+        "CONTRASTE: puntos z ~ N(0, I) que decodifican a un emoji reconocible: VAE {:.1} % contra autoencoder sin esquema variacional {:.1} % | a una cara plausible: VAE {:.1} % contra {:.1} % | a un hibrido plausible: VAE {:.1} % contra {:.1} % | salto medio entre celdas vecinas: VAE {:.1} px contra {:.1} px | reconstruccion media: VAE {:.2} px contra {:.2} px por emoji",
         100.0 * c.vae_prior.recognizable_frac,
         100.0 * c.plain_prior.recognizable_frac,
+        100.0 * c.vae_prior.plausible_frac,
+        100.0 * c.plain_prior.plausible_frac,
+        100.0 * c.vae_prior.hybrid_frac,
+        100.0 * c.plain_prior.hybrid_frac,
         c.vae_grid.mean_adjacent_step,
         c.plain_grid.mean_adjacent_step,
         c.vae_recon_mean,
@@ -632,7 +642,7 @@ pub fn acceptance_checks(
             false,
         ),
         check("sorteos del prior reconocibles", prior.recognizable_frac, MIN_PRIOR_RECOGNIZABLE, true),
-        check("sorteos del prior nuevos y plausibles", prior.new_plausible_frac, MIN_NEW_RATE, true),
+        check("sorteos del prior hibridos y plausibles", prior.hybrid_frac, MIN_NEW_RATE, true),
         check(
             "ventaja sobre el autoencoder simple (sorteos reconocibles)",
             prior.recognizable_frac - plain_prior.recognizable_frac,
