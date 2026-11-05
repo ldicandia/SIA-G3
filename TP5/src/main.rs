@@ -10,14 +10,15 @@ use tp5::autoencoder::{ArchSpec, Autoencoder};
 use tp5::analysis::{analyze, export_latent, LATENT_PNG};
 use tp5::experiments::{loss_label, render_comparison_md, run_sweep, sweep_grid, train_chosen, write_sweep_csv};
 use tp5::dae_experiments::{
-    dae_sweep_grid, render_dae_comparison_md, run_dae_sweep, select_dae_variant, selection_line, write_dae_sweep_csv,
+    dae_sweep_grid, render_dae_comparison_md, run_dae_sweep, select_dae_variant, selection_line, train_chosen_dae,
+    write_dae_sweep_csv,
 };
 use tp5::dae_figures::{
     build_noise_examples, export_noise_examples, format_grids_side_by_side, EXAMPLES_NOISE_SEED, NOISE_EXAMPLES_PNG,
 };
 use tp5::data::{format_grid, load_font, N_PIXELS};
 use tp5::denoising::{
-    base_dae_config, evaluate_levels, max_level_line, render_level_table, train_dae, DEFAULT_LEVELS, N_EVAL_SAMPLES,
+    evaluate_levels, max_level_line, render_level_table, DEFAULT_LEVELS, N_EVAL_SAMPLES,
     TEST_NOISE_SEED,
 };
 use tp5::noise::validate_levels;
@@ -333,8 +334,7 @@ fn generate(point: Option<Vec<f64>>, steps: usize, out: &Path) -> Result<()> {
 fn ej1b(levels: Option<Vec<f64>>) -> Result<()> {
     let levels = validate_levels(&levels.unwrap_or_else(|| DEFAULT_LEVELS.to_vec()))?;
     let ds = load_font()?;
-    let cfg = base_dae_config();
-    let (ae, _history) = train_dae(&ds, &cfg);
+    let (ae, cfg) = train_chosen_dae(&ds);
     let stats = evaluate_levels(&ae, &ds.x, &levels, N_EVAL_SAMPLES, TEST_NOISE_SEED);
     println!("== Ej 1b: Denoising Autoencoder (entrada ruidosa -> objetivo limpio) ==");
     println!(

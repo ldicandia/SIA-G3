@@ -357,3 +357,41 @@ pub fn selection_line(sel: Option<&Selection>) -> String {
         None => "SELECCION: ninguna variante elegible (se necesita que todas las semillas dejen los 32 patrones limpios con a lo sumo 1 pixel incorrecto)".to_string(),
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Configuracion elegida
+// ---------------------------------------------------------------------------------------------
+
+/// Nombre de la corrida elegida por la regla sobre el sweep completo
+/// (`cargo run --release -- dae-sweep`, linea `SELECCION:`).
+pub const CHOSEN_DAE_NAME: &str = "noise-fix0.20-s1";
+
+/// Configuracion del DAE elegida para el Ej 1b, tomada del sweep completo del DAE.
+///
+/// Regla de seleccion (la implementa `select_dae_variant`): una variante es elegible si todas sus
+/// semillas dejan los 32 patrones limpios con a lo sumo 1 pixel incorrecto (criterio del Ej 1a);
+/// entre las elegibles gana la de menor mediana de puntaje, donde el puntaje de una corrida es la
+/// media de los pixeles incorrectos de salida en los niveles 0.05, 0.10, 0.15, 0.20 y 0.30 sobre
+/// el ruido de seleccion (`SELECTION_NOISE_SEED`, distinto del de entrenamiento y del de prueba);
+/// un empate lo gana la variante anterior en el orden de la grilla; dentro de la ganadora se toma
+/// la semilla de menor puntaje.
+///
+/// Las 13 variantes resultaron elegibles con sus 3 semillas. Medianas de puntaje: lat-l2 2.6049,
+/// lat-l4 2.1183, lat-l8 1.8328, lat-l16 1.8167, hid-h24 2.3453, hid-h32x16 1.9991, hid-h64x32
+/// 1.8328, hid-h48x24x12 1.9776, noise-fix0.10 1.9611, noise-fix0.20 1.6790, noise-u0-0.20 1.8328,
+/// noise-u0-0.30 1.7702 y noise-u0-0.40 1.7911. Gana `noise-fix0.20` (ocultas [64, 32], latente 8,
+/// ruido de entrenamiento fijo 0.20, BCE, Adam lr 0.005, 3000 epocas de 8 copias); sus corridas
+/// puntuaron `-s0` 1.6790, `-s1` 1.6724 y `-s2` 1.6921, por lo que se elige la semilla 1.
+pub fn chosen_dae_config() -> DaeConfig {
+    dae_sweep_grid(false)
+        .into_iter()
+        .find(|c| c.name == CHOSEN_DAE_NAME)
+        .unwrap_or_else(|| panic!("la configuracion elegida {CHOSEN_DAE_NAME} no esta en la grilla completa"))
+}
+
+/// Entrena `chosen_dae_config()`; es la configuracion que usa `ej1b`.
+pub fn train_chosen_dae(ds: &Dataset) -> (Autoencoder, DaeConfig) {
+    let cfg = chosen_dae_config();
+    let (ae, _history) = train_dae(ds, &cfg);
+    (ae, cfg)
+}
