@@ -4,6 +4,7 @@ pub mod dae_experiments;
 pub mod dae_figures;
 pub mod data;
 pub mod denoising;
+pub mod ej2;
 pub mod emoji;
 pub mod experiments;
 pub mod generate;

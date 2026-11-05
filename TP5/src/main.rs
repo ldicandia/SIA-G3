@@ -18,6 +18,7 @@ use tp5::dae_figures::{
     write_levels_csv, EXAMPLES_NOISE_SEED, LEVELS_CSV, NOISE_EXAMPLES_PNG,
 };
 use tp5::data::{format_grid, load_font, N_PIXELS};
+use tp5::ej2::{dataset_line, result_line, run_ej2, separation_line, Ej2Options};
 use tp5::emoji::{build_emojis, format_emoji, format_emojis_side_by_side, nearest_emoji, separation, EMOJI_COUNT};
 use tp5::denoising::{
     evaluate_levels, max_level_line, render_level_table, DEFAULT_LEVELS, N_EVAL_SAMPLES,
@@ -179,6 +180,24 @@ enum Command {
         /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
         #[arg(long)]
         epochs: Option<usize>,
+        /// Semilla del flujo de sorteos del prior
+        #[arg(long, default_value_t = SAMPLE_SEED)]
+        seed: u64,
+        /// Directorio de salida
+        #[arg(long, default_value = EJ2_OUT)]
+        out: PathBuf,
+    },
+    /// Corre el Ej 2 completo: dataset, VAE, evaluacion, emoji nuevo, contraste y aceptacion
+    Ej2 {
+        /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
+        #[arg(long)]
+        epochs: Option<usize>,
+        /// Lado de la grilla (entre 3 y 41)
+        #[arg(long, default_value_t = GRID_SIDE_DEFAULT)]
+        grid: usize,
+        /// Sorteos maximos de la busqueda del emoji nuevo (entre 1 y 100000)
+        #[arg(long, default_value_t = DEFAULT_DRAWS)]
+        draws: usize,
         /// Semilla del flujo de sorteos del prior
         #[arg(long, default_value_t = SAMPLE_SEED)]
         seed: u64,
@@ -474,12 +493,9 @@ fn noise(levels: Option<Vec<f64>>, seed: u64, out: &Path) -> Result<()> {
 
 fn emojis(out: &Path) -> Result<()> {
     let ds = build_emojis();
-    println!("emojis: {EMOJI_COUNT} imagenes de 24x24 (576 valores en [0,1], 1 = tinta)");
+    println!("{}", dataset_line());
     let sep = separation(&ds);
-    println!(
-        "separacion: minima {} px, mediana {:.1} px, radio de cercania {} px",
-        sep.min, sep.median, sep.near_radius
-    );
+    println!("{}", separation_line(&sep));
     let shown = ["dots-smile", "happy-grin", "wide-open", "x-frown"];
     println!("{}", shown.join(" "));
     let rows: Vec<_> = shown
@@ -525,13 +541,6 @@ fn vae(epochs: Option<usize>, seed: u64, out: &Path) -> Result<()> {
     let (idx, dist) = nearest_emoji(&ds, decoded.row(0));
     println!("emoji mas cercano: {} (distancia {dist} px)", ds.names[idx]);
     Ok(())
-}
-
-fn separation_line(sep: &tp5::emoji::Separation) -> String {
-    format!(
-        "separacion: minima {} px, mediana {:.1} px, radio de cercania {} px",
-        sep.min, sep.median, sep.near_radius
-    )
 }
 
 fn vae_sample(draws: usize, seed: u64, epochs: Option<usize>, out: &Path) -> Result<()> {
@@ -637,6 +646,56 @@ fn vae_baseline(grid: usize, epochs: Option<usize>, seed: u64, out: &Path) -> Re
     Ok(())
 }
 
+fn ej2(opts: &Ej2Options, out: &Path) -> Result<()> {
+    let run = run_ej2(opts)?;
+    let ds = &run.ds;
+    println!("== Ej 2: autoencoder variacional (VAE) sobre emojis ==");
+    println!("{}", dataset_line());
+    println!("{}", separation_line(&run.sep));
+    let montage = export_emoji_montage(ds, out)?;
+    println!("emojis.png: {}", montage.display());
+    println!("{}", config_line(&run.cfg, &run.vae));
+
+    println!("{}", render_loss_table(&run.history));
+    println!("{}", loss_summary_line(&run.history));
+    write_loss_csv(&out.join(LOSS_CSV), &run.history)?;
+    println!("datos: {} epocas -> {}/{LOSS_CSV}", run.cfg.epochs, out.display());
+    let chart = export_loss_chart(&run.history, out)?;
+    println!("grafico: {}", chart.display());
+
+    println!("{}", reconstruction_line(&run.recon));
+    export_reconstruction(&run.vae, ds, out)?;
+    println!("reconstruccion: {EMOJI_COUNT} emojis -> {}/{RECON_PNG}", out.display());
+
+    println!("{}", manifold_line(&run.grid, &run.sep));
+    export_manifold(&run.grid_decoded, run.grid.side, out)?;
+    println!("manifold: {}/{MANIFOLD_PNG}", out.display());
+
+    println!("{}", new_emoji_line(&run.search, ds, &run.sep));
+    if let Some(first) = run.search.accepted.first() {
+        let nearest = ds.x.row(first.judgement.nearest_index).to_owned();
+        let binarized = first.image.mapv(|v| if v >= 0.5 { 1.0 } else { 0.0 });
+        println!("nuevo (izquierda) y {} (derecha):", ds.names[first.judgement.nearest_index]);
+        println!("{}", format_emojis_side_by_side(&[binarized, nearest]));
+        export_new_emoji(&run.search, ds, out)?;
+        println!("nuevo emoji -> {}/{NEW_EMOJI_PNG}", out.display());
+    }
+
+    println!("VAE {}", prior_line(&run.prior, &run.sep));
+    println!("AE simple {}", prior_line(&run.plain_prior, &run.sep));
+    println!("{}", contrast_line(&run.contrast));
+    export_plain_manifold(&run.plain_grid_decoded, run.plain_grid.side, out)?;
+    println!("contraste: {}/{PLAIN_MANIFOLD_PNG}", out.display());
+    println!("{}", render_acceptance(&run.checks));
+
+    let result = result_line(&run);
+    println!("{result}");
+    if result.starts_with("RESULTADO EJ2: FALLA") {
+        bail!("el Ej 2 no cumplio la aceptacion");
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
@@ -653,5 +712,6 @@ fn main() -> Result<()> {
         Command::VaeSample { draws, seed, epochs, out } => vae_sample(draws, seed, epochs, &out),
         Command::VaeManifold { grid, epochs, out } => vae_manifold(grid, epochs, &out),
         Command::VaeBaseline { grid, epochs, seed, out } => vae_baseline(grid, epochs, seed, &out),
+        Command::Ej2 { epochs, grid, draws, seed, out } => ej2(&Ej2Options { epochs, grid, draws, seed }, &out),
     }
 }
