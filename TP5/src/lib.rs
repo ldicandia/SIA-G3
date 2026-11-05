@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod autoencoder;
 pub mod data;
 pub mod experiments;

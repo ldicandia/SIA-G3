@@ -7,12 +7,13 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use tp5::autoencoder::{ArchSpec, Autoencoder};
-use tp5::experiments::{render_comparison_md, run_sweep, sweep_grid, write_sweep_csv};
+use tp5::analysis::analyze;
+use tp5::experiments::{loss_label, render_comparison_md, run_sweep, sweep_grid, train_chosen, write_sweep_csv};
 use tp5::data::{format_grid, load_font, N_PIXELS};
 use tp5::mlp::{Activation, Loss};
 use tp5::plots::write_study_curves;
 use tp5::optimizer::OptimizerKind;
-use tp5::report::{wrong_pixel_counts, Report};
+use tp5::report::{wrong_pixel_counts, write_report_csv, Report};
 
 #[derive(Parser)]
 #[command(name = "tp5", about = "SIA TP5: autoencoders con backprop propio sobre ndarray")]
@@ -39,12 +40,19 @@ enum Command {
         #[arg(long)]
         workers: Option<usize>,
     },
+    /// Entrena la configuracion elegida del Ej 1a y muestra el reporte y el analisis de subconjunto
+    Ej1a {
+        /// Directorio de salida
+        #[arg(long, default_value = DEFAULT_OUT)]
+        out: PathBuf,
+    },
 }
 
 /// Directorio de salida por defecto del Ej 1a.
 const DEFAULT_OUT: &str = "output/ej1a";
 const SWEEP_CSV: &str = "sweep.csv";
 const COMPARISON_MD: &str = "comparison.md";
+const REPORT_CSV: &str = "report.csv";
 
 fn sweep(quick: bool, out: &Path, workers: Option<usize>) -> Result<()> {
     let ds = load_font()?;
@@ -125,10 +133,35 @@ fn smoke() -> Result<()> {
     Ok(())
 }
 
+
+fn ej1a(out: &Path) -> Result<()> {
+    let ds = load_font()?;
+    let (ae, res) = train_chosen(&ds);
+    let c = &res.config;
+    println!("== Ej 1a: autoencoder basico con latente de 2 dimensiones ==");
+    println!(
+        "configuracion elegida: {} | arquitectura: {} | optimizador: {} | perdida: {} | epocas: {} | semilla: {}",
+        c.name,
+        ae.sizes_label(),
+        c.optimizer.label(),
+        loss_label(&c.loss),
+        c.epochs,
+        c.seed
+    );
+    println!("{}", res.report.render_table());
+    println!("{}", res.report.result_line());
+    let codes = ae.encode(&ds.x);
+    let analysis = analyze(&ds.labels, &ds.x, &codes, &res.report, &res.history);
+    println!("{}", analysis.render());
+    write_report_csv(&out.join(REPORT_CSV), &res.report)?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
         Command::Smoke => smoke(),
         Command::Sweep { quick, out, workers } => sweep(quick, &out, workers),
+        Command::Ej1a { out } => ej1a(&out),
     }
 }

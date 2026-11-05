@@ -320,3 +320,37 @@ pub fn render_comparison_md(results: &[ExperimentResult]) -> String {
     }
     out
 }
+
+// ---------------------------------------------------------------------------------------------
+// Configuracion elegida
+// ---------------------------------------------------------------------------------------------
+
+/// Configuracion elegida para el Ej 1a, tomada del sweep completo (`cargo run --release -- sweep`).
+///
+/// Regla de seleccion, paso (1): se consideran las variantes robustas (todas sus semillas terminan
+/// con `final_max_wrong <= 1`); se ordenan por la menor mediana de `first_epoch_within_1px`, y
+/// dentro de la mejor variante se toma la semilla con menor `final_max_wrong` y luego menor
+/// `final_loss`.
+///
+/// Variantes robustas y su mediana: arch-h24 (1100), arch-h32x16 (575), arch-h64x32 (275),
+/// arch-h48x24x12 (400), optim-adam-lr0.01 (450), act-tanh-lattanh (975), act-relu-latid (1500) y
+/// act-relu-lattanh (1325). Gana `arch-h64x32` (hidden [64,32], tanh, latente identidad, salida
+/// sigmoide, BCE, Adam lr 0.005, 10000 epocas); sus filas de `sweep.csv` son
+/// `arch-h64x32-s0` (max 0, perdida 0.00013432), `-s1` (max 0, 0.00014268) y `-s2` (max 0,
+/// 0.00015151), por lo que se elige la semilla 0.
+pub fn chosen_config() -> ExperimentConfig {
+    make(
+        "arch-h64x32",
+        spec(&[64, 32], Activation::Tanh, Activation::Identity),
+        Loss::Bce,
+        adam(0.005),
+        10_000,
+        &[0],
+    )
+    .remove(0)
+}
+
+/// Entrena `chosen_config()`; es la configuracion que usan las fases siguientes.
+pub fn train_chosen(ds: &Dataset) -> (Autoencoder, ExperimentResult) {
+    run_experiment(ds, &chosen_config())
+}
