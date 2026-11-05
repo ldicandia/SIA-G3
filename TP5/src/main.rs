@@ -14,7 +14,8 @@ use tp5::dae_experiments::{
     write_dae_sweep_csv,
 };
 use tp5::dae_figures::{
-    build_noise_examples, export_noise_examples, format_grids_side_by_side, EXAMPLES_NOISE_SEED, NOISE_EXAMPLES_PNG,
+    build_noise_examples, export_dae_examples, export_level_charts, export_noise_examples, format_grids_side_by_side,
+    write_levels_csv, EXAMPLES_NOISE_SEED, LEVELS_CSV, NOISE_EXAMPLES_PNG,
 };
 use tp5::data::{format_grid, load_font, N_PIXELS};
 use tp5::denoising::{
@@ -64,6 +65,9 @@ enum Command {
         /// Niveles de ruido a evaluar (probabilidad de invertir cada pixel, entre 0.0 y 0.5), separados por comas
         #[arg(long, value_delimiter = ',', allow_negative_numbers = true)]
         levels: Option<Vec<f64>>,
+        /// Directorio de salida
+        #[arg(long, default_value = EJ1B_OUT)]
+        out: PathBuf,
     },
     /// Barrido de arquitecturas y calendarios de ruido del DAE (tamano latente, capacidad, ruido de entrenamiento)
     DaeSweep {
@@ -331,7 +335,7 @@ fn generate(point: Option<Vec<f64>>, steps: usize, out: &Path) -> Result<()> {
     new_letter_block(&ae, &ds, out, point, steps)
 }
 
-fn ej1b(levels: Option<Vec<f64>>) -> Result<()> {
+fn ej1b(levels: Option<Vec<f64>>, out: &Path) -> Result<()> {
     let levels = validate_levels(&levels.unwrap_or_else(|| DEFAULT_LEVELS.to_vec()))?;
     let ds = load_font()?;
     let (ae, cfg) = train_chosen_dae(&ds);
@@ -353,6 +357,22 @@ fn ej1b(levels: Option<Vec<f64>>) -> Result<()> {
     );
     println!("{}", render_level_table(&stats));
     println!("{}", max_level_line(&stats));
+
+    write_levels_csv(&out.join(LEVELS_CSV), &stats)?;
+    println!("datos: {} niveles -> {}/{}", stats.len(), out.display(), LEVELS_CSV);
+    if stats.len() >= 2 {
+        for path in export_level_charts(&stats, out)? {
+            println!("grafico: {}", path.display());
+        }
+    } else {
+        println!("graficos omitidos: se necesitan al menos 2 niveles");
+    }
+
+    let ex = build_noise_examples(&ds, &levels, EXAMPLES_NOISE_SEED)?;
+    export_noise_examples(&ex, out)?;
+    println!("ruido: {}/{}", out.display(), NOISE_EXAMPLES_PNG);
+    let paths = export_dae_examples(&ae, &ex, out)?;
+    println!("ejemplos: {} imagenes -> {}", paths.len(), out.display());
     Ok(())
 }
 
@@ -380,7 +400,7 @@ fn main() -> Result<()> {
         Command::Smoke => smoke(),
         Command::Sweep { quick, out, workers } => sweep(quick, &out, workers),
         Command::Ej1a { out } => ej1a(&out),
-        Command::Ej1b { levels } => ej1b(levels),
+        Command::Ej1b { levels, out } => ej1b(levels, &out),
         Command::DaeSweep { quick, out, workers } => dae_sweep(quick, &out, workers),
         Command::Noise { levels, seed, out } => noise(levels, seed, &out),
         Command::Latent { out } => latent(&out),
