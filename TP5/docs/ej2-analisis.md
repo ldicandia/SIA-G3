@@ -13,7 +13,11 @@ emojis: 36 imagenes de 24x24 (576 valores en [0,1], 1 = tinta)
 separacion: minima 7 px, mediana 7.5 px, radio de cercania 8 px
 ```
 
-La distancia entre dos emojis es la cantidad de píxeles en que difieren tras binarizar en 0.5 (distancia de Hamming, la misma regla que usa el reporte del Ej 1). La línea `separacion:` resume la distancia de cada emoji a su vecino más cercano: el par más parecido difiere en 7 píxeles, la mediana es 7.5 y el radio de cercanía se define como la mediana redondeada hacia arriba (8 px). Estos números definen más adelante cuándo una imagen decodificada se considera nueva y reconocible.
+La distancia entre dos emojis es la cantidad de píxeles en que difieren tras binarizar en 0.5 (distancia de Hamming, la misma regla que usa el reporte del Ej 1). La línea `separacion:` resume la distancia de cada emoji a su vecino más cercano: el par más parecido difiere en 7 píxeles, la mediana es 7.5 y el radio de cercanía se define como la mediana redondeada hacia arriba (8 px). Estos números definen únicamente cuándo una imagen decodificada es reconocible (a lo sumo el radio de cercanía de un emoji del dataset); no definen cuándo es nueva, porque la distancia global a un emoji es del mismo orden que el ruido de reconstrucción del propio decodificador (ver más adelante).
+
+El dataset es el producto completo de 6 estilos de ojos por 6 estilos de boca: no existe ninguna combinación de ojos y boca que esté ausente, de modo que un emoji nuevo no puede ser una combinación inédita de estilos conocidos.
+
+La consecuencia es que la novedad solo puede ser una región (los ojos o la boca) que no sea ninguno de los 6 estilos de esa región, y por eso el Ej 2 juzga la novedad por región y no por distancia global a un emoji. Que toda combinación de un estilo de ojos con un estilo de boca ya es una fila del dataset lo comprueba la prueba `every_combination_of_known_styles_is_already_a_dataset_emoji` (`tests/vae_regions.rs`).
 
 La figura `output/ej2/emojis.png` muestra el dataset como un montaje de 6 x 6 con una fila por estilo de ojos y una columna por estilo de boca: se ven las 36 caras con el mismo trazo y los grises de los bordes producidos por el supersampling. Hay que decirlo con claridad: son caras estilo emoji dibujadas en código, no las ilustraciones de los emojis de Unicode de ninguna plataforma.
 
@@ -39,7 +43,7 @@ configuracion: vae-h128x32-l2-s0 | arquitectura: encoder 576-128-32-4 | decoder 
 - **Reconstrucción BCE con salida sigmoide.** Es la receta que convergió en los Ej 1a y 1b. El error cuadrático de la teoría es la otra instancia del mismo -E log p(x|z) (gaussiana en lugar de Bernoulli) y el código lo soporta; se eligió BCE porque los píxeles están en [0, 1] y para mantener una sola receta en todo el trabajo.
 - **Capas ocultas tanh de 128 y 32 neuronas y Adam con tasa 0.003.** Mismas activaciones y optimizador que en los ejercicios anteriores, con una capa más ancha porque las imágenes tienen 576 píxeles en lugar de 35.
 - **Entrenamiento por lote completo** (los 36 emojis en cada paso, con ruido nuevo en cada época), 3000 épocas.
-- **Qué evidencia respalda la elección.** Que la configuración elegida cumple siete comprobaciones explícitas de calidad generativa (sección siguiente y la última de esta sección) y que un autoencoder idéntico sin el esquema variacional, entrenado con los mismos hiperparámetros, no es muestreable (contraste de la sección "Reconstrucción y espacio latente"). No se hizo un estudio de arquitecturas para el Ej 2 porque la consigna no lo pide; la configuración está congelada en el código (`chosen_vae_config`) y las pruebas la verifican con las semillas 0, 1 y 2.
+- **Qué evidencia respalda la elección.** Que la configuración elegida cumple 11 comprobaciones explícitas de calidad generativa (la sección "Reconstrucción y espacio latente" las lista; entre ellas, la ventaja de plausibilidad sobre el autoencoder simple, las combinaciones distintas entre los híbridos y los dos controles negativos) y que un autoencoder idéntico sin el esquema variacional, entrenado con los mismos hiperparámetros, no es muestreable (contraste de la sección "Reconstrucción y espacio latente"). No se hizo un estudio de arquitecturas para el Ej 2 porque la consigna no lo pide; la configuración está congelada en el código (`chosen_vae_config`) y las pruebas la verifican con las semillas 0, 1 y 2.
 
 ## Evolución de la pérdida
 
@@ -87,20 +91,23 @@ Lo que se ve en la imagen: es un mapa de caras sin celdas rotas. El eje z1 (hori
 
 **Contraste con un autoencoder sin esquema variacional.** Para mostrar que el esquema variacional es lo que vuelve muestreable el espacio latente, `ej2` entrena además un autoencoder simple con exactamente la misma arquitectura (latente de 2), optimizador, pérdida, épocas y semilla, pero sin capa estocástica ni término KL. Para ambos modelos se decodifican 1000 puntos z ~ N(0, I) con la misma semilla:
 
+Las definiciones de "cara plausible" y "híbrido plausible" son las de la sección "Generación de un emoji nuevo"; cada modelo se juzga con los pisos de ruido de sus propias reconstrucciones. Las líneas medidas son:
+
 ```
-VAE PRIOR: de 1000 puntos z ~ N(0, I): 74.4 % decodifican a un emoji reconocible (a lo sumo 8 px de un emoji del dataset), 36.1 % a un emoji nuevo (al menos 7 px de todos) y 31.9 % a un emoji nuevo y plausible (a lo sumo 16 px)
-AE simple PRIOR: de 1000 puntos z ~ N(0, I): 23.1 % decodifican a un emoji reconocible (a lo sumo 8 px de un emoji del dataset), 82.2 % a un emoji nuevo (al menos 7 px de todos) y 30.7 % a un emoji nuevo y plausible (a lo sumo 16 px)
-CONTRASTE: puntos z ~ N(0, I) que decodifican a un emoji reconocible: VAE 74.4 % contra autoencoder sin esquema variacional 23.1 % | salto medio entre celdas vecinas: VAE 7.2 px contra 27.5 px | reconstruccion media: VAE 5.19 px contra 4.56 px por emoji
+VAE PRIOR: de 1000 puntos z ~ N(0, I): 74.4 % decodifican a un emoji reconocible (a lo sumo 8 px de un emoji del dataset), 98.2 % a una cara plausible (marco intacto y cada region en un estilo o entre dos), 17.6 % a un hibrido plausible (alguna region fuera del piso de ruido de todos los estilos) en 31 combinaciones distintas
+AE simple PRIOR: de 1000 puntos z ~ N(0, I): 23.1 % decodifican a un emoji reconocible (a lo sumo 8 px de un emoji del dataset), 34.4 % a una cara plausible (marco intacto y cada region en un estilo o entre dos), 16.1 % a un hibrido plausible (alguna region fuera del piso de ruido de todos los estilos) en 13 combinaciones distintas
+CONTRASTE: puntos z ~ N(0, I) que decodifican a un emoji reconocible: VAE 74.4 % contra autoencoder sin esquema variacional 23.1 % | a una cara plausible: VAE 98.2 % contra 34.4 % | a un hibrido plausible: VAE 17.6 % contra 16.1 % | salto medio entre celdas vecinas: VAE 7.2 px contra 27.5 px | reconstruccion media: VAE 5.19 px contra 4.56 px por emoji
 ```
 
 Interpretación:
 
 - El autoencoder simple reconstruye igual de bien o mejor (4.56 px contra 5.19 px por emoji): tener un buen autoencoder no alcanza para poder generar.
-- Pero sus códigos no están distribuidos como N(0, I): al sortear del prior solo el 23.1 % de los puntos cae donde su decoder produce un emoji reconocible, contra el 74.4 % del VAE. El término KL del VAE es lo que acerca las posteriores al prior y así hace que muestrear N(0, I) tenga sentido.
-- El 82.2 % de sorteos "nuevos" del autoencoder simple no es una virtud: casi todos son imágenes rotas, lejos de cualquier emoji. La comparación informativa es la de sorteos reconocibles; la de nuevos y plausibles es parecida en los dos modelos (30.7 % y 31.9 %) y por sí sola no los distingue.
+- Pero sus códigos no están distribuidos como N(0, I): al sortear del prior solo el 23.1 % de los puntos cae donde su decoder produce un emoji reconocible, contra el 74.4 % del VAE, y solo el 34.4 % decodifica a una cara plausible, contra el 98.2 % del VAE. El término KL del VAE es lo que acerca las posteriores al prior y así hace que muestrear N(0, I) tenga sentido.
+- La proporción de sorteos aceptados como híbridos plausibles es prácticamente la misma en los dos modelos (17.6 % del VAE contra 16.1 % del autoencoder simple), de modo que por sí sola no separa al VAE del autoencoder simple; con otra semilla de entrenamiento del VAE puede incluso ser menor (con la semilla 2 es 8.1 %, por debajo del 16.1 % del autoencoder simple). Es la misma debilidad del criterio anterior, cuya proporción de nuevos y plausibles también era casi igual en los dos modelos.
+- Lo que separa a los dos modelos es la plausibilidad: los puntos z ~ N(0, I) caen en su mayoría fuera de la región de códigos que aprendió el autoencoder simple y decodifican a marcos rotos (34.4 % de caras plausibles contra 98.2 %). Por eso los híbridos del autoencoder simple no son evidencia de un buen generador: son una fracción pequeña de un conjunto de sorteos en el que dos tercios ni siquiera son una cara.
 - La grilla del autoencoder simple (`output/ej2/plain_manifold.png`, hecha sobre la caja de sus propios códigos con 10 % de margen) tiene una región de caras razonables arriba y a la izquierda, pero hacia la esquina inferior derecha aparece una zona de imágenes con el fondo negro (invertidas) y celdas casi ilegibles, con bordes duros entre regiones; el salto medio entre celdas vecinas es 27.5 px contra 7.2 px del VAE, que no tiene ninguna celda negra.
 
-**Comprobaciones de aceptación.** El resultado se verifica con siete comprobaciones que el código evalúa y la corrida imprime:
+**Comprobaciones de aceptación.** El resultado se verifica con 11 comprobaciones que el código evalúa y la corrida imprime:
 
 ```
 ACEPTACION OK: reconstruccion media (px por emoji) = 5.194 (umbral <= 12.000)
@@ -108,28 +115,55 @@ ACEPTACION OK: KL final (nats) = 4.395 (umbral >= 1.000)
 ACEPTACION OK: celdas reconocibles de la grilla = 0.671 (umbral >= 0.500)
 ACEPTACION OK: salto medio entre celdas vecinas (px) = 7.181 (umbral <= 12.000)
 ACEPTACION OK: sorteos del prior reconocibles = 0.744 (umbral >= 0.600)
-ACEPTACION OK: sorteos del prior nuevos y plausibles = 0.319 (umbral >= 0.100)
+ACEPTACION OK: sorteos del prior hibridos y plausibles = 0.176 (umbral >= 0.050)
 ACEPTACION OK: ventaja sobre el autoencoder simple (sorteos reconocibles) = 0.513 (umbral >= 0.300)
+ACEPTACION OK: ventaja sobre el autoencoder simple (sorteos plausibles) = 0.638 (umbral >= 0.300)
+ACEPTACION OK: combinaciones distintas entre los hibridos del prior = 31.000 (umbral >= 8.000)
+ACEPTACION OK: control negativo: reconstrucciones del entrenamiento aceptadas como nuevas = 0.000 (umbral <= 0.000)
+ACEPTACION OK: control negativo: muestras de la posterior aceptadas como nuevas = 0.044 (umbral <= 0.100)
 ```
 
-Los umbrales son convenciones de este trabajo, fijadas con margen respecto de lo que logra la configuración y sin ajustarlos para aprobar; las pruebas (`tests/vae_acceptance.rs`) las repiten con las semillas de entrenamiento 0, 1 y 2.
+Los umbrales son convenciones de este trabajo, fijadas con margen respecto de lo que logra la configuración y sin ajustarlos para aprobar; las pruebas (`tests/vae_acceptance.rs`) repiten las comprobaciones con las semillas de entrenamiento 0, 1 y 2. Las dos comprobaciones de control negativo y la de plausibilidad son las que se agregaron para cerrar el hallazgo de la revisión sobre el emoji nuevo, y la comprobación de la tasa de sorteos híbridos reemplazó a la anterior, que el autoencoder simple también cumplía.
 
 ## Generación de un emoji nuevo
 
-**Respuesta a 2c.** Con los números de la línea `separacion:` (mínima 7 px, mediana 7.5 px, radio de cercanía 8 px) se definen tres criterios explícitos sobre la imagen decodificada, siempre con la distancia en píxeles al emoji más cercano del dataset:
+**Respuesta a 2c.** La consigna pide generar un emoji nuevo muestreando el espacio latente y juzgar si pertenece al dataset. Lo difícil es definir "nuevo" de una manera que no se pueda cumplir por accidente. Esta sección cuenta primero qué falló en el primer criterio, después define el criterio actual, lo verifica con un control negativo y termina con lo que los autores ven en la figura.
 
-- **Nuevo:** está a al menos 7 px (la separación mínima del dataset) de los 36 emojis, es decir, no es una copia de ninguno.
-- **Reconocible:** está a lo sumo a 8 px (el radio de cercanía) de algún emoji del dataset.
-- **Plausible:** está a lo sumo a 16 px (el doble del radio) del emoji más cercano, o sea que no es una imagen cualquiera.
+**Por qué se descartó el primer criterio.** La primera versión declaraba nuevo a un emoji decodificado a entre 7 y 16 píxeles de distancia global (Hamming tras binarizar) del emoji más cercano del dataset. Esa banda es del mismo tamaño que el ruido de reconstrucción del propio decodificador: al reconstruir un emoji real del entrenamiento, el VAE falla en promedio 5.19 px y hasta 16 px (línea `RECONSTRUCCION:` de la sección anterior). Por eso reconstrucciones de emojis reales caían dentro de la banda y pasaban por nuevas; el control negativo de más abajo cuenta cuántas (línea `CONTROL NEGATIVO:`). La muestra que se presentaba entonces era una copia degradada de `happy-flat`: la revisión de la figura mostró que la barra de la boca plana quedaba partida en fragmentos porque el decodificador la dibuja más tenue, y esos 8 píxeles de diferencia eran borrosidad y no un diseño distinto. La afirmación de que esa muestra no copiaba ningún emoji del dataset era incorrecta y se retiró.
 
-La muestra presentada es el primer sorteo aceptado (nuevo y plausible) de un flujo de N(0, I) con semilla fija (1514078721), sin ranking ni selección a mano. La búsqueda y las estadísticas del prior dan:
+**Regiones y pisos de ruido.** Como el dataset es el producto completo de ojos por boca, la novedad se mide por región. Las regiones se derivan de los datos: la región de ojos es el conjunto de píxeles que cambian con el estilo de ojos, la de boca los que cambian con el estilo de boca, y el marco los píxeles iguales en los 36 emojis. El piso de ruido de una región es la mayor cantidad de píxeles de esa región que el VAE falla al reconstruir, desde la media de la posterior, los 36 emojis del entrenamiento. La línea medida es:
 
 ```
-EMOJI NUEVO: z=(-1.8367, 0.7242) tras 3 sorteos | emoji mas cercano: happy-flat a 8 px | criterio: a al menos 7 px de todo el dataset y a lo sumo 16 px del mas cercano
-VAE PRIOR: de 1000 puntos z ~ N(0, I): 74.4 % decodifican a un emoji reconocible (a lo sumo 8 px de un emoji del dataset), 36.1 % a un emoji nuevo (al menos 7 px de todos) y 31.9 % a un emoji nuevo y plausible (a lo sumo 16 px)
+REGIONES: ojos 46 px, boca 62 px, marco 468 px | piso de ruido de reconstruccion (maximo sobre los 36 emojis): ojos 3 px, boca 14 px, marco 2 px | separacion minima entre estilos: ojos 7 px, boca 8 px
 ```
 
-Es decir que casi un tercio de los puntos del prior (31.9 %) decodifica a un emoji nuevo y plausible, y el primero aparece al tercer sorteo. La imagen decodificada, binarizada en 0.5 (izquierda), junto a su emoji más cercano del dataset, `happy-flat` (derecha):
+**Definiciones.** Con los números de esa línea:
+
+- El estilo más cercano de una región es el de menor distancia (en los píxeles de esa región) entre los 6 estilos de la región; el prototipo de cada estilo son los píxeles de esa región en una fila del dataset.
+- Una región es *fuera de estilo* si está más lejos que el piso de la región de cada uno de sus 6 estilos: más de 3 px de todos los estilos de ojos, más de 14 px de todos los estilos de boca.
+- La cara es *plausible* si el marco está dentro de su piso (a lo sumo 2 px de diferencia con el marco del dataset) y cada región fuera de estilo queda entre sus dos estilos más cercanos: la distancia al más cercano más la distancia al segundo más cercano es a lo sumo 1.5 veces la distancia entre esos dos estilos.
+- Una muestra se acepta como nueva (un *híbrido*) cuando al menos una región es fuera de estilo y la cara es plausible.
+- El *margen* es cuántos píxeles por encima del piso está la región más fuera de estilo.
+
+**Regla de la galería.** El flujo de N(0, I) tiene semilla fija (1514078721) y se examinan 1000 sorteos. Entre los candidatos (los sorteos aceptados como híbridos) se conserva uno por combinación de (emoji más cercano, estilo de ojos, estilo de boca), el de mayor margen, y se muestran como máximo 8 ordenados por margen; ante un empate gana el sorteo anterior. El emoji principal es entonces el de mayor margen entre combinaciones distintas, elegido por esta regla y no a ojo. La búsqueda dio:
+
+```
+EMOJI NUEVO: z=(1.3701, -1.2836) sorteo 9 de 1000 | emoji mas cercano: x-grin a 25 px (radio de cercania 8 px) | ojos: x a 14 px del estilo mas cercano (piso 3 px), boca: grin a 11 px (piso 14 px) | criterio: alguna region a mas de su piso de ruido de todos los estilos de esa region, con el marco intacto y cada region en un estilo o entre dos
+```
+
+```
+GALERIA: 176 sorteos candidatos de 1000, 31 combinaciones distintas (emoji mas cercano, estilo de ojos, estilo de boca); se muestran 8 ordenadas por margen sobre el piso de ruido
+  nuevo 1: sorteo 9 | emoji mas cercano x-grin a 25 px | ojos x a 14 px | boca grin a 11 px | margen 11 px
+  nuevo 2: sorteo 357 | emoji mas cercano wide-frown a 18 px | ojos wide a 14 px | boca frown a 4 px | margen 11 px
+  nuevo 3: sorteo 852 | emoji mas cercano wide-grin a 27 px | ojos wide a 13 px | boca grin a 14 px | margen 10 px
+  nuevo 4: sorteo 903 | emoji mas cercano x-smile a 12 px | ojos x a 12 px | boca smile a 0 px | margen 9 px
+  nuevo 5: sorteo 842 | emoji mas cercano wide-flat a 19 px | ojos wide a 11 px | boca flat a 8 px | margen 8 px
+  nuevo 6: sorteo 172 | emoji mas cercano wide-smile a 10 px | ojos wide a 10 px | boca smile a 0 px | margen 7 px
+  nuevo 7: sorteo 619 | emoji mas cercano wide-small a 10 px | ojos wide a 10 px | boca small a 0 px | margen 7 px
+  nuevo 8: sorteo 13 | emoji mas cercano dots-grin a 20 px | ojos dots a 2 px | boca grin a 18 px | margen 4 px
+```
+
+La imagen decodificada del emoji principal, binarizada en 0.5 (izquierda), junto a su emoji más cercano del dataset, `x-grin` (derecha). La diferencia de 25 px se reparte entre los ojos (14 px, las cruces de `x` quedan reemplazadas por manchas dispersas) y la boca (11 px, el borde superior de la boca abierta queda fragmentado):
 
 ```
 ........................  ........................
@@ -139,34 +173,54 @@ Es decir que casi un tercio de los puntos del prior (31.9 %) decodifica a un emo
 ....##............##....  ....##............##....
 ...##..............##...  ...##..............##...
 ..##................##..  ..##................##..
-..#..................#..  ..#..................#..
-.##....##......##....##.  .##....##......##....##.
-.#....##.##..##.##....#.  .#....##.##..##.##....#.
+..#.....#......#.....#..  ..#..................#..
+.##...#..#....#..#...##.  .##...##.#....#.##...##.
+.#.....##.#..#.##.....#.  .#.....##......##.....#.
+.#....#.#......#.#....#.  .#.....###....###.....#.
+.#....##.#....#.##....#.  .#....#..#....#..#....#.
 .#....................#.  .#....................#.
-.#....................#.  .#....................#.
-.#....................#.  .#....................#.
-.#....................#.  .#....................#.
-.#....................#.  .#....................#.
-.##..................##.  .##..................##.
-..#.....#....#.#.....#..  ..#.....########.....#..
-..##....#..##.##....##..  ..##....########....##..
-...##..............##...  ...##..............##...
-....##............##....  ....##............##....
+.#.....#.....#..#.....#.  .#....############....#.
+.#....############....#.  .#....############....#.
+.##....##########....##.  .##....##########....##.
+..#....##########....#..  ..#....##########....#..
+..##....########....##..  ..##....########....##..
+...##....######....##...  ...##....######....##...
+....##............##....  ....##.....##.....##....
 .....##..........##.....  .....##..........##.....
 ......###......###......  ......###......###......
 ........########........  ........########........
 ........................  ........................
 ```
 
-La figura `output/ej2/vae_new_emoji.png` muestra, arriba, hasta ocho emojis nuevos tomados en orden del mismo flujo y, abajo, el emoji más cercano de cada uno, con la distancia en píxeles.
+**Control negativo.** Si el criterio aceptara cualquier reconstrucción del decodificador, no probaría nada. Por eso se lo aplica a imágenes que seguro no son nuevas: las reconstrucciones de los emojis del entrenamiento.
 
-**Juicio visual de los autores.** Mirando la imagen, los ocho emojis nuevos se leen como caras de la misma familia: mismo contorno, dos ojos y una boca. El principal combina los ojos de arcos de `happy` con la boca plana de `flat`, y se diferencia de `happy-flat` en la boca: en la versión binarizada la barra horizontal queda partida en fragmentos porque en la imagen decodificada es más tenue (gris por debajo de 0.5 en parte de su largo), y esos píxeles son los 8 de diferencia; los ojos y el contorno coinciden. Entre los demás, el 3 es una mezcla de ojos `wink` con boca `flat` y el 8 es una cara `x` con boca `frown`; varios (2, 4, 5 y 6) están cerca de `dots-grin` (de 14 a 16 px) y se ven casi iguales a ese emoji, con ojos y bordes algo más difusos. Por lo tanto la novedad es real según el criterio numérico pero la diferencia visual con el dataset es sutil: lo nuevo son combinaciones o mezclas de estilos y grises de transición, no un dibujo de otra clase. Es el juicio de los autores y debe leerse junto con la imagen.
+```
+CONTROL NEGATIVO: reconstrucciones de los 36 emojis del entrenamiento aceptadas como nuevas: 0/36 (criterio anterior de banda de pixeles: 12/36) | muestras de la posterior q(z|x), 30 por emoji: 4.4 % aceptadas como nuevas
+```
+
+Se lee así: el criterio actual no acepta ninguna de las 36 reconstrucciones (media de la posterior) de emojis del entrenamiento, mientras que la banda de píxeles que reemplaza aceptaba 12 de esas 36. Ese cero es cierto por construcción: los pisos se miden como el máximo de error sobre esas mismas 36 reconstrucciones, así que ninguna puede superarlos. La evidencia independiente es la segunda mitad de la línea: de las reconstrucciones estocásticas (30 muestras de la posterior q(z|x) por cada emoji, con una semilla propia del control) el 4.4 % se acepta como nueva. Es una proporción pequeña pero no nula, y es unas cuatro veces menor que el 17.6 % de los sorteos del prior que se aceptan como híbridos, de modo que el criterio no acepta cualquier salida del decodificador; tampoco es perfecto, porque una pequeña parte del ruido de reconstrucción lo supera.
+
+La figura `output/ej2/vae_new_emoji.png` muestra, arriba, los 8 emojis de la galería en orden de margen y, abajo, el emoji más cercano de cada uno con su distancia en píxeles. Los ocho son caras de la misma familia que el dataset (mismo contorno, dos ojos y una boca). En siete de ellos los ojos son anillos pequeños de textura moteada; en el octavo son los puntos negros de `dots`.
+
+**Juicio visual de los autores.** Lo que vemos al abrir la figura, entrada por entrada:
+
+- **Entradas 1 y 4** (cercanos `x-grin` y `x-smile`): son las dos claramente distintas de su emoji de abajo, porque las cruces del dataset aparecen reemplazadas por anillos moteados. Aun así, esos anillos moteados se parecen a los ojos `wide` del dataset, de modo que también pueden leerse como una versión ruidosa de ese estilo; lo que sí afirmamos es que, medidos en píxeles, están a más del piso de todos los estilos de ojos.
+- **Entradas 2, 3, 5, 6 y 7** (cercanos `wide-frown`, `wide-grin`, `wide-flat`, `wide-smile` y `wide-small`): solo sutilmente distintas. A este tamaño de figura se confunden a primera vista con el emoji de abajo; la diferencia (de 10 a 14 px en los ojos) está en la textura del anillo, y las bocas coinciden o difieren poco. Se leen como una variante del estilo `wide`, no como un estilo nuevo evidente.
+- **Entrada 8** (cercano `dots-grin`): los ojos son idénticos a los del dataset, y la diferencia es una boca cuya fila superior es gris y más angosta. Es la entrada más débil (margen de 4 px, la única cuya novedad viene solo de la boca) y un lector podría considerarla una copia degradada de `dots-grin`.
+
+En resumen, solo 2 de las 8 entradas se distinguen a simple vista de su emoji más cercano, 5 son sutiles y 1 es dudosa. Casi toda la novedad está en los ojos: en 7 de las 8 filas de la galería los ojos están a 10 px o más del estilo más cercano (el piso es 3 px), y solo en la fila 8 viene de la boca. La región de la boca casi nunca califica porque su piso de ruido (14 px) es mayor que la separación mínima entre estilos de boca vecinos (8 px, ambos números de la línea `REGIONES:`): una boca que mezcla dos estilos vecinos queda a poca distancia de alguno de ellos y es difícil que supere el piso, de modo que casi nunca se detecta como fuera de estilo.
+
+Lo que el criterio no puede mostrar: es una medida relativa al dataset y al ruido de este decodificador, no una medida de qué tan distinto lo percibe una persona; que una región supere el piso de ruido significa que no es el error habitual del VAE al reconstruir, no que sea un estilo de ojos o de boca inventado con valor propio. Este es el juicio de los autores y debe leerse junto con la imagen.
 
 ## Alcance y limitaciones
 
-- El dataset es una construcción de 36 imágenes con dos factores de variación (ojos y boca): los emojis nuevos son combinaciones o mezclas de esos estilos, no tipos de dibujo nuevos.
+- El dataset es una construcción de 36 imágenes con dos factores de variación (ojos y boca) y es el producto completo de 6 por 6: como ninguna combinación de estilos conocidos está ausente, los emojis nuevos no son combinaciones de estilos conocidos sino regiones que son mezclas o variantes de los estilos de una región. Haber tratado como nuevas combinaciones que ya estaban en el dataset fue la causa del hallazgo de la revisión sobre el emoji nuevo.
+- El piso de ruido de la región de boca (14 px) es tan grande como la separación entre estilos vecinos de boca (8 px), así que un híbrido de boca casi nunca es detectable y la novedad está sobre todo en los ojos (7 de las 8 entradas de la galería); los números salen de la línea `REGIONES:`.
+- Los pisos de ruido se miden sobre los mismos 36 emojis con los que se entrena el VAE. Por eso el control con la reconstrucción media da cero por construcción, y la evidencia independiente es el control con reconstrucciones estocásticas, que acepta una proporción pequeña pero no nula (4.4 %).
+- El criterio de novedad sigue siendo una aproximación definida respecto del dataset y del ruido de este decodificador: el juicio final de si un emoji es nuevo es visual y subjetivo, y de las 8 entradas de la galería solo 2 se distinguen a simple vista de su emoji más cercano.
+- La proporción de sorteos aceptados como híbridos no separa al VAE del autoencoder simple (17.6 % contra 16.1 %, y con la semilla 2 es 8.1 %, menor que la del autoencoder simple); lo que los separa es la plausibilidad (98.2 % contra 34.4 %).
 - El tamaño latente está fijado en 2 y no se estudió otra arquitectura, porque la consigna no lo pide; los resultados corresponden a una red elegida con la semilla de entrenamiento 0, y las pruebas repiten las comprobaciones de aceptación con las semillas 0, 1 y 2.
-- Los criterios de novedad, plausibilidad y reconocibilidad son aproximaciones definidas respecto del propio dataset (distancia de Hamming tras binarizar y umbrales derivados de la separación); el juicio final de pertenencia es visual, y los umbrales de aceptación son convenciones de este trabajo.
+- Los criterios de reconocibilidad (radio de cercanía derivado de la separación), de plausibilidad y de novedad (pisos de ruido por región) son aproximaciones definidas respecto del propio dataset, con distancia de Hamming tras binarizar; los umbrales de aceptación son convenciones de este trabajo.
 - En el plano latente persisten saltos bruscos entre estilos (máximo de 32 px entre celdas vecinas, 7.1 % de pares con saltos de más de 24 px), y las decodificaciones son algo más borrosas que los originales: el costo de reconstrucción no baja de unos 89 nats por imagen.
 - No se usó recocido ni ponderación del término KL distinta de 1.
 - El contraste con el autoencoder simple usa una sola arquitectura y una sola semilla; muestra la diferencia para esa configuración y no la generaliza a cualquier autoencoder.

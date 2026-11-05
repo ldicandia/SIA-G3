@@ -5,7 +5,13 @@ use std::sync::OnceLock;
 use tp5::ej2::{dataset_line, run_ej2, separation_line, Ej2Options, Ej2Run};
 use tp5::emoji::format_emojis_side_by_side;
 use tp5::vae::{config_line, loss_summary_line, reconstruction_line, render_loss_table};
-use tp5::vae_eval::{contrast_line, manifold_line, new_emoji_line, prior_line, render_acceptance};
+use tp5::vae_eval::{
+    contrast_line, control_line, manifold_line, new_emoji_line, prior_line, regions_line, render_acceptance,
+    render_gallery,
+};
+
+/// La oracion exacta que el documento debe contener (en una sola linea).
+const IMPOSSIBILITY_SENTENCE: &str = "El dataset es el producto completo de 6 estilos de ojos por 6 estilos de boca: no existe ninguna combinación de ojos y boca que esté ausente, de modo que un emoji nuevo no puede ser una combinación inédita de estilos conocidos.";
 
 fn doc() -> &'static str {
     static DOC: OnceLock<String> = OnceLock::new();
@@ -68,11 +74,42 @@ fn document_contains_reconstruction_manifold_and_contrast_lines() {
 }
 
 #[test]
-fn document_contains_the_new_emoji_and_prior_lines() {
+fn document_contains_the_prior_lines() {
     let run = run();
-    assert_contains("la linea EMOJI NUEVO", &new_emoji_line(&run.search, &run.ds, &run.sep));
     assert_contains("la linea PRIOR del VAE", &prior_line(&run.prior, &run.sep));
     assert_contains("la linea PRIOR del autoencoder simple", &prior_line(&run.plain_prior, &run.sep));
+}
+
+#[test]
+fn document_contains_the_new_emoji_lines() {
+    let run = run();
+    assert_contains("la linea EMOJI NUEVO", &new_emoji_line(&run.search, &run.ds, &run.sep));
+    assert_contains("la linea REGIONES", &regions_line(&run.judge));
+    for line in render_gallery(&run.search, &run.ds).lines() {
+        assert_contains("una linea de la galeria", line);
+    }
+}
+
+#[test]
+fn document_contains_the_negative_control_line() {
+    let run = run();
+    assert_contains("la linea CONTROL NEGATIVO", &control_line(&run.control));
+}
+
+#[test]
+fn document_states_that_new_combinations_are_impossible() {
+    assert_contains("la oracion de imposibilidad de combinaciones nuevas", IMPOSSIBILITY_SENTENCE);
+    assert_contains(
+        "la prueba que respalda la oracion",
+        "every_combination_of_known_styles_is_already_a_dataset_emoji",
+    );
+}
+
+#[test]
+fn document_does_not_claim_novelty_by_pixel_distance() {
+    for obsolete in ["no es una copia de ninguno", "**Nuevo:** está a al menos"] {
+        assert!(!doc().contains(obsolete), "el documento todavia contiene la afirmacion obsoleta: {obsolete}");
+    }
 }
 
 #[test]
@@ -81,8 +118,9 @@ fn document_contains_every_acceptance_line() {
     for line in render_acceptance(&run.checks).lines() {
         assert_contains("una linea de aceptacion", line);
     }
+    assert_eq!(run.checks.len(), 11, "la corrida debe evaluar 11 verificaciones de aceptacion");
     let n = doc().lines().filter(|l| l.starts_with("ACEPTACION OK:")).count();
-    assert_eq!(n, 7, "el documento debe tener exactamente 7 lineas ACEPTACION OK:");
+    assert_eq!(n, run.checks.len(), "el documento debe tener exactamente {} lineas ACEPTACION OK:", run.checks.len());
 }
 
 #[test]
