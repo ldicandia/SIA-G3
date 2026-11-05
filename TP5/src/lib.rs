@@ -1,9 +1,11 @@
 pub mod analysis;
 pub mod autoencoder;
 pub mod data;
+pub mod denoising;
 pub mod experiments;
 pub mod generate;
 pub mod mlp;
+pub mod noise;
 pub mod optimizer;
 pub mod plots;
 pub mod report;

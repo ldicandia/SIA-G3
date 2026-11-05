@@ -10,6 +10,9 @@ use tp5::autoencoder::{ArchSpec, Autoencoder};
 use tp5::analysis::{analyze, export_latent, LATENT_PNG};
 use tp5::experiments::{loss_label, render_comparison_md, run_sweep, sweep_grid, train_chosen, write_sweep_csv};
 use tp5::data::{format_grid, load_font, N_PIXELS};
+use tp5::denoising::{
+    base_dae_config, evaluate_levels, render_level_table, train_dae, DEFAULT_LEVELS, N_EVAL_SAMPLES, TEST_NOISE_SEED,
+};
 use tp5::generate::{export_new_letter, scan_novel, top_candidates, NEW_LETTER_PNG, NOVELTY_MIN_HAMMING};
 use tp5::mlp::{Activation, Loss};
 use tp5::plots::write_study_curves;
@@ -47,6 +50,8 @@ enum Command {
         #[arg(long, default_value = DEFAULT_OUT)]
         out: PathBuf,
     },
+    /// Entrena el Denoising Autoencoder (entrada ruidosa, objetivo limpio) y mide el ruido que elimina
+    Ej1b,
     /// Grafica los 32 patrones en el plano latente de 2 dimensiones (PNG y CSV)
     Latent {
         /// Directorio de salida
@@ -252,12 +257,37 @@ fn generate(point: Option<Vec<f64>>, steps: usize, out: &Path) -> Result<()> {
     new_letter_block(&ae, &ds, out, point, steps)
 }
 
+fn ej1b() -> Result<()> {
+    let ds = load_font()?;
+    let cfg = base_dae_config();
+    let (ae, _history) = train_dae(&ds, &cfg);
+    let stats = evaluate_levels(&ae, &ds.x, &DEFAULT_LEVELS, N_EVAL_SAMPLES, TEST_NOISE_SEED);
+    println!("== Ej 1b: Denoising Autoencoder (entrada ruidosa -> objetivo limpio) ==");
+    println!(
+        "configuracion: {} | arquitectura: {} | optimizador: {} | perdida: {} | epocas: {} | copias por epoca: {} | ruido de entrenamiento: {} | semilla: {}",
+        cfg.name,
+        ae.sizes_label(),
+        cfg.optimizer.label(),
+        loss_label(&cfg.loss),
+        cfg.epochs,
+        cfg.copies,
+        cfg.train_noise.label(),
+        cfg.seed
+    );
+    println!(
+        "evaluacion: {N_EVAL_SAMPLES} distorsiones no vistas por patron y por nivel (semilla de prueba {TEST_NOISE_SEED})"
+    );
+    println!("{}", render_level_table(&stats));
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
         Command::Smoke => smoke(),
         Command::Sweep { quick, out, workers } => sweep(quick, &out, workers),
         Command::Ej1a { out } => ej1a(&out),
+        Command::Ej1b => ej1b(),
         Command::Latent { out } => latent(&out),
         Command::Generate { point, steps, out } => generate(point, steps, &out),
     }
