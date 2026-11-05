@@ -281,3 +281,90 @@ pub fn write_study_curves(out_dir: &Path, results: &[ExperimentResult]) -> Resul
     }
     Ok(written)
 }
+
+/// Una fila de `plot_pattern_rows`: etiqueta a la izquierda y celdas `(pie, patron)` lado a lado.
+#[derive(Debug, Clone)]
+pub struct PatternRow {
+    pub label: String,
+    pub cells: Vec<(String, Array1<f64>)>,
+}
+
+/// Geometria de `plot_pattern_rows` (en pixeles).
+const ROWS_SQUARE: i32 = 28;
+const ROWS_TITLE_H: i32 = 50;
+const ROWS_LABEL_W: i32 = 260;
+const ROWS_CAPTION_H: i32 = 26;
+const ROWS_GAP_X: i32 = 24;
+const ROWS_GAP_Y: i32 = 14;
+const ROWS_MARGIN: i32 = 20;
+
+/// Dibuja un PNG con un titulo centrado arriba y una banda por fila: la etiqueta de la fila en una
+/// columna de 260 px a la izquierda y sus patrones de 7 x 5 (cuadrados de 28 px, negros si el valor
+/// es al menos 0.5) lado a lado, cada uno con su pie centrado debajo.
+pub fn plot_pattern_rows(path: &Path, title: &str, rows: &[PatternRow]) -> Result<()> {
+    use crate::data::{COLS, N_PIXELS, ROWS};
+    if rows.is_empty() {
+        bail!("no hay filas de patrones para graficar");
+    }
+    let n_cells = rows[0].cells.len();
+    if n_cells == 0 {
+        bail!("la fila '{}' no tiene patrones", rows[0].label);
+    }
+    for r in rows {
+        if r.cells.is_empty() {
+            bail!("la fila '{}' no tiene patrones", r.label);
+        }
+        if r.cells.len() != n_cells {
+            bail!("la fila '{}' tiene {} patrones y se esperaban {n_cells}", r.label, r.cells.len());
+        }
+        if let Some((cap, _)) = r.cells.iter().find(|(_, p)| p.len() != N_PIXELS) {
+            bail!("el patron '{cap}' de la fila '{}' no tiene {N_PIXELS} pixeles", r.label);
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("no se pudo crear {}", parent.display()))?;
+    }
+
+    let grid_w = COLS as i32 * ROWS_SQUARE;
+    let grid_h = ROWS as i32 * ROWS_SQUARE;
+    let band_h = grid_h + ROWS_CAPTION_H;
+    let n_rows = rows.len() as i32;
+    let n = n_cells as i32;
+    let width = ROWS_MARGIN + ROWS_LABEL_W + n * grid_w + (n - 1) * ROWS_GAP_X + ROWS_MARGIN;
+    let height = ROWS_TITLE_H + n_rows * band_h + (n_rows - 1) * ROWS_GAP_Y + ROWS_MARGIN;
+
+    let root = BitMapBackend::new(path, (width as u32, height as u32)).into_drawing_area();
+    root.fill(&WHITE).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let outline = RGBColor(200, 200, 200);
+    let title_style = ("sans-serif", 28).into_font().color(&BLACK).pos(Pos::new(HPos::Center, VPos::Center));
+    let label_style = ("sans-serif", 20).into_font().color(&BLACK).pos(Pos::new(HPos::Left, VPos::Center));
+    let caption_style = ("sans-serif", 16).into_font().color(&BLACK).pos(Pos::new(HPos::Center, VPos::Top));
+    root.draw(&Text::new(title.to_string(), (width / 2, ROWS_TITLE_H / 2), title_style))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    for (ri, row) in rows.iter().enumerate() {
+        let y0 = ROWS_TITLE_H + ri as i32 * (band_h + ROWS_GAP_Y);
+        root.draw(&Text::new(row.label.clone(), (ROWS_MARGIN, y0 + grid_h / 2), label_style.clone()))
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        for (ci, (caption, pattern)) in row.cells.iter().enumerate() {
+            let x0 = ROWS_MARGIN + ROWS_LABEL_W + ci as i32 * (grid_w + ROWS_GAP_X);
+            for r in 0..ROWS {
+                for c in 0..COLS {
+                    let (px, py) = (x0 + c as i32 * ROWS_SQUARE, y0 + r as i32 * ROWS_SQUARE);
+                    let corners = [(px, py), (px + ROWS_SQUARE, py + ROWS_SQUARE)];
+                    if pattern[r * COLS + c] >= 0.5 {
+                        root.draw(&Rectangle::new(corners, BLACK.filled())).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    } else {
+                        root.draw(&Rectangle::new(corners, WHITE.filled())).map_err(|e| anyhow::anyhow!("{e}"))?;
+                        root.draw(&Rectangle::new(corners, outline.stroke_width(1)))
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    }
+                }
+            }
+            root.draw(&Text::new(caption.clone(), (x0 + grid_w / 2, y0 + grid_h + 4), caption_style.clone()))
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+    }
+    root.present().map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(())
+}

@@ -9,6 +9,9 @@ use rand_chacha::ChaCha8Rng;
 use tp5::autoencoder::{ArchSpec, Autoencoder};
 use tp5::analysis::{analyze, export_latent, LATENT_PNG};
 use tp5::experiments::{loss_label, render_comparison_md, run_sweep, sweep_grid, train_chosen, write_sweep_csv};
+use tp5::dae_figures::{
+    build_noise_examples, export_noise_examples, format_grids_side_by_side, EXAMPLES_NOISE_SEED, NOISE_EXAMPLES_PNG,
+};
 use tp5::data::{format_grid, load_font, N_PIXELS};
 use tp5::denoising::{
     base_dae_config, evaluate_levels, max_level_line, render_level_table, train_dae, DEFAULT_LEVELS, N_EVAL_SAMPLES,
@@ -58,6 +61,18 @@ enum Command {
         #[arg(long, value_delimiter = ',', allow_negative_numbers = true)]
         levels: Option<Vec<f64>>,
     },
+    /// Muestra letras distorsionadas a cada nivel de ruido (texto y PNG), sin entrenar nada
+    Noise {
+        /// Niveles de ruido (probabilidad de invertir cada pixel, entre 0.0 y 0.5), separados por comas
+        #[arg(long, value_delimiter = ',', allow_negative_numbers = true)]
+        levels: Option<Vec<f64>>,
+        /// Semilla del ruido de los ejemplos
+        #[arg(long, default_value_t = EXAMPLES_NOISE_SEED)]
+        seed: u64,
+        /// Directorio de salida
+        #[arg(long, default_value = EJ1B_OUT)]
+        out: PathBuf,
+    },
     /// Grafica los 32 patrones en el plano latente de 2 dimensiones (PNG y CSV)
     Latent {
         /// Directorio de salida
@@ -83,6 +98,9 @@ const DEFAULT_STEPS: usize = 81;
 
 /// Directorio de salida por defecto del Ej 1a.
 const DEFAULT_OUT: &str = "output/ej1a";
+
+/// Directorio de salida por defecto del Ej 1b.
+const EJ1B_OUT: &str = "output/ej1b";
 const SWEEP_CSV: &str = "sweep.csv";
 const COMPARISON_MD: &str = "comparison.md";
 const REPORT_CSV: &str = "report.csv";
@@ -289,6 +307,24 @@ fn ej1b(levels: Option<Vec<f64>>) -> Result<()> {
     Ok(())
 }
 
+fn noise(levels: Option<Vec<f64>>, seed: u64, out: &Path) -> Result<()> {
+    let levels = validate_levels(&levels.unwrap_or_else(|| DEFAULT_LEVELS.to_vec()))?;
+    let ds = load_font()?;
+    let ex = build_noise_examples(&ds, &levels, seed)?;
+    let rows = |m: &ndarray::Array2<f64>| m.rows().into_iter().map(|r| r.to_owned()).collect::<Vec<_>>();
+    println!("originales:");
+    println!("{}", format_grids_side_by_side(&rows(&ex.clean)));
+    for (i, &level) in ex.levels.iter().enumerate() {
+        let counts: Vec<String> =
+            ex.labels.iter().zip(ex.inverted_pixels(i)).map(|(l, k)| format!("{l}={k}")).collect();
+        println!("nivel {level:.2} | pixeles invertidos: {}", counts.join(" "));
+        println!("{}", format_grids_side_by_side(&rows(&ex.noisy[i])));
+    }
+    export_noise_examples(&ex, out)?;
+    println!("ejemplos de ruido -> {}/{}", out.display(), NOISE_EXAMPLES_PNG);
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
@@ -296,6 +332,7 @@ fn main() -> Result<()> {
         Command::Sweep { quick, out, workers } => sweep(quick, &out, workers),
         Command::Ej1a { out } => ej1a(&out),
         Command::Ej1b { levels } => ej1b(levels),
+        Command::Noise { levels, seed, out } => noise(levels, seed, &out),
         Command::Latent { out } => latent(&out),
         Command::Generate { point, steps, out } => generate(point, steps, &out),
     }
