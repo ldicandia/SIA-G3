@@ -34,12 +34,13 @@ use tp5::vae::{
     standard_normal_matrix, train_vae, validate_epochs, SAMPLE_SEED,
 };
 use tp5::vae_eval::{
-    decode_grid, manifold_line, manifold_metrics, validate_grid, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
+    acceptance_checks, contrast_line, decode_grid, manifold_line, manifold_metrics, plain_grid_points, render_acceptance,
+    train_plain_ae, validate_grid, Contrast, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
     new_emoji_line, prior_line, prior_stats, search_new_emoji, validate_draws, DEFAULT_DRAWS,
 };
 use tp5::vae_figures::{
     export_emoji_montage, export_loss_chart, export_manifold, export_new_emoji, export_reconstruction, write_loss_csv,
-    LOSS_CSV, MANIFOLD_PNG,
+    export_plain_manifold, LOSS_CSV, MANIFOLD_PNG, PLAIN_MANIFOLD_PNG,
     NEW_EMOJI_PNG, RECON_PNG,
 };
 
@@ -166,6 +167,21 @@ enum Command {
         /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
         #[arg(long)]
         epochs: Option<usize>,
+        /// Directorio de salida
+        #[arg(long, default_value = EJ2_OUT)]
+        out: PathBuf,
+    },
+    /// Contrasta el VAE con un autoencoder simple igual pero sin esquema variacional y verifica la aceptacion
+    VaeBaseline {
+        /// Lado de la grilla (entre 3 y 41)
+        #[arg(long, default_value_t = GRID_SIDE_DEFAULT)]
+        grid: usize,
+        /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
+        #[arg(long)]
+        epochs: Option<usize>,
+        /// Semilla del flujo de sorteos del prior
+        #[arg(long, default_value_t = SAMPLE_SEED)]
+        seed: u64,
         /// Directorio de salida
         #[arg(long, default_value = EJ2_OUT)]
         out: PathBuf,
@@ -569,6 +585,58 @@ fn vae_manifold(grid: usize, epochs: Option<usize>, out: &Path) -> Result<()> {
     Ok(())
 }
 
+fn vae_baseline(grid: usize, epochs: Option<usize>, seed: u64, out: &Path) -> Result<()> {
+    let grid = validate_grid(grid)?;
+    let mut cfg = chosen_vae_config();
+    if let Some(n) = epochs {
+        cfg.epochs = validate_epochs(n)?;
+    }
+    let ds = build_emojis();
+    let (model, hist) = train_vae(&ds, &cfg)?;
+    let plain = train_plain_ae(&ds, &cfg);
+    let sep = separation(&ds);
+    println!("== Ej 2: contraste del VAE con un autoencoder sin esquema variacional ==");
+    println!("{}", config_line(&cfg, &model));
+    println!("autoencoder simple: arquitectura {} | mismos optimizador, perdida, epocas y semilla", plain.sizes_label());
+    println!("{}", separation_line(&sep));
+
+    let vae_decode = |z: &ndarray::Array2<f64>| model.decode(z);
+    let plain_decode = |z: &ndarray::Array2<f64>| plain.decode(z);
+    let latent_dim = cfg.spec.latent_dim;
+    let vae_prior = prior_stats(&vae_decode, latent_dim, &ds, &sep, seed, DEFAULT_DRAWS);
+    let plain_prior = prior_stats(&plain_decode, latent_dim, &ds, &sep, seed, DEFAULT_DRAWS);
+    println!("VAE {}", prior_line(&vae_prior, &sep));
+    println!("AE simple {}", prior_line(&plain_prior, &sep));
+
+    let vae_grid_img = decode_grid(&model, grid, GRID_HALF_RANGE);
+    let vae_grid = manifold_metrics(&vae_grid_img, grid, &ds, &sep);
+    let plain_grid_img = plain.decode(&plain_grid_points(&plain, &ds, grid));
+    let plain_grid = manifold_metrics(&plain_grid_img, grid, &ds, &sep);
+
+    let recon = reconstruction_summary(&model, &ds);
+    let plain_counts = wrong_pixel_counts(&ds.x, &plain.reconstruct(&ds.x));
+    let plain_recon_mean = plain_counts.iter().sum::<usize>() as f64 / plain_counts.len() as f64;
+    let contrast = Contrast {
+        vae_prior: vae_prior.clone(),
+        plain_prior: plain_prior.clone(),
+        vae_grid: vae_grid.clone(),
+        plain_grid,
+        vae_recon_mean: recon.mean_wrong,
+        plain_recon_mean,
+    };
+    println!("{}", contrast_line(&contrast));
+
+    export_plain_manifold(&plain_grid_img, grid, out)?;
+    println!("contraste: {}/{PLAIN_MANIFOLD_PNG}", out.display());
+
+    let checks = acceptance_checks(&recon, &hist, &vae_grid, &vae_prior, &plain_prior, &sep);
+    println!("{}", render_acceptance(&checks));
+    if checks.iter().any(|c| !c.pass) {
+        bail!("fallaron {} verificaciones de aceptacion", checks.iter().filter(|c| !c.pass).count());
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
@@ -584,5 +652,6 @@ fn main() -> Result<()> {
         Command::Vae { epochs, seed, out } => vae(epochs, seed, &out),
         Command::VaeSample { draws, seed, epochs, out } => vae_sample(draws, seed, epochs, &out),
         Command::VaeManifold { grid, epochs, out } => vae_manifold(grid, epochs, &out),
+        Command::VaeBaseline { grid, epochs, seed, out } => vae_baseline(grid, epochs, seed, &out),
     }
 }

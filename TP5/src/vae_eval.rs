@@ -6,8 +6,10 @@ use ndarray::{Array1, Array2, ArrayView1};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-use crate::emoji::{hamming, nearest_emoji, EmojiDataset, Separation};
-use crate::vae::{standard_normal_matrix, Vae};
+use crate::autoencoder::{train, Autoencoder, TrainConfig};
+use crate::emoji::{hamming, nearest_emoji, EmojiDataset, Separation, EMOJI_PIXELS};
+use crate::report::TOLERANCE_PX;
+use crate::vae::{standard_normal_matrix, ReconSummary, Vae, VaeConfig, VaeHistory};
 
 /// Un emoji es plausible si esta a lo sumo `PLAUSIBLE_FACTOR` veces el radio de cercania del mas cercano.
 pub const PLAUSIBLE_FACTOR: usize = 2;
@@ -283,4 +285,135 @@ pub fn manifold_line(m: &GridMetrics, sep: &Separation) -> String {
         LARGE_STEP_FACTOR * sep.near_radius,
         100.0 * m.large_step_frac
     )
+}
+
+// Umbrales de aceptacion: convenciones de este trabajo calibradas con margen, documentadas y no
+// ajustadas para aprobar.
+pub const MAX_MEAN_WRONG_PX: f64 = 12.0;
+pub const MIN_KL: f64 = 1.0;
+pub const MIN_GRID_RECOGNIZABLE: f64 = 0.5;
+pub const MAX_ADJACENT_FACTOR: f64 = 1.5;
+pub const MIN_PRIOR_RECOGNIZABLE: f64 = 0.6;
+pub const MIN_NEW_RATE: f64 = 0.10;
+pub const MIN_CONTRAST_GAP: f64 = 0.3;
+
+/// Autoencoder simple con la misma arquitectura, optimizador, perdida, epocas y semilla que el VAE,
+/// pero sin capa estocastica ni termino KL.
+pub fn train_plain_ae(ds: &EmojiDataset, cfg: &VaeConfig) -> Autoencoder {
+    let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
+    let mut ae = Autoencoder::new(&cfg.spec, EMOJI_PIXELS, &mut rng);
+    let tcfg = TrainConfig { epochs: cfg.epochs, eval_every: cfg.epochs, tolerance_px: TOLERANCE_PX, early_stop: false };
+    train(&mut ae, &ds.x, &ds.x, cfg.recon, &cfg.optimizer, &tcfg);
+    ae
+}
+
+/// Puntos de una grilla `side x side` sobre la caja de los codigos de entrenamiento del autoencoder
+/// simple, con 10 % del rango de cada eje de margen a cada lado, en el orden y la orientacion de
+/// `latent_grid` (z1 crece hacia la derecha, z2 decrece hacia abajo).
+pub fn plain_grid_points(ae: &Autoencoder, ds: &EmojiDataset, side: usize) -> Array2<f64> {
+    let codes = ae.encode(&ds.x);
+    let mut lo = [f64::INFINITY; 2];
+    let mut hi = [f64::NEG_INFINITY; 2];
+    for row in codes.rows() {
+        for a in 0..2 {
+            lo[a] = lo[a].min(row[a]);
+            hi[a] = hi[a].max(row[a]);
+        }
+    }
+    let pad = [0.1 * (hi[0] - lo[0]), 0.1 * (hi[1] - lo[1])];
+    let (x0, x1) = (lo[0] - pad[0], hi[0] + pad[0]);
+    let (y0, y1) = (lo[1] - pad[1], hi[1] + pad[1]);
+    let denom = (side - 1) as f64;
+    let mut g = Array2::zeros((side * side, 2));
+    for r in 0..side {
+        for c in 0..side {
+            g[[r * side + c, 0]] = x0 + (x1 - x0) * c as f64 / denom;
+            g[[r * side + c, 1]] = y1 - (y1 - y0) * r as f64 / denom;
+        }
+    }
+    g
+}
+
+#[derive(Debug, Clone)]
+pub struct Contrast {
+    pub vae_prior: PriorStats,
+    pub plain_prior: PriorStats,
+    pub vae_grid: GridMetrics,
+    pub plain_grid: GridMetrics,
+    pub vae_recon_mean: f64,
+    pub plain_recon_mean: f64,
+}
+
+pub fn contrast_line(c: &Contrast) -> String {
+    format!(
+        "CONTRASTE: puntos z ~ N(0, I) que decodifican a un emoji reconocible: VAE {:.1} % contra autoencoder sin esquema variacional {:.1} % | salto medio entre celdas vecinas: VAE {:.1} px contra {:.1} px | reconstruccion media: VAE {:.2} px contra {:.2} px por emoji",
+        100.0 * c.vae_prior.recognizable_frac,
+        100.0 * c.plain_prior.recognizable_frac,
+        c.vae_grid.mean_adjacent_step,
+        c.plain_grid.mean_adjacent_step,
+        c.vae_recon_mean,
+        c.plain_recon_mean
+    )
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AcceptanceCheck {
+    pub name: &'static str,
+    pub value: f64,
+    pub threshold: f64,
+    /// `true`: el valor debe ser al menos el umbral; `false`: a lo sumo.
+    pub at_least: bool,
+    pub pass: bool,
+}
+
+fn check(name: &'static str, value: f64, threshold: f64, at_least: bool) -> AcceptanceCheck {
+    let pass = if at_least { value >= threshold } else { value <= threshold };
+    AcceptanceCheck { name, value, threshold, at_least, pass }
+}
+
+/// Las siete verificaciones de aceptacion del resultado generativo, en orden fijo.
+pub fn acceptance_checks(
+    recon: &ReconSummary,
+    history: &VaeHistory,
+    grid: &GridMetrics,
+    prior: &PriorStats,
+    plain_prior: &PriorStats,
+    sep: &Separation,
+) -> Vec<AcceptanceCheck> {
+    vec![
+        check("reconstruccion media (px por emoji)", recon.mean_wrong, MAX_MEAN_WRONG_PX, false),
+        check("KL final (nats)", history.kl.last().copied().unwrap_or(0.0), MIN_KL, true),
+        check("celdas reconocibles de la grilla", grid.recognizable_frac, MIN_GRID_RECOGNIZABLE, true),
+        check(
+            "salto medio entre celdas vecinas (px)",
+            grid.mean_adjacent_step,
+            MAX_ADJACENT_FACTOR * sep.near_radius as f64,
+            false,
+        ),
+        check("sorteos del prior reconocibles", prior.recognizable_frac, MIN_PRIOR_RECOGNIZABLE, true),
+        check("sorteos del prior nuevos y plausibles", prior.new_plausible_frac, MIN_NEW_RATE, true),
+        check(
+            "ventaja sobre el autoencoder simple (sorteos reconocibles)",
+            prior.recognizable_frac - plain_prior.recognizable_frac,
+            MIN_CONTRAST_GAP,
+            true,
+        ),
+    ]
+}
+
+pub fn render_acceptance(checks: &[AcceptanceCheck]) -> String {
+    checks
+        .iter()
+        .map(|c| {
+            format!(
+                "ACEPTACION {}: {} = {:.3} (umbral {} {:.3})",
+                if c.pass { "OK" } else { "FALLA" },
+                c.name,
+                c.value,
+                if c.at_least { ">=" } else { "<=" },
+                c.threshold
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

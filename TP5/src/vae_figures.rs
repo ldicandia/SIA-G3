@@ -174,3 +174,13 @@ pub fn export_manifold(decoded: &Array2<f64>, side: usize, out_dir: &Path) -> Re
     write_grid_png(decoded, side, &path, &title)?;
     Ok(path)
 }
+
+pub const PLAIN_MANIFOLD_PNG: &str = "plain_manifold.png";
+
+/// Escribe `plain_manifold.png`: igual que `export_manifold` para el autoencoder sin esquema variacional.
+pub fn export_plain_manifold(decoded: &Array2<f64>, side: usize, out_dir: &Path) -> Result<PathBuf> {
+    let path = out_dir.join(PLAIN_MANIFOLD_PNG);
+    let title = format!("Ej 2 - autoencoder sin esquema variacional: grilla {side}x{side} sobre la caja de sus codigos");
+    write_grid_png(decoded, side, &path, &title)?;
+    Ok(path)
+}
