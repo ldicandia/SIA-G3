@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
+use ndarray::Array1;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
@@ -175,6 +176,57 @@ pub fn plot_latent_scatter(path: &Path, points: &[(String, f64, f64)]) -> Result
     chart
         .draw_series(points.iter().map(|(l, x, y)| Text::new(l.clone(), (*x, *y), label_style.clone())))
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+    root.present().map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(())
+}
+
+/// Lado en pixeles de cada celda de `plot_pattern_grid` y margen exterior.
+const CELL: i32 = 40;
+const MARGIN: i32 = 40;
+
+/// Dibuja los items lado a lado: cada uno es una grilla de 7 filas x 5 columnas de celdas de 40 px
+/// (negra si el valor es al menos 0.5, blanca con borde gris claro si no) con su titulo centrado
+/// debajo. Se reutiliza en la Fase 2 para las figuras del denoising.
+pub fn plot_pattern_grid(path: &Path, items: &[(String, Array1<f64>)]) -> Result<()> {
+    use crate::data::{COLS, N_PIXELS, ROWS};
+    if items.is_empty() {
+        bail!("no hay patrones para graficar");
+    }
+    if let Some((t, _)) = items.iter().find(|(_, p)| p.len() != N_PIXELS) {
+        bail!("el patron '{t}' no tiene {N_PIXELS} pixeles");
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("no se pudo crear {}", parent.display()))?;
+    }
+    let grid_w = COLS as i32 * CELL;
+    let grid_h = ROWS as i32 * CELL;
+    let width = MARGIN + items.len() as i32 * (grid_w + MARGIN);
+    let title_h = 40;
+    let height = MARGIN + grid_h + title_h + MARGIN;
+
+    let root = BitMapBackend::new(path, (width as u32, height as u32)).into_drawing_area();
+    root.fill(&WHITE).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let outline = RGBColor(200, 200, 200);
+    let title_style = ("sans-serif", 22).into_font().color(&BLACK).pos(Pos::new(HPos::Center, VPos::Top));
+    for (k, (title, pattern)) in items.iter().enumerate() {
+        let x0 = MARGIN + k as i32 * (grid_w + MARGIN);
+        let y0 = MARGIN;
+        for r in 0..ROWS {
+            for c in 0..COLS {
+                let (px, py) = (x0 + c as i32 * CELL, y0 + r as i32 * CELL);
+                let on = pattern[r * COLS + c] >= 0.5;
+                let corners = [(px, py), (px + CELL, py + CELL)];
+                if on {
+                    root.draw(&Rectangle::new(corners, BLACK.filled())).map_err(|e| anyhow::anyhow!("{e}"))?;
+                } else {
+                    root.draw(&Rectangle::new(corners, WHITE.filled())).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    root.draw(&Rectangle::new(corners, outline.stroke_width(1))).map_err(|e| anyhow::anyhow!("{e}"))?;
+                }
+            }
+        }
+        root.draw(&Text::new(title.clone(), (x0 + grid_w / 2, y0 + grid_h + 8), title_style.clone()))
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
     root.present().map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }

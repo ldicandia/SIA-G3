@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod autoencoder;
 pub mod data;
 pub mod experiments;
+pub mod generate;
 pub mod mlp;
 pub mod optimizer;
 pub mod plots;

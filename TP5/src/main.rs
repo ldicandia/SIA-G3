@@ -10,6 +10,7 @@ use tp5::autoencoder::{ArchSpec, Autoencoder};
 use tp5::analysis::{analyze, export_latent, LATENT_PNG};
 use tp5::experiments::{loss_label, render_comparison_md, run_sweep, sweep_grid, train_chosen, write_sweep_csv};
 use tp5::data::{format_grid, load_font, N_PIXELS};
+use tp5::generate::{export_new_letter, scan_novel, top_candidates, NEW_LETTER_PNG, NOVELTY_MIN_HAMMING};
 use tp5::mlp::{Activation, Loss};
 use tp5::plots::write_study_curves;
 use tp5::optimizer::OptimizerKind;
@@ -52,7 +53,22 @@ enum Command {
         #[arg(long, default_value = DEFAULT_OUT)]
         out: PathBuf,
     },
+    /// Decodifica un punto del plano latente que no es un patron de entrenamiento (letra nueva)
+    Generate {
+        /// Punto latente Z1 Z2 a decodificar (por defecto se busca uno automaticamente)
+        #[arg(long, num_args = 2, value_names = ["Z1", "Z2"], allow_negative_numbers = true)]
+        point: Option<Vec<f64>>,
+        /// Lado de la grilla del barrido automatico
+        #[arg(long, default_value_t = DEFAULT_STEPS)]
+        steps: usize,
+        /// Directorio de salida
+        #[arg(long, default_value = DEFAULT_OUT)]
+        out: PathBuf,
+    },
 }
+
+/// Lado por defecto de la grilla de barrido para buscar la letra nueva.
+const DEFAULT_STEPS: usize = 81;
 
 /// Directorio de salida por defecto del Ej 1a.
 const DEFAULT_OUT: &str = "output/ej1a";
@@ -156,11 +172,14 @@ fn ej1a(out: &Path) -> Result<()> {
     );
     println!("{}", res.report.render_table());
     println!("{}", res.report.result_line());
-    let codes = ae.encode(&ds.x);
-    let analysis = analyze(&ds.labels, &ds.x, &codes, &res.report, &res.history);
+    let train_codes = ae.encode(&ds.x);
+    let analysis = analyze(&ds.labels, &ds.x, &train_codes, &res.report, &res.history);
     println!("{}", analysis.render());
     write_report_csv(&out.join(REPORT_CSV), &res.report)?;
-    Ok(())
+    println!("reporte: 32 patrones -> {}/{}", out.display(), REPORT_CSV);
+    let codes = export_latent(&ae, &ds, out)?;
+    print_latent(&ds, &codes, out);
+    new_letter_block(&ae, &ds, out, None, DEFAULT_STEPS)
 }
 
 /// Imprime la tabla de codigos latentes y la linea final `latente: ...`.
@@ -180,6 +199,59 @@ fn latent(out: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Genera la letra nueva (automatica o del punto dado), escribe `new_letter.png` e imprime el
+/// bloque con coordenadas, grilla, letra mas cercana y veredicto.
+fn new_letter_block(
+    ae: &Autoencoder,
+    ds: &tp5::data::Dataset,
+    out: &Path,
+    point: Option<[f64; 2]>,
+    steps: usize,
+) -> Result<()> {
+    let letter = export_new_letter(ae, ds, out, point, steps)?;
+    println!("punto latente: ({:.4}, {:.4})", letter.z[0], letter.z[1]);
+    println!("{}", format_grid(letter.pattern.view()));
+    println!(
+        "letra mas cercana del entrenamiento: {} (distancia Hamming {})",
+        letter.nearest_label, letter.min_hamming
+    );
+    let verdict = if letter.min_hamming >= NOVELTY_MIN_HAMMING {
+        "LETRA NUEVA"
+    } else if letter.min_hamming == 1 {
+        "CASI IGUAL"
+    } else {
+        "COINCIDE"
+    };
+    let detail = match verdict {
+        "LETRA NUEVA" => "difiere de los 32 patrones de entrenamiento en al menos 2 pixeles".to_string(),
+        "CASI IGUAL" => "difiere en 1 pixel de un patron (dentro de la tolerancia, no cuenta como nueva)".to_string(),
+        _ => "coincide con un patron de entrenamiento".to_string(),
+    };
+    println!("{verdict}: {detail}; distancia latente al codigo de entrenamiento mas cercano {:.4}", letter.latent_distance);
+    if point.is_none() {
+        let cands = scan_novel(ae, ds, steps, 0.1);
+        for c in top_candidates(&cands, 5).into_iter().filter(|c| c.z != letter.z).take(4) {
+            println!(
+                "otros candidatos: ({:.4}, {:.4}) | mas cercana: {} (Hamming {})\n{}",
+                c.z[0],
+                c.z[1],
+                c.nearest_label,
+                c.min_hamming,
+                format_grid(c.pattern.view())
+            );
+        }
+    }
+    println!("letra nueva -> {}/{}", out.display(), NEW_LETTER_PNG);
+    Ok(())
+}
+
+fn generate(point: Option<Vec<f64>>, steps: usize, out: &Path) -> Result<()> {
+    let ds = load_font()?;
+    let (ae, _) = train_chosen(&ds);
+    let point = point.map(|p| [p[0], p[1]]);
+    new_letter_block(&ae, &ds, out, point, steps)
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
@@ -187,5 +259,6 @@ fn main() -> Result<()> {
         Command::Sweep { quick, out, workers } => sweep(quick, &out, workers),
         Command::Ej1a { out } => ej1a(&out),
         Command::Latent { out } => latent(&out),
+        Command::Generate { point, steps, out } => generate(point, steps, &out),
     }
 }
