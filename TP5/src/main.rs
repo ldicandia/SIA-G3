@@ -1,9 +1,13 @@
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use tp5::autoencoder::{ArchSpec, Autoencoder};
+use tp5::experiments::{render_comparison_md, run_sweep, sweep_grid, write_sweep_csv};
 use tp5::data::{format_grid, load_font, N_PIXELS};
 use tp5::mlp::{Activation, Loss};
 use tp5::optimizer::OptimizerKind;
@@ -22,6 +26,39 @@ enum Command {
     Show,
     /// Entrena de punta a punta un autoencoder 35-16-2-16-35 y muestra el reporte por patron
     Smoke,
+    /// Barrido de arquitecturas, optimizadores, activaciones y perdidas con CSV y comparacion
+    Sweep {
+        /// Grilla reducida (300 epocas, semilla 0)
+        #[arg(long)]
+        quick: bool,
+        /// Directorio de salida
+        #[arg(long, default_value = DEFAULT_OUT)]
+        out: PathBuf,
+        /// Hilos de trabajo (por defecto el paralelismo disponible, maximo 16)
+        #[arg(long)]
+        workers: Option<usize>,
+    },
+}
+
+/// Directorio de salida por defecto del Ej 1a.
+const DEFAULT_OUT: &str = "output/ej1a";
+const SWEEP_CSV: &str = "sweep.csv";
+const COMPARISON_MD: &str = "comparison.md";
+
+fn sweep(quick: bool, out: &Path, workers: Option<usize>) -> Result<()> {
+    let ds = load_font()?;
+    let configs = sweep_grid(quick);
+    let workers = workers
+        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(16))
+        .clamp(1, 16);
+    let start = Instant::now();
+    let results = run_sweep(&ds, &configs, workers);
+    write_sweep_csv(&out.join(SWEEP_CSV), &results)?;
+    let md = render_comparison_md(&results);
+    std::fs::write(out.join(COMPARISON_MD), &md)?;
+    println!("{md}");
+    println!("sweep: {} corridas en {:.1} s -> {}", results.len(), start.elapsed().as_secs_f64(), out.display());
+    Ok(())
 }
 
 fn show() -> Result<()> {
@@ -89,5 +126,6 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
         Command::Smoke => smoke(),
+        Command::Sweep { quick, out, workers } => sweep(quick, &out, workers),
     }
 }

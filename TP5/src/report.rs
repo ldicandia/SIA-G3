@@ -1,5 +1,8 @@
 //! Reporte de pixeles incorrectos por patron.
 
+use std::path::Path;
+
+use anyhow::{Context, Result};
 use ndarray::Array2;
 
 /// Consigna 1a.2: a lo sumo 1 pixel incorrecto por patron.
@@ -53,6 +56,15 @@ impl Report {
         out
     }
 
+    /// Linea final del Ej 1a: `RESULTADO: k/32 patrones ...`.
+    pub fn result_line(&self) -> String {
+        format!(
+            "RESULTADO: {}/32 patrones con a lo sumo 1 pixel incorrecto (maximo {})",
+            self.n_within(TOLERANCE_PX),
+            self.max_wrong()
+        )
+    }
+
     pub fn summary_line(&self) -> String {
         format!(
             "resumen: {}/32 patrones con a lo sumo 1 pixel incorrecto, maximo {} pixeles incorrectos",
@@ -60,4 +72,22 @@ impl Report {
             self.max_wrong()
         )
     }
+}
+
+/// Escribe `idx,label,wrong_pixels` con una fila por patron. Las etiquetas con coma o comillas
+/// (por ejemplo `,` o `"`) se entrecomillan segun CSV.
+pub fn write_report_csv(path: &Path, report: &Report) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("no se pudo crear {}", parent.display()))?;
+    }
+    let mut out = String::from("idx,label,wrong_pixels\n");
+    for (i, p) in report.patterns.iter().enumerate() {
+        let label = if p.label.contains(',') || p.label.contains('"') {
+            format!("\"{}\"", p.label.replace('"', "\"\""))
+        } else {
+            p.label.clone()
+        };
+        out.push_str(&format!("{},{},{}\n", i, label, p.wrong_pixels));
+    }
+    std::fs::write(path, out).with_context(|| format!("no se pudo escribir {}", path.display()))
 }

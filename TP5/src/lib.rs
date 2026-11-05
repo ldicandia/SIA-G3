@@ -1,5 +1,6 @@
 pub mod autoencoder;
 pub mod data;
+pub mod experiments;
 pub mod mlp;
 pub mod optimizer;
 pub mod report;
