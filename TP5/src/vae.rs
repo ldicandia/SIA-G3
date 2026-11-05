@@ -11,6 +11,7 @@ use crate::autoencoder::ArchSpec;
 use crate::emoji::{EmojiDataset, EMOJI_PIXELS};
 use crate::mlp::{Activation, Grads, Loss, Mlp};
 use crate::optimizer::{Optimizer, OptimizerKind};
+use crate::report::wrong_pixel_counts;
 
 /// Semilla por defecto de la muestra del prior.
 pub const SAMPLE_SEED: u64 = 0x5a3f_0201;
@@ -264,6 +265,69 @@ pub fn config_line(cfg: &VaeConfig, vae: &Vae) -> String {
         },
         cfg.epochs,
         cfg.seed
+    )
+}
+
+/// Tabla de evolucion de la perdida: la epoca 1, cada epoca multiplo de `max(1, epocas / 10)` y la
+/// ultima, sin duplicados y en orden ascendente (unas 11 filas).
+pub fn render_loss_table(history: &VaeHistory) -> String {
+    let n = history.recon.len();
+    let step = (n / 10).max(1);
+    let mut out = String::from("epoca  reconstruccion  kl  total");
+    for epoch in 1..=n {
+        if epoch == 1 || epoch % step == 0 || epoch == n {
+            let i = epoch - 1;
+            out.push_str(&format!(
+                "\n{:>5}  {:>14.4}  {:>10.4}  {:>10.4}",
+                epoch,
+                history.recon[i],
+                history.kl[i],
+                history.total(i)
+            ));
+        }
+    }
+    out
+}
+
+/// `PERDIDA: ...` con los valores de la primera y la ultima epoca.
+pub fn loss_summary_line(history: &VaeHistory) -> String {
+    let last = history.recon.len() - 1;
+    format!(
+        "PERDIDA: reconstruccion {:.2} -> {:.2} | KL {:.2} -> {:.2} | total {:.2} -> {:.2}",
+        history.recon[0],
+        history.recon[last],
+        history.kl[0],
+        history.kl[last],
+        history.total(0),
+        history.total(last)
+    )
+}
+
+#[derive(Debug, Clone)]
+pub struct ReconSummary {
+    /// Pixeles incorrectos por emoji (reconstruccion y original binarizados en 0.5).
+    pub counts: Vec<usize>,
+    pub mean_wrong: f64,
+    pub max_wrong: usize,
+    pub n_exact: usize,
+}
+
+/// Calidad de la reconstruccion desde la media del codificador sobre todo el dataset.
+pub fn reconstruction_summary(vae: &Vae, ds: &EmojiDataset) -> ReconSummary {
+    let counts = wrong_pixel_counts(&ds.x, &vae.reconstruct_mean(&ds.x));
+    let mean_wrong = counts.iter().sum::<usize>() as f64 / counts.len() as f64;
+    let max_wrong = counts.iter().copied().max().unwrap_or(0);
+    let n_exact = counts.iter().filter(|&&c| c == 0).count();
+    ReconSummary { counts, mean_wrong, max_wrong, n_exact }
+}
+
+pub fn reconstruction_line(s: &ReconSummary) -> String {
+    format!(
+        "RECONSTRUCCION: media {:.2} px, maximo {} px por emoji; {}/{} emojis sin pixeles incorrectos",
+        s.mean_wrong,
+        s.max_wrong,
+        s.n_exact,
+        s.counts.len()
     )
 }
 

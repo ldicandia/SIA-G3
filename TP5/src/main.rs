@@ -29,8 +29,13 @@ use tp5::mlp::{Activation, Loss};
 use tp5::plots::{write_dae_study_curves, write_study_curves};
 use tp5::optimizer::OptimizerKind;
 use tp5::report::{wrong_pixel_counts, write_report_csv, Report};
-use tp5::vae::{chosen_vae_config, config_line, standard_normal_matrix, train_vae, validate_epochs, SAMPLE_SEED};
-use tp5::vae_figures::{export_emoji_montage, export_reconstruction, RECON_PNG};
+use tp5::vae::{
+    chosen_vae_config, config_line, loss_summary_line, reconstruction_line, reconstruction_summary, render_loss_table,
+    standard_normal_matrix, train_vae, validate_epochs, SAMPLE_SEED,
+};
+use tp5::vae_figures::{
+    export_emoji_montage, export_loss_chart, export_reconstruction, write_loss_csv, LOSS_CSV, RECON_PNG,
+};
 
 #[derive(Parser)]
 #[command(name = "tp5", about = "SIA TP5: autoencoders con backprop propio sobre ndarray")]
@@ -454,8 +459,15 @@ fn vae(epochs: Option<usize>, seed: u64, out: &Path) -> Result<()> {
         let i = e - 1;
         println!("epoca {e} recon={:.4} kl={:.4} total={:.4}", hist.recon[i], hist.kl[i], hist.total(i));
     }
+    println!("{}", render_loss_table(&hist));
+    println!("{}", loss_summary_line(&hist));
     export_reconstruction(&model, &ds, out)?;
     println!("reconstruccion: {EMOJI_COUNT} emojis -> {}/{RECON_PNG}", out.display());
+    println!("{}", reconstruction_line(&reconstruction_summary(&model, &ds)));
+    write_loss_csv(&out.join(LOSS_CSV), &hist)?;
+    println!("datos: {} epocas -> {}/{LOSS_CSV}", cfg.epochs, out.display());
+    let chart = export_loss_chart(&hist, out)?;
+    println!("grafico: {}", chart.display());
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let z = standard_normal_matrix(&mut rng, 1, cfg.spec.latent_dim);
     let decoded = model.decode(&z);
