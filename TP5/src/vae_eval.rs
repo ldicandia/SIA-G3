@@ -6,7 +6,7 @@ use ndarray::{Array1, Array2, ArrayView1};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-use crate::emoji::{nearest_emoji, EmojiDataset, Separation};
+use crate::emoji::{hamming, nearest_emoji, EmojiDataset, Separation};
 use crate::vae::{standard_normal_matrix, Vae};
 
 /// Un emoji es plausible si esta a lo sumo `PLAUSIBLE_FACTOR` veces el radio de cercania del mas cercano.
@@ -186,5 +186,101 @@ pub fn prior_line(s: &PriorStats, sep: &Separation) -> String {
         sep.min,
         100.0 * s.new_plausible_frac,
         PLAUSIBLE_FACTOR * sep.near_radius
+    )
+}
+
+/// Lado por defecto de la grilla del plano latente.
+pub const GRID_SIDE_DEFAULT: usize = 15;
+pub const GRID_SIDE_MIN: usize = 3;
+pub const GRID_SIDE_MAX: usize = 41;
+/// La grilla cubre `[-GRID_HALF_RANGE, GRID_HALF_RANGE]` en cada eje.
+pub const GRID_HALF_RANGE: f64 = 2.5;
+
+/// Valida el argumento `--grid`: entre `GRID_SIDE_MIN` y `GRID_SIDE_MAX`.
+pub fn validate_grid(side: usize) -> anyhow::Result<usize> {
+    if !(GRID_SIDE_MIN..=GRID_SIDE_MAX).contains(&side) {
+        anyhow::bail!("el lado de la grilla debe estar entre {GRID_SIDE_MIN} y {GRID_SIDE_MAX} (se recibio {side})");
+    }
+    Ok(side)
+}
+
+/// `side * side` puntos de 2 columnas en orden fila mayor de celdas: z1 crece hacia la derecha y z2
+/// decrece hacia abajo (el plano se lee como un grafico con z2 hacia arriba).
+pub fn latent_grid(side: usize, half_range: f64) -> Array2<f64> {
+    let denom = (side - 1) as f64;
+    let mut g = Array2::zeros((side * side, 2));
+    for r in 0..side {
+        for c in 0..side {
+            g[[r * side + c, 0]] = -half_range + 2.0 * half_range * c as f64 / denom;
+            g[[r * side + c, 1]] = half_range - 2.0 * half_range * r as f64 / denom;
+        }
+    }
+    g
+}
+
+/// Decodifica toda la grilla en un solo lote (el VAE debe tener latente de 2 dimensiones).
+pub fn decode_grid(vae: &Vae, side: usize, half_range: f64) -> Array2<f64> {
+    assert!(
+        vae.latent_dim == 2,
+        "la grilla del plano latente necesita un VAE con latente de 2 dimensiones (tiene {})",
+        vae.latent_dim
+    );
+    vae.decode(&latent_grid(side, half_range))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridMetrics {
+    pub side: usize,
+    pub n_cells: usize,
+    /// Participacion de celdas a lo sumo `near_radius` px de un emoji del dataset.
+    pub recognizable_frac: f64,
+    /// Media de la distancia Hamming entre celdas vecinas (horizontales y verticales).
+    pub mean_adjacent_step: f64,
+    pub max_adjacent_step: usize,
+    /// Participacion de pares vecinos con un salto de mas de `LARGE_STEP_FACTOR * near_radius` px.
+    pub large_step_frac: f64,
+}
+
+pub fn manifold_metrics(decoded: &Array2<f64>, side: usize, ds: &EmojiDataset, sep: &Separation) -> GridMetrics {
+    assert_eq!(decoded.nrows(), side * side, "la grilla decodificada debe tener side * side filas");
+    let n_cells = side * side;
+    let recognizable = decoded.rows().into_iter().filter(|r| nearest_emoji(ds, *r).1 <= sep.near_radius).count();
+    let mut steps = Vec::with_capacity(2 * side * (side - 1));
+    for r in 0..side {
+        for c in 0..side {
+            let here = decoded.row(r * side + c);
+            if c + 1 < side {
+                steps.push(hamming(here, decoded.row(r * side + c + 1)));
+            }
+            if r + 1 < side {
+                steps.push(hamming(here, decoded.row((r + 1) * side + c)));
+            }
+        }
+    }
+    let large = steps.iter().filter(|&&s| s > LARGE_STEP_FACTOR * sep.near_radius).count();
+    GridMetrics {
+        side,
+        n_cells,
+        recognizable_frac: recognizable as f64 / n_cells as f64,
+        mean_adjacent_step: steps.iter().sum::<usize>() as f64 / steps.len() as f64,
+        max_adjacent_step: steps.iter().copied().max().unwrap_or(0),
+        large_step_frac: large as f64 / steps.len() as f64,
+    }
+}
+
+pub fn manifold_line(m: &GridMetrics, sep: &Separation) -> String {
+    format!(
+        "MANIFOLD: {} celdas ({}x{}) sobre z en [-{:.1}, {:.1}]^2 | reconocibles {:.1} % (a lo sumo {} px de un emoji del dataset) | salto medio entre celdas vecinas {:.1} px (maximo {}) | saltos de mas de {} px: {:.1} %",
+        m.n_cells,
+        m.side,
+        m.side,
+        GRID_HALF_RANGE,
+        GRID_HALF_RANGE,
+        100.0 * m.recognizable_frac,
+        sep.near_radius,
+        m.mean_adjacent_step,
+        m.max_adjacent_step,
+        LARGE_STEP_FACTOR * sep.near_radius,
+        100.0 * m.large_step_frac
     )
 }

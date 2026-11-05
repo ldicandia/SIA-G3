@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
-use ndarray::Array1;
+use ndarray::{Array1, Array2};
 
 use crate::emoji::{EmojiDataset, EMOJI_COUNT, EMOJI_SIDE};
 use crate::plots::{plot_gray_tiles, plot_series, Series};
@@ -144,5 +144,33 @@ pub fn export_loss_chart(history: &VaeHistory, out_dir: &Path) -> Result<PathBuf
         &series,
         true,
     )?;
+    Ok(path)
+}
+
+pub const MANIFOLD_PNG: &str = "vae_manifold.png";
+
+/// Una imagen por celda de la grilla, en el orden de las celdas y con el pie vacio.
+pub fn build_manifold_tiles(decoded: &Array2<f64>) -> Vec<(String, Array1<f64>)> {
+    decoded.rows().into_iter().map(|r| (String::new(), r.to_owned())).collect()
+}
+
+fn write_grid_png(decoded: &Array2<f64>, side: usize, path: &Path, title: &str) -> Result<()> {
+    if decoded.nrows() != side * side {
+        return Err(anyhow!(
+            "la grilla de {side}x{side} necesita {} imagenes y se recibieron {}",
+            side * side,
+            decoded.nrows()
+        ));
+    }
+    plot_gray_tiles(path, title, &build_manifold_tiles(decoded), EMOJI_SIDE, side, 2)
+}
+
+/// Escribe `vae_manifold.png`: una sola imagen continua con la grilla decodificada del plano latente.
+pub fn export_manifold(decoded: &Array2<f64>, side: usize, out_dir: &Path) -> Result<PathBuf> {
+    let path = out_dir.join(MANIFOLD_PNG);
+    let title = format!(
+        "Ej 2 - grilla {side}x{side} del plano latente: z1 de -2.5 a 2.5 (derecha), z2 de 2.5 a -2.5 (abajo)"
+    );
+    write_grid_png(decoded, side, &path, &title)?;
     Ok(path)
 }

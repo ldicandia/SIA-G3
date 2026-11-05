@@ -34,10 +34,12 @@ use tp5::vae::{
     standard_normal_matrix, train_vae, validate_epochs, SAMPLE_SEED,
 };
 use tp5::vae_eval::{
+    decode_grid, manifold_line, manifold_metrics, validate_grid, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
     new_emoji_line, prior_line, prior_stats, search_new_emoji, validate_draws, DEFAULT_DRAWS,
 };
 use tp5::vae_figures::{
-    export_emoji_montage, export_loss_chart, export_new_emoji, export_reconstruction, write_loss_csv, LOSS_CSV,
+    export_emoji_montage, export_loss_chart, export_manifold, export_new_emoji, export_reconstruction, write_loss_csv,
+    LOSS_CSV, MANIFOLD_PNG,
     NEW_EMOJI_PNG, RECON_PNG,
 };
 
@@ -149,6 +151,18 @@ enum Command {
         /// Semilla del flujo de sorteos
         #[arg(long, default_value_t = SAMPLE_SEED)]
         seed: u64,
+        /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
+        #[arg(long)]
+        epochs: Option<usize>,
+        /// Directorio de salida
+        #[arg(long, default_value = EJ2_OUT)]
+        out: PathBuf,
+    },
+    /// Decodifica una grilla del plano latente del VAE y mide cuanto es reconocible y cuan gradual es
+    VaeManifold {
+        /// Lado de la grilla (entre 3 y 41)
+        #[arg(long, default_value_t = GRID_SIDE_DEFAULT)]
+        grid: usize,
         /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
         #[arg(long)]
         epochs: Option<usize>,
@@ -535,6 +549,26 @@ fn vae_sample(draws: usize, seed: u64, epochs: Option<usize>, out: &Path) -> Res
     Ok(())
 }
 
+fn vae_manifold(grid: usize, epochs: Option<usize>, out: &Path) -> Result<()> {
+    let grid = validate_grid(grid)?;
+    let mut cfg = chosen_vae_config();
+    if let Some(n) = epochs {
+        cfg.epochs = validate_epochs(n)?;
+    }
+    let ds = build_emojis();
+    let (model, _) = train_vae(&ds, &cfg)?;
+    let sep = separation(&ds);
+    println!("== Ej 2: plano latente del VAE decodificado en una grilla ==");
+    println!("{}", config_line(&cfg, &model));
+    println!("{}", separation_line(&sep));
+    let decoded = decode_grid(&model, grid, GRID_HALF_RANGE);
+    let metrics = manifold_metrics(&decoded, grid, &ds, &sep);
+    println!("{}", manifold_line(&metrics, &sep));
+    export_manifold(&decoded, grid, out)?;
+    println!("manifold: {}/{MANIFOLD_PNG}", out.display());
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Show => show(),
@@ -549,5 +583,6 @@ fn main() -> Result<()> {
         Command::Emojis { out } => emojis(&out),
         Command::Vae { epochs, seed, out } => vae(epochs, seed, &out),
         Command::VaeSample { draws, seed, epochs, out } => vae_sample(draws, seed, epochs, &out),
+        Command::VaeManifold { grid, epochs, out } => vae_manifold(grid, epochs, &out),
     }
 }
