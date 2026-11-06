@@ -1,0 +1,8 @@
+# Los scripts de shell y de Python se versionan siempre con fin de linea LF:
+# un checkout en Windows con core.autocrlf=true los volveria CRLF y bash (WSL) no los ejecuta.
+*.sh text eol=lf
+*.py text eol=lf
+
+# Binarios: git no debe tocar su contenido.
+*.pptx binary
+*.png binary
