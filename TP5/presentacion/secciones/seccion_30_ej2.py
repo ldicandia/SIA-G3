@@ -496,11 +496,10 @@ def _emoji_nuevo(pres, salidas, dat: _Datos) -> None:
     else:
         origen = f"las regiones fuera de su piso son {dat.regiones_nuevas()}"
     d_centro = (
-        f"Un emoji nuevo es una región, ojos o boca, más lejos que el piso de ruido de "
-        f"reconstrucción de esa región de todos los estilos de la región, con la cara todavía "
-        f"plausible. Como el dataset es el producto completo de ojos por boca, la novedad solo "
-        f"puede ser una región, nunca una combinación de estilos conocidos: lo que se acepta es un híbrido, una región "
-        f"fuera del piso de ruido del decodificador."
+        "Un emoji nuevo es una región, ojos o boca, más lejos que el piso de ruido de esa región "
+        "de todos sus estilos, con la cara plausible. Como el dataset es el producto completo de "
+        "ojos por boca, no puede ser una combinación de estilos conocidos: es un híbrido, una "
+        "región fuera del piso de ruido del decodificador."
     )
     d_titular = (
         f"El titular es el sorteo de mayor margen entre combinaciones distintas, elegido por una "
@@ -652,4 +651,12 @@ def agregar(pres, salidas) -> None:
     dat = _Datos(salidas)
     _dataset(pres, salidas, dat)
     _arquitectura(pres, dat)
+    _tecnicas(pres, dat)
     _perdida(pres, salidas, dat)
+    _reconstruccion(pres, salidas, dat)
+    _contraste(pres, salidas, dat)
+    _emoji_nuevo(pres, salidas, dat)
+    _criterio_control(pres, dat)
+    _vecino(pres, dat)
+    _aceptacion(pres, dat)
+    _conclusiones(pres, dat)
