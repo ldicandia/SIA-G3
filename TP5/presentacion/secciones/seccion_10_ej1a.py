@@ -431,5 +431,9 @@ def _conclusiones(pres, dat: _Datos) -> None:
 def agregar(pres, salidas) -> None:
     dat = _Datos(salidas)
     _arquitectura(pres, dat)
+    _tecnicas_tablas(pres, salidas, dat)
+    _tecnicas_curvas(pres, salidas, dat)
     _resultado(pres, salidas, dat)
     _latente(pres, salidas, dat)
+    _letra_nueva(pres, salidas, dat)
+    _conclusiones(pres, dat)
