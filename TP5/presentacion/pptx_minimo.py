@@ -570,7 +570,7 @@ class Diapositiva:
         if self.portada:
             ph = '<p:ph type="ctrTitle"/>'
             x, y, w, h, tam, alin, ancla = (
-                PORTADA_X, PORTADA_Y, PORTADA_W, PORTADA_H, TAM_PORTADA, ' algn="ctr"', "ctr",
+                PORTADA_X, PORTADA_Y, PORTADA_W, PORTADA_H, TAM_PORTADA, ' algn="l"', "ctr",
             )
         else:
             ph = '<p:ph type="title"/>'
