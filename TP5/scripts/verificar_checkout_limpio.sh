@@ -2,15 +2,19 @@
 # Prueba el checkout limpio: copia solo las fuentes versionadas a un directorio temporal, las
 # compila con las dependencias fijadas (--locked) y regenera un ejercicio ahi.
 #
-#   bash scripts/verificar_checkout_limpio.sh <1a|1b|2|todo> [--conservar] [--comparar RAIZ_REFERENCIA]
+#   bash scripts/verificar_checkout_limpio.sh <1a|1b|2|todo> [--conservar] [--comparar RAIZ_REFERENCIA] [--presentacion]
 #
 # Con --comparar, cada archivo regenerado en la copia se compara con el mismo archivo de
 # RAIZ_REFERENCIA (la raiz de una corrida previa de regenerar.sh en el arbol de trabajo): los
 # CSV, Markdown y PNG deben tener el mismo SHA-256 y los reportes salida-*.txt deben ser iguales
 # una vez reemplazada la raiz de salida por RAIZ y sin las lineas con tiempos (" corridas en ").
+#
+# Con --presentacion (solo con el ejercicio "todo"), despues de regenerar y comparar construye y verifica
+# la presentacion dentro de la copia (bash scripts/presentacion.sh --sin-regenerar) y avisa si el archivo
+# obtenido es identico o distinto del versionado (los PNG dependen de las tipografias del sistema).
 set -euo pipefail
 
-USO='uso: bash scripts/verificar_checkout_limpio.sh <1a|1b|2|todo> [--conservar] [--comparar RAIZ_REFERENCIA]'
+USO='uso: bash scripts/verificar_checkout_limpio.sh <1a|1b|2|todo> [--conservar] [--comparar RAIZ_REFERENCIA] [--presentacion]'
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -22,11 +26,16 @@ fi
 shift || true
 
 CONSERVAR=0
+PRESENTACION=0
 REFERENCIA=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --conservar)
             CONSERVAR=1
+            shift
+            ;;
+        --presentacion)
+            PRESENTACION=1
             shift
             ;;
         --comparar)
@@ -51,6 +60,12 @@ case "$EJERCICIO" in
         exit 2
         ;;
 esac
+
+if [ "$PRESENTACION" -eq 1 ] && [ "$EJERCICIO" != "todo" ]; then
+    echo "--presentacion solo se admite con el ejercicio todo: la presentacion usa los tres ejercicios" >&2
+    echo "$USO" >&2
+    exit 2
+fi
 
 REFERENCIA_ABS=""
 if [ -n "$REFERENCIA" ]; then
@@ -112,8 +127,34 @@ if ! (cd "$COPIA" && bash scripts/regenerar.sh "$EJERCICIO" --salida "$SALIDA_TM
     exit 1
 fi
 
+# Construye y verifica la presentacion dentro de la copia, con las salidas recien regeneradas, y la
+# compara con la versionada. Que difiera no es un error: el criterio es la verificacion de consistencia.
+presentacion_en_copia() {
+    local destino="$SALIDA_TMP/presentacion/TP5-autoencoders.pptx" resultado n
+    if ! resultado="$(cd "$COPIA" && bash scripts/presentacion.sh --sin-regenerar --salida "$SALIDA_TMP" --destino "$destino" 2>&1)"; then
+        echo "$resultado" >&2
+        echo "CHECKOUT LIMPIO FALLA: paso construir y verificar la presentacion en la copia" >&2
+        exit 1
+    fi
+    echo "$resultado"
+    n="$(echo "$resultado" | sed -n 's/^CONSISTENCIA OK: \([0-9][0-9]*\) diapositivas.*/\1/p' | head -n 1)"
+    if [ -z "$n" ]; then
+        echo "CHECKOUT LIMPIO FALLA: paso presentacion: la verificacion no informo CONSISTENCIA OK" >&2
+        exit 1
+    fi
+    if cmp -s "$COPIA/$destino" "$COPIA/presentacion/TP5-autoencoders.pptx"; then
+        echo "PRESENTACION IDENTICA AL ARCHIVO VERSIONADO"
+    else
+        echo "PRESENTACION DISTINTA DEL ARCHIVO VERSIONADO (esperable si los PNG se regeneraron en otra maquina: tipografias del sistema)"
+    fi
+    echo "PRESENTACION EN CHECKOUT LIMPIO OK: $n diapositivas"
+}
+
 if [ -z "$REFERENCIA" ]; then
     echo "CHECKOUT LIMPIO OK: $EJERCICIO ($COPIADOS archivos copiados)"
+    if [ "$PRESENTACION" -eq 1 ]; then
+        presentacion_en_copia
+    fi
     exit 0
 fi
 
@@ -161,3 +202,6 @@ if [ "$COMPARADOS" -eq 0 ]; then
     exit 1
 fi
 echo "CHECKOUT LIMPIO OK: $EJERCICIO ($COPIADOS archivos copiados, $COMPARADOS comparados)"
+if [ "$PRESENTACION" -eq 1 ]; then
+    presentacion_en_copia
+fi

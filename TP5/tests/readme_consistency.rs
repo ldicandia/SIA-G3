@@ -148,3 +148,50 @@ fn readme_subcommands_exist_in_the_cli() {
         assert!(readme.contains(&form), "el README no documenta `{form}`");
     }
 }
+
+#[test]
+fn readme_documents_the_presentation_command() {
+    let readme = readme();
+    for expected in [
+        "## Presentación",
+        "bash scripts/presentacion.sh",
+        "--salida RAIZ",
+        "--destino ARCHIVO",
+        "--sin-regenerar",
+        "presentacion/TP5-autoencoders.pptx",
+        "cargo test --release --test deck_consistency",
+    ] {
+        assert!(readme.contains(expected), "el README no contiene `{expected}`");
+    }
+    let script = read("scripts/presentacion.sh");
+    assert!(!script.contains('\r'), "scripts/presentacion.sh tiene retornos de carro: bash en WSL no lo ejecuta");
+    assert!(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("presentacion/TP5-autoencoders.pptx").is_file(),
+        "falta la presentacion versionada presentacion/TP5-autoencoders.pptx"
+    );
+}
+
+#[test]
+fn presentation_section_follows_the_clean_checkout_section() {
+    let readme = readme();
+    let clean = readme.find("## Verificar el checkout limpio").expect("el README no tiene `## Verificar el checkout limpio`");
+    let presentation = readme.find("## Presentación").expect("el README no tiene `## Presentación`");
+    assert!(presentation > clean, "`## Presentación` debe ir despues de `## Verificar el checkout limpio`");
+}
+
+#[test]
+fn readme_names_every_presentation_section_module() {
+    let readme = readme();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("presentacion/secciones");
+    let mut modules: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("no se pudo leer {}: {e}", dir.display()))
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("seccion_") && name.ends_with(".py"))
+        .collect();
+    modules.sort();
+    assert!(!modules.is_empty(), "no hay modulos de seccion en {}", dir.display());
+    for module in modules {
+        assert!(readme.contains(&module), "el README no nombra el modulo de seccion {module}");
+    }
+}

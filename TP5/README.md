@@ -97,3 +97,42 @@ bash scripts/verificar_checkout_limpio.sh todo --comparar output
 ```
 
 El segundo comando copia a un directorio temporal solo los archivos versionados (más los nuevos no ignorados; sin `target/`, `output/` ni `.planning/`), compila esa copia como proyecto independiente con `cargo build --release --locked`, corre allí `regenerar.sh todo` y compara cada archivo regenerado con el de `output`: los CSV, Markdown y PNG deben tener el mismo SHA-256 y los reportes `salida-*.txt` deben ser iguales una vez reemplazada la raíz de salida y sin las líneas con tiempos. Imprime `CHECKOUT LIMPIO OK: todo (N archivos copiados, M comparados)` si todo coincide. Prueba que el checkout contiene todo lo que hace falta y que el resultado no depende de archivos sobrantes del árbol de trabajo. Con `--conservar` deja el directorio temporal para inspeccionarlo.
+
+## Presentación
+
+La presentación es un archivo PowerPoint, `presentacion/TP5-autoencoders.pptx`, versionado en git. Tiene una portada, un Resumen, una sección por ejercicio (Ej 1a, Ej 1b y Ej 2, cada una con arquitectura, técnicas probadas, resultados con sus gráficos y conclusiones con sus límites) y una diapositiva final de Reproducibilidad.
+
+```bash
+bash scripts/presentacion.sh
+```
+
+El comando hace, en orden: regenera los tres ejercicios (`bash scripts/regenerar.sh todo`), construye la presentación a partir de lo regenerado (`presentacion/construir.py`) y verifica que sea consistente con ello (`presentacion/verificar.py`). Termina con `PRESENTACION OK: ARCHIVO (S s)` o con un mensaje en español que nombra el paso que falló. Opciones:
+
+- `--salida RAIZ`: raíz de las salidas regeneradas (por defecto `output`).
+- `--destino ARCHIVO`: dónde escribe la presentación (por defecto `presentacion/TP5-autoencoders.pptx`).
+- `--sin-regenerar`: no corre `regenerar.sh` y arma la presentación con las salidas que ya hay en `RAIZ`; si faltan, termina con error y nombra `bash scripts/regenerar.sh todo`.
+
+Hace falta solo Python 3 y su biblioteca estándar: no hay nada que instalar y no hace falta PowerPoint para construirla. El archivo se escribe sin comprimir y con fechas fijas, así que dos construcciones a partir de las mismas salidas son idénticas byte a byte.
+
+Garantías y cómo se comprueba cada una:
+
+- **Los números salen de lo que regenera el código.** Las diapositivas no tipean cifras: las leen de los reportes, CSV y tablas Markdown de `output/` a través de `presentacion/lector.py`. Las líneas que se muestran como bloque de salida son líneas exactas de la transcripción del ejercicio.
+- **Cada gráfico es el PNG regenerado.** Cada imagen lleva como texto alternativo su ruta, `output/ejX/ARCHIVO`.
+- `presentacion/verificar.py --pptx ARCHIVO --salida RAIZ` compara la presentación con los archivos regenerados en esa máquina: las secciones y su orden, cada número contra las salidas y los documentos de análisis, cada imagen por SHA-256 contra su PNG, cada línea citada contra su transcripción, cada fila de las tablas de comparación y la ausencia de las afirmaciones retiradas. Como compara los bytes de los PNG, que dependen de las fuentes del sistema, solo vale en la máquina que los regeneró.
+- `cargo test --release --test deck_consistency` comprueba la presentación versionada contra lo que la biblioteca recalcula en el propio proceso (líneas, filas de tablas, cifras y coordenadas), sin leer `output/` ni comparar bytes de PNG: pasa en cualquier máquina.
+
+Pruebas del propio armado, sin dependencia de `output/`: `python3 -B -m unittest discover -s presentacion/pruebas`.
+
+Organización: cada sección es un módulo `presentacion/secciones/seccion_NN_nombre.py` con una función `agregar(pres, salidas)`; `construir.py` las toma en orden de nombre.
+
+| Módulo | Diapositivas |
+|--------|--------------|
+| `presentacion/secciones/seccion_00_portada.py` | portada y Resumen |
+| `presentacion/secciones/seccion_10_ej1a.py` | Ej 1a |
+| `presentacion/secciones/seccion_20_ej1b.py` | Ej 1b |
+| `presentacion/secciones/seccion_30_ej2.py` | Ej 2 |
+| `presentacion/secciones/seccion_99_cierre.py` | Reproducibilidad |
+
+Para reconstruir una sola sección (por ejemplo, mientras se edita) se usa `python3 -B presentacion/construir.py --solo seccion_30 --destino output/presentacion/parcial.pptx`; el resultado es una presentación parcial que no pasa la verificación completa.
+
+Una presentación reconstruida en otra máquina puede diferir del archivo versionado en los bytes de los PNG (fuentes del sistema) aunque todos los números sean iguales. `bash scripts/verificar_checkout_limpio.sh todo --comparar output --presentacion` hace el mismo recorrido en la copia limpia: tras regenerar y comparar, construye y verifica allí la presentación, y avisa si el archivo resultante es idéntico o distinto del versionado.
