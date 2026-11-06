@@ -653,5 +653,10 @@ def _conclusiones(pres, dat: _Datos) -> None:
 def agregar(pres, salidas) -> None:
     dat = _Datos(salidas)
     _arquitectura(pres, dat)
+    _tecnicas_latente(pres, salidas, dat)
+    _tecnicas_ruido(pres, salidas, dat)
+    _distorsion(pres, salidas, dat)
     _error_por_nivel(pres, salidas, dat)
     _tabla_y_titular(pres, dat)
+    _ejemplos(pres, salidas, dat)
+    _conclusiones(pres, dat)
