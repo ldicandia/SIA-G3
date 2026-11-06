@@ -41,7 +41,7 @@ done
 RAIZ="${RAIZ%/}"
 
 case "$EJERCICIO" in
-    2) ;;
+    1a | 1b | 2 | todo) ;;
     *)
         echo "$USO" >&2
         exit 2
@@ -95,6 +95,41 @@ verificar_esperados() {
     done
 }
 
+ej1a() {
+    local inicio=$SECONDS
+    local dir="$RAIZ/ej1a"
+    local esperados=(comparison.md sweep.csv
+        curves_arch_loss.png curves_arch_wrongpx.png curves_optim_loss.png curves_optim_wrongpx.png
+        curves_act_loss.png curves_act_wrongpx.png curves_loss_loss.png curves_loss_wrongpx.png
+        report.csv latent.png latent_codes.csv new_letter.png salida-sweep.txt salida-ej1a.txt)
+    construir
+    mkdir -p "$dir"
+    borrar_esperados "$dir" "${esperados[@]}"
+    # Grillas por defecto (sin --quick): la grilla reducida escribe otras tablas en los mismos archivos.
+    correr sweep "$dir"
+    correr ej1a "$dir"
+    verificar_esperados 1a "$dir" "${esperados[@]}"
+    echo "REPRODUCCION OK: ejercicio 1a (${#esperados[@]} archivos en $dir, $((SECONDS - inicio)) s)"
+}
+
+ej1b() {
+    local inicio=$SECONDS
+    local dir="$RAIZ/ej1b"
+    local esperados=(dae_sweep.csv dae_comparison.md
+        dae_curves_lat_loss.png dae_curves_hid_loss.png dae_curves_noise_loss.png
+        dae_levels.csv dae_error_vs_noise.png dae_within_vs_noise.png noise_examples.png
+        dae_examples_p0.00.png dae_examples_p0.05.png dae_examples_p0.10.png dae_examples_p0.15.png
+        dae_examples_p0.20.png dae_examples_p0.30.png dae_examples_p0.40.png dae_examples_p0.50.png
+        salida-dae-sweep.txt salida-ej1b.txt)
+    construir
+    mkdir -p "$dir"
+    borrar_esperados "$dir" "${esperados[@]}"
+    correr dae-sweep "$dir"
+    correr ej1b "$dir"
+    verificar_esperados 1b "$dir" "${esperados[@]}"
+    echo "REPRODUCCION OK: ejercicio 1b (${#esperados[@]} archivos en $dir, $((SECONDS - inicio)) s)"
+}
+
 ej2() {
     local inicio=$SECONDS
     local dir="$RAIZ/ej2"
@@ -109,5 +144,14 @@ ej2() {
 }
 
 case "$EJERCICIO" in
+    1a) ej1a ;;
+    1b) ej1b ;;
     2) ej2 ;;
+    todo)
+        TODO_INICIO=$SECONDS
+        ej1a
+        ej1b
+        ej2
+        echo "REPRODUCCION COMPLETA: 3 ejercicios en $RAIZ ($((SECONDS - TODO_INICIO)) s)"
+        ;;
 esac

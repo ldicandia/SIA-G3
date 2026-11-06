@@ -2,10 +2,15 @@
 # Prueba el checkout limpio: copia solo las fuentes versionadas a un directorio temporal, las
 # compila con las dependencias fijadas (--locked) y regenera un ejercicio ahi.
 #
-#   bash scripts/verificar_checkout_limpio.sh <1a|1b|2|todo> [--conservar]
+#   bash scripts/verificar_checkout_limpio.sh <1a|1b|2|todo> [--conservar] [--comparar RAIZ_REFERENCIA]
+#
+# Con --comparar, cada archivo regenerado en la copia se compara con el mismo archivo de
+# RAIZ_REFERENCIA (la raiz de una corrida previa de regenerar.sh en el arbol de trabajo): los
+# CSV, Markdown y PNG deben tener el mismo SHA-256 y los reportes salida-*.txt deben ser iguales
+# una vez reemplazada la raiz de salida por RAIZ y sin las lineas con tiempos (" corridas en ").
 set -euo pipefail
 
-USO='uso: bash scripts/verificar_checkout_limpio.sh <1a|1b|2|todo> [--conservar]'
+USO='uso: bash scripts/verificar_checkout_limpio.sh <1a|1b|2|todo> [--conservar] [--comparar RAIZ_REFERENCIA]'
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -17,11 +22,20 @@ fi
 shift || true
 
 CONSERVAR=0
+REFERENCIA=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --conservar)
             CONSERVAR=1
             shift
+            ;;
+        --comparar)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                echo "$USO" >&2
+                exit 2
+            fi
+            REFERENCIA="${2%/}"
+            shift 2
             ;;
         *)
             echo "$USO" >&2
@@ -31,12 +45,21 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$EJERCICIO" in
-    2) ;;
+    1a | 1b | 2 | todo) ;;
     *)
         echo "$USO" >&2
         exit 2
         ;;
 esac
+
+REFERENCIA_ABS=""
+if [ -n "$REFERENCIA" ]; then
+    if [ ! -d "$REFERENCIA" ]; then
+        echo "CHECKOUT LIMPIO FALLA: paso comparar: no existe la raiz de referencia $REFERENCIA" >&2
+        exit 2
+    fi
+    REFERENCIA_ABS="$(cd "$REFERENCIA" && pwd)"
+fi
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/tp5-limpio.XXXXXX")"
 
@@ -89,4 +112,52 @@ if ! (cd "$COPIA" && bash scripts/regenerar.sh "$EJERCICIO" --salida "$SALIDA_TM
     exit 1
 fi
 
-echo "CHECKOUT LIMPIO OK: $EJERCICIO ($COPIADOS archivos copiados)"
+if [ -z "$REFERENCIA" ]; then
+    echo "CHECKOUT LIMPIO OK: $EJERCICIO ($COPIADOS archivos copiados)"
+    exit 0
+fi
+
+# Reemplaza "RAIZ_TEXTUAL/" por "RAIZ/" y descarta las lineas con tiempos.
+normalizar() {
+    local archivo="$1" raiz="$2" patron
+    patron="$(printf '%s' "$raiz" | sed 's/[][\.*^$|/]/\\&/g')"
+    sed "s|${patron}/|RAIZ/|g" "$archivo" | grep -v ' corridas en ' || true
+}
+
+COMPARADOS=0
+DIFERENCIAS=0
+while IFS= read -r -d '' archivo; do
+    rel="${archivo#"$COPIA/$SALIDA_TMP"/}"
+    ref="$REFERENCIA_ABS/$rel"
+    if [ ! -f "$ref" ]; then
+        echo "DIFERENCIA: falta en la referencia: $REFERENCIA/$rel" >&2
+        DIFERENCIAS=$((DIFERENCIAS + 1))
+        continue
+    fi
+    COMPARADOS=$((COMPARADOS + 1))
+    case "$(basename "$rel")" in
+        salida-*)
+            if ! diff <(normalizar "$archivo" "$SALIDA_TMP") <(normalizar "$ref" "$REFERENCIA") >/dev/null; then
+                echo "DIFERENCIA: reporte distinto tras normalizar: $rel" >&2
+                diff <(normalizar "$archivo" "$SALIDA_TMP") <(normalizar "$ref" "$REFERENCIA") | head -20 >&2 || true
+                DIFERENCIAS=$((DIFERENCIAS + 1))
+            fi
+            ;;
+        *)
+            if [ "$(sha256sum <"$archivo" | cut -d' ' -f1)" != "$(sha256sum <"$ref" | cut -d' ' -f1)" ]; then
+                echo "DIFERENCIA: SHA-256 distinto: $rel" >&2
+                DIFERENCIAS=$((DIFERENCIAS + 1))
+            fi
+            ;;
+    esac
+done < <(find "$COPIA/$SALIDA_TMP" -type f -print0 | sort -z)
+
+if [ "$DIFERENCIAS" -gt 0 ]; then
+    echo "CHECKOUT LIMPIO FALLA: paso comparar: $DIFERENCIAS diferencias con $REFERENCIA" >&2
+    exit 1
+fi
+if [ "$COMPARADOS" -eq 0 ]; then
+    echo "CHECKOUT LIMPIO FALLA: paso comparar: no se comparo ningun archivo" >&2
+    exit 1
+fi
+echo "CHECKOUT LIMPIO OK: $EJERCICIO ($COPIADOS archivos copiados, $COMPARADOS comparados)"
