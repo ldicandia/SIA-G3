@@ -283,6 +283,9 @@ def _tecnicas_latente(pres, salidas, dat: _Datos) -> None:
     p_hid = [dat.puntaje(f) for f in dat.hid]
     d_lat = max(p_lat) - min(p_lat)
     d_hid = max(p_hid) - min(p_hid)
+    # Los extremos se citan como los imprime la tabla, nunca como una resta recalculada.
+    lat_mejor, lat_peor = min(dat.lat, key=dat.puntaje), max(dat.lat, key=dat.puntaje)
+    hid_mejor, hid_peor = min(dat.hid, key=dat.puntaje), max(dat.hid, key=dat.puntaje)
     if d_lat >= d_hid:
         factor = "El tamaño del latente"
     else:
@@ -326,8 +329,8 @@ def _tecnicas_latente(pres, salidas, dat: _Datos) -> None:
         x, y_txt, ancho, Y_FIN - y_txt,
         [
             Parrafo(
-                f"{factor} es el factor que más separa los resultados: el puntaje varía "
-                f"{d_lat:.4f} en lat y {d_hid:.4f} en hid.",
+                f"{factor} es el factor que más separa los resultados: el puntaje va de "
+                f"{lat_mejor[2]} a {lat_peor[2]} en lat y de {hid_mejor[2]} a {hid_peor[2]} en hid.",
                 vineta=True,
             ),
             Parrafo(
