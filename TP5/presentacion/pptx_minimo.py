@@ -2,7 +2,8 @@
 
 Un .pptx es un ZIP de partes XML. Este modulo escribe el conjunto de partes que
 emiten python-pptx y pptxgenjs (tipos de contenido, relaciones, docProps,
-presentacion, patron, dos disenos, tema, diapositivas y medios) para que
+presentacion, patron, dos disenos, tema, diapositivas, notas del orador y
+medios) para que
 PowerPoint y LibreOffice lo abran sin pedir reparacion.
 
 Principios del modulo (ver el plan 04-02):
@@ -58,8 +59,13 @@ FUENTE_MONO = "Courier New"
 
 TAM_TITULO = 28
 TAM_PORTADA = 40
-TAM_MINIMO_TEXTO = 10
-TAM_MINIMO_TABLA = 11
+# Pisos de legibilidad en una sala: ningun texto de cuerpo ni celda de tabla baja de aqui.
+TAM_MINIMO_TEXTO = 18
+TAM_MINIMO_TABLA = 16
+TAM_CIFRA = 44
+
+# Parrafo que, en las notas del orador, precede a las lineas citadas de un archivo de salida.
+PREFIJO_FUENTE = "Fuente: "
 
 # Estimacion de la altura del texto (ver ErrorDeLayout).
 ANCHO_GLIFO_PROPORCIONAL = 0.52
@@ -299,6 +305,8 @@ class Diapositiva:
         self._siguiente_id = 3  # 1 es el grupo raiz y 2 el titulo
         self._imagenes: list[tuple[str, str]] = []  # (id de relacion, nombre de medio)
         self._n_imagenes = 0
+        self._notas: list[tuple[str, bool]] | None = None  # (parrafo, monoespaciado)
+        self._numero = 0  # numero de la diapositiva en el paquete, desde 1
         self._verificar_titulo()
 
     # -- validacion -------------------------------------------------------
@@ -365,7 +373,7 @@ class Diapositiva:
         h: float,
         parrafos,
         *,
-        tam: float = 16,
+        tam: float = TAM_MINIMO_TEXTO,
         negrita: bool = False,
         color: str | None = None,
         mono: bool = False,
@@ -391,7 +399,7 @@ class Diapositiva:
         )
 
     def codigo(
-        self, x: float, y: float, w: float, h: float, lineas, *, fuente: str, tam: float = 11
+        self, x: float, y: float, w: float, h: float, lineas, *, fuente: str, tam: float = TAM_MINIMO_TEXTO
     ) -> None:
         sid = self._id()
         forma = f"salida: {fuente}"
@@ -449,7 +457,7 @@ class Diapositiva:
         filas,
         *,
         anchos=None,
-        tam: float = 12,
+        tam: float = TAM_MINIMO_TABLA,
         encabezado: bool = True,
     ) -> float:
         """Tabla nativa. Devuelve el alto total en pulgadas (para apilar formas)."""
@@ -527,7 +535,7 @@ class Diapositiva:
         h: float,
         texto,
         *,
-        tam: float = 14,
+        tam: float = TAM_MINIMO_TEXTO,
         relleno: str | None = None,
         color: str | None = None,
     ) -> None:
@@ -552,16 +560,75 @@ class Diapositiva:
         validar_texto(valor, forma)
         validar_texto(etiqueta, forma)
         ps = [
-            Parrafo(valor, tam=44, negrita=True, color=COLOR_AMBAR),
-            Parrafo(etiqueta, tam=14),
+            Parrafo(valor, tam=TAM_CIFRA, negrita=True, color=COLOR_AMBAR),
+            Parrafo(etiqueta, tam=TAM_MINIMO_TEXTO),
         ]
         self._verificar_caja(forma, x, y, w, h)
-        self._verificar_ajuste(forma, ps, w, h, 14, False)
+        self._verificar_ajuste(forma, ps, w, h, TAM_MINIMO_TEXTO, False)
         self._formas.append(
             f'<p:sp><p:nvSpPr><p:cNvPr id="{sid}" name="{forma}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>'
             f'<p:spPr>{_xfrm(x, y, w, h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
             f"{_relleno(COLOR_FONDO_CIFRA)}<a:ln><a:noFill/></a:ln></p:spPr>"
-            f"{_cuerpo(ps, 14, False, COLOR_TEXTO, False, alineacion='ctr', ancla='ctr')}</p:sp>"
+            f"{_cuerpo(ps, TAM_MINIMO_TEXTO, False, COLOR_TEXTO, False, alineacion='ctr', ancla='ctr')}</p:sp>"
+        )
+
+    def notas(self, parrafos, *, citas=None) -> None:
+        """Notas del orador de la diapositiva (vista del presentador).
+
+        `parrafos`: un texto o una lista de textos, un parrafo cada uno. `citas`:
+        lista de pares (fuente, lineas); despues de la prosa se escribe un parrafo
+        `Fuente: {fuente}` y un parrafo por linea citada, literal (los espacios
+        iniciales se conservan) y en monoespaciado. Solo una llamada por diapositiva."""
+        if self._notas is not None:
+            raise self._error("notas", "la diapositiva ya tiene notas")
+        if isinstance(parrafos, str):
+            parrafos = [parrafos]
+        salida: list[tuple[str, bool]] = []
+        for p in parrafos:
+            validar_texto(p, "notas")
+            if "\n" in p or "\t" in p:
+                raise self._error("notas", "cada parrafo de las notas debe ser un solo renglon")
+            if not p.strip():
+                raise self._error("notas", "parrafo vacio en las notas")
+            if p.startswith(PREFIJO_FUENTE):
+                raise self._error("notas", f"un parrafo de prosa no puede empezar con «{PREFIJO_FUENTE}»")
+            salida.append((p, False))
+        if not salida:
+            raise self._error("notas", "las notas no tienen ningun parrafo")
+        for fuente, lineas in citas or []:
+            validar_texto(fuente, "notas")
+            lineas = list(lineas)
+            if not fuente.strip() or "\n" in fuente or not lineas:
+                raise self._error("notas", f"cita invalida de la fuente {fuente!r}")
+            salida.append((f"{PREFIJO_FUENTE}{fuente}", False))
+            for linea in lineas:
+                validar_texto(linea, f"notas, cita de {fuente}")
+                if "\n" in linea or "\t" in linea:
+                    raise self._error("notas", "cada linea citada debe ser un solo renglon")
+                salida.append((linea, True))
+        self._notas = salida
+
+    @property
+    def tiene_notas(self) -> bool:
+        return self._notas is not None
+
+    def _xml_notas(self) -> str:
+        ps = []
+        for texto, mono in self._notas or []:
+            fuente = (
+                f'<a:latin typeface="{FUENTE_MONO}"/><a:cs typeface="{FUENTE_MONO}"/>' if mono else ""
+            )
+            ps.append(f'<a:p><a:r><a:rPr lang="es-AR">{fuente}</a:rPr><a:t>{escape(texto)}</a:t></a:r></a:p>')
+        return (
+            f"{_DECL}<p:notes {_NS_ALL}><p:cSld><p:spTree>{_GRUPO_RAIZ}"
+            '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Marcador de imagen de diapositiva"/>'
+            '<p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr>'
+            '<p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>'
+            '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Marcador de notas"/>'
+            '<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>'
+            '<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/>'
+            f'<p:txBody><a:bodyPr/><a:lstStyle/>{"".join(ps)}</p:txBody></p:sp>'
+            "</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>"
         )
 
     # -- serializacion ------------------------------------------------------
@@ -600,6 +667,11 @@ class Diapositiva:
         ]
         for rid, medio in self._imagenes:
             rels.append(f'<Relationship Id="{rid}" Type="{_REL}/image" Target="../media/{medio}"/>')
+        if self._notas is not None:
+            rels.append(
+                f'<Relationship Id="rId{2 + len(self._imagenes)}" Type="{_REL}/notesSlide" '
+                f'Target="../notesSlides/notesSlide{self._numero}.xml"/>'
+            )
         return f'{_DECL}<Relationships xmlns="{_REL_PKG}">{"".join(rels)}</Relationships>'
 
 
@@ -739,6 +811,35 @@ def _parte_tema() -> str:
     )
 
 
+def _parte_patron_notas() -> str:
+    imagen = (
+        '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Marcador de imagen de diapositiva"/>'
+        '<p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr>'
+        '<p:nvPr><p:ph type="sldImg" idx="2"/></p:nvPr></p:nvSpPr>'
+        '<p:spPr><a:xfrm><a:off x="685800" y="1143000"/><a:ext cx="5486400" cy="3086100"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>'
+        '<a:ln w="12700"><a:solidFill><a:prstClr val="black"/></a:solidFill></a:ln></p:spPr></p:sp>'
+    )
+    cuerpo = (
+        '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Marcador de notas"/>'
+        '<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>'
+        '<p:nvPr><p:ph type="body" sz="quarter" idx="3"/></p:nvPr></p:nvSpPr>'
+        '<p:spPr><a:xfrm><a:off x="685800" y="4400550"/><a:ext cx="5486400" cy="3600450"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>'
+        '<p:txBody><a:bodyPr vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" rtlCol="0"/>'
+        '<a:lstStyle/><a:p><a:pPr lvl="0"/><a:r><a:rPr lang="es-AR"/>'
+        "<a:t>Haga clic para modificar el estilo de texto</a:t></a:r></a:p></p:txBody></p:sp>"
+    )
+    return (
+        f"{_DECL}<p:notesMaster {_NS_ALL}><p:cSld>"
+        '<p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg>'
+        f"<p:spTree>{_GRUPO_RAIZ}{imagen}{cuerpo}</p:spTree></p:cSld>"
+        '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" '
+        'accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>'
+        f'<p:notesStyle>{_estilo_nivel("lvl1pPr", 1200, False, "tx1")}</p:notesStyle></p:notesMaster>'
+    )
+
+
 def _parte_pres_props() -> str:
     return f"{_DECL}<p:presentationPr {_NS_ALL}/>"
 
@@ -780,6 +881,10 @@ class Presentacion:
     def n_imagenes(self) -> int:
         return sum(d._n_imagenes for d in self._diapositivas)
 
+    @property
+    def n_notas(self) -> int:
+        return sum(1 for d in self._diapositivas if d.tiene_notas)
+
     def diapositiva(self, titulo: str, *, portada: bool = False) -> Diapositiva:
         d = Diapositiva(self, titulo, portada)
         self._diapositivas.append(d)
@@ -796,6 +901,9 @@ class Presentacion:
     def _partes(self) -> dict[str, bytes]:
         n = len(self._diapositivas)
         partes: dict[str, str | bytes] = {}
+        for i, d in enumerate(self._diapositivas, start=1):
+            d._numero = i
+        con_notas = [d._numero for d in self._diapositivas if d.tiene_notas]
 
         overrides = [
             ("/ppt/presentation.xml", f"{_CT}.presentationml.presentation.main+xml"),
@@ -811,6 +919,11 @@ class Presentacion:
         ]
         for i in range(1, n + 1):
             overrides.append((f"/ppt/slides/slide{i}.xml", f"{_CT}.presentationml.slide+xml"))
+        if con_notas:
+            overrides.append(("/ppt/notesMasters/notesMaster1.xml", f"{_CT}.presentationml.notesMaster+xml"))
+            overrides.append(("/ppt/theme/theme2.xml", f"{_CT}.theme+xml"))
+        for i in con_notas:
+            overrides.append((f"/ppt/notesSlides/notesSlide{i}.xml", f"{_CT}.presentationml.notesSlide+xml"))
         ct = "".join(f'<Override PartName="{p}" ContentType="{t}"/>' for p, t in overrides)
         partes["[Content_Types].xml"] = (
             f'{_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -839,28 +952,38 @@ class Presentacion:
             f'{_DECL}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" '
             'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
             "<TotalTime>0</TotalTime><Application>pptx_minimo (TP5)</Application>"
-            f"<PresentationFormat>Panoramica</PresentationFormat><Slides>{n}</Slides><Notes>0</Notes>"
+            f"<PresentationFormat>Panoramica</PresentationFormat><Slides>{n}</Slides><Notes>{len(con_notas)}</Notes>"
             "<HiddenSlides>0</HiddenSlides></Properties>"
         )
 
         ids = "".join(f'<p:sldId id="{256 + i}" r:id="rId{2 + i}"/>' for i in range(n))
         lista_ids = f"<p:sldIdLst>{ids}</p:sldIdLst>" if n else ""
+        base = 2 + n
+        patron_notas = (
+            f'<p:notesMasterIdLst><p:notesMasterId r:id="rId{base + 4}"/></p:notesMasterIdLst>' if con_notas else ""
+        )
         partes["ppt/presentation.xml"] = (
             f'{_DECL}<p:presentation {_NS_ALL} saveSubsetFonts="1">'
             '<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>'
-            f'{lista_ids}<p:sldSz cx="{ANCHO_EMU}" cy="{ALTO_EMU}"/><p:notesSz cx="6858000" cy="9144000"/>'
+            f'{patron_notas}{lista_ids}<p:sldSz cx="{ANCHO_EMU}" cy="{ALTO_EMU}"/><p:notesSz cx="6858000" cy="9144000"/>'
             f"<p:defaultTextStyle>{_texto_por_defecto()}</p:defaultTextStyle></p:presentation>"
         )
         rels_pres = [("rId1", f"{_REL}/slideMaster", "slideMasters/slideMaster1.xml")]
         for i in range(n):
             rels_pres.append((f"rId{2 + i}", f"{_REL}/slide", f"slides/slide{i + 1}.xml"))
-        base = 2 + n
         rels_pres += [
             (f"rId{base}", f"{_REL}/presProps", "presProps.xml"),
             (f"rId{base + 1}", f"{_REL}/viewProps", "viewProps.xml"),
             (f"rId{base + 2}", f"{_REL}/theme", "theme/theme1.xml"),
             (f"rId{base + 3}", f"{_REL}/tableStyles", "tableStyles.xml"),
         ]
+        if con_notas:
+            rels_pres.append((f"rId{base + 4}", f"{_REL}/notesMaster", "notesMasters/notesMaster1.xml"))
+            partes["ppt/notesMasters/notesMaster1.xml"] = _parte_patron_notas()
+            partes["ppt/notesMasters/_rels/notesMaster1.xml.rels"] = _rels_xml(
+                [("rId1", f"{_REL}/theme", "../theme/theme2.xml")]
+            )
+            partes["ppt/theme/theme2.xml"] = _parte_tema()
         partes["ppt/_rels/presentation.xml.rels"] = _rels_xml(rels_pres)
         partes["ppt/presProps.xml"] = _parte_pres_props()
         partes["ppt/viewProps.xml"] = _parte_vista_props()
@@ -882,6 +1005,14 @@ class Presentacion:
         for i, d in enumerate(self._diapositivas, start=1):
             partes[f"ppt/slides/slide{i}.xml"] = d._xml()
             partes[f"ppt/slides/_rels/slide{i}.xml.rels"] = d._rels()
+            if d.tiene_notas:
+                partes[f"ppt/notesSlides/notesSlide{i}.xml"] = d._xml_notas()
+                partes[f"ppt/notesSlides/_rels/notesSlide{i}.xml.rels"] = _rels_xml(
+                    [
+                        ("rId1", f"{_REL}/notesMaster", "../notesMasters/notesMaster1.xml"),
+                        ("rId2", f"{_REL}/slide", f"../slides/slide{i}.xml"),
+                    ]
+                )
         for nombre, datos in self._medios.values():
             partes[f"ppt/media/{nombre}"] = datos
         return {k: (v.encode("utf-8") if isinstance(v, str) else v) for k, v in partes.items()}

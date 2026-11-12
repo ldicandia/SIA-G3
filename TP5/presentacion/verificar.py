@@ -4,15 +4,18 @@ Solo biblioteca estandar. El paquete se lee siempre en memoria: nunca se
 extrae a disco (un ZIP hostil no puede escribir fuera de ningun directorio).
 
 Uso:
-    python3 -B presentacion/verificar.py --pptx RUTA [--listar] [--texto]
+    python3 -B presentacion/verificar.py --pptx RUTA [--listar] [--texto] [--notas]
     python3 -B presentacion/verificar.py --pptx RUTA --salida RAIZ
 
 Con --salida se verifica ademas la consistencia de la presentacion con las
-salidas que regenero scripts/regenerar.sh en esa raiz (secciones, numeros,
-imagenes por SHA-256 y texto alternativo, lineas citadas, filas de tablas,
-afirmaciones retiradas). Las imagenes se comparan byte a byte: esa comprobacion
-solo vale en la maquina que regenero los PNG (dependen de las tipografias del
-sistema).
+salidas que regenero scripts/regenerar.sh en esa raiz: secciones, numeros (en
+las diapositivas y en las notas del orador), imagenes por SHA-256 y texto
+alternativo, lineas citadas (bloques `salida:` y citas `Fuente:` de las notas),
+filas de tablas, afirmaciones retiradas, presupuesto de texto (palabras, titulo,
+tamanos de letra), notas en cada diapositiva, tamano de las figuras en la
+diapositiva y cobertura de cada item de la consigna. Las imagenes se comparan
+byte a byte: esa comprobacion solo vale en la maquina que regenero los PNG
+(dependen de las tipografias del sistema).
 """
 
 from __future__ import annotations
@@ -31,6 +34,14 @@ if str(AQUI) not in sys.path:
     sys.path.insert(0, str(AQUI))
 
 from lector import EJERCICIOS, FaltaEntrada, Salidas  # noqa: E402
+from pptx_minimo import (  # noqa: E402
+    ALTO_IN,
+    ANCHO_IN,
+    CONTENIDO_Y_IN,
+    EMU_POR_PULGADA,
+    MARGEN_IN,
+    PREFIJO_FUENTE,
+)
 
 LIMITE_BYTES = 100 * 1024 * 1024
 
@@ -285,9 +296,66 @@ TABLAS = (
     ("ej1b", "dae_comparison.md", ("lat", "hid", "noise")),
 )
 
+# Figuras de curvas que pueden mostrar un estudio en lugar de su tabla completa.
+FIGURAS_DE_ESTUDIO = {
+    "ej1a": ("output/ej1a/curves_{e}_loss.png", "output/ej1a/curves_{e}_wrongpx.png"),
+    "ej1b": ("output/ej1b/dae_curves_{e}_loss.png",),
+}
+
+# Presupuesto de texto y de figuras por diapositiva (ver README, seccion Presentacion).
+MAX_PALABRAS = 40
+MAX_TITULO = 60
+MIN_PT_CUERPO = 18
+MIN_PT_TABLA = 16
+MIN_PALABRAS_NOTAS = 30
+MAX_TABLAS = 2
+MAX_FILAS_DATOS = 8
+MAX_COLUMNAS = 5
+MAX_IMAGENES = 2
+FRACCION_FIGURA = 0.9
+CONTENIDO_W_IN = ANCHO_IN - 2 * MARGEN_IN
+CONTENIDO_H_IN = ALTO_IN - MARGEN_IN - CONTENIDO_Y_IN
+
+# Consigna (docs/SIATP5.pdf): item, expresion regular con la que empieza el titulo de la
+# diapositiva que lo cubre, imagenes que debe incrustar (expresiones regulares sobre el texto
+# alternativo) y estudios cuyas variantes deben estar todas en las tablas de esa diapositiva.
+CONSIGNA = (
+    ("1.a.1", r"Ej 1a: Arquitectura", (), ()),
+    ("1.a.2", r"Ej 1a: Técnicas: arquitecturas", (), ("arch",)),
+    ("1.a.2", r"Ej 1a: Técnicas: optimizadores", (r"output/ej1a/curves_optim_loss\.png",), ()),
+    ("1.a.2", r"Ej 1a: Técnicas: activaciones y pérdida", (), ("act", "loss")),
+    ("1.a.2", r"Ej 1a: Resultados: \d+/\d+ patrones con ≤ \d+ píxel", (), ()),
+    ("1.a.3", r"Ej 1a: Resultados: espacio latente", (r"output/ej1a/latent\.png",), ()),
+    ("1.a.4", r"Ej 1a: Resultados: letra nueva", (r"output/ej1a/new_letter\.png",), ()),
+    ("1.b.1", r"Ej 1b: Arquitectura", (), ()),
+    ("1.b.1", r"Ej 1b: Técnicas: latente y capas ocultas", (), ("lat", "hid")),
+    ("1.b.1", r"Ej 1b: Técnicas: ruido de entrenamiento", (), ("noise",)),
+    ("1.b.2", r"Ej 1b: Resultados: distorsión de las entradas", (r"output/ej1b/noise_examples\.png",), ()),
+    ("1.b.2", r"Ej 1b: Resultados: error por nivel de ruido", (r"output/ej1b/dae_error_vs_noise\.png",), ()),
+    ("1.b.2", r"Ej 1b: Resultados: nivel máximo eliminado", (r"output/ej1b/dae_within_vs_noise\.png",), ()),
+    (
+        "1.b.2",
+        r"Ej 1b: Resultados: original, entrada ruidosa y salida",
+        (r"output/ej1b/dae_examples_p\d\.\d\d\.png",),
+        (),
+    ),
+    ("2.a", r"Ej 2: Dataset", (r"output/ej2/emojis\.png",), ()),
+    ("2.b", r"Ej 2: Arquitectura", (), ()),
+    (
+        "2.b",
+        r"Ej 2: Técnicas: VAE frente a autoencoder simple",
+        (r"output/ej2/vae_manifold\.png", r"output/ej2/plain_manifold\.png"),
+        (),
+    ),
+    ("2.b", r"Ej 2: Resultados: evolución de la pérdida", (r"output/ej2/vae_loss\.png",), ()),
+    ("2.b", r"Ej 2: Resultados: reconstrucción", (r"output/ej2/vae_reconstruction\.png",), ()),
+    ("2.c", r"Ej 2: Resultados: emoji nuevo", (r"output/ej2/vae_new_emoji\.png",), ()),
+)
+
 _NUMERO = re.compile(r"(?<!\w)(\d+\.\d+|\d{3,})(?!\w)")
 _ALT = re.compile(r"^output/(%s)/([^/\\]+)$" % "|".join(EJERCICIOS))
 _SUFIJOS_CORPUS = (".txt", ".csv", ".md")
+_CON_LETRA_O_CIFRA = re.compile(r"[^\W_]")
 
 
 def numeros_a_verificar(texto: str) -> list[str]:
@@ -295,6 +363,11 @@ def numeros_a_verificar(texto: str) -> list[str]:
     o mas cifras, sin pegarse a una palabra, y sin signo. Los enteros de una y dos
     cifras son indices, cuentas de semillas o de diapositivas y no se comprueban."""
     return _NUMERO.findall(texto)
+
+
+def contar_palabras(parrafos) -> int:
+    """Tramos separados por espacios que tienen al menos una letra o una cifra."""
+    return sum(1 for p in parrafos for tok in p.split() if _CON_LETRA_O_CIFRA.search(tok))
 
 
 class Diapositiva:
@@ -305,15 +378,46 @@ class Diapositiva:
         self.titulo = titulo
         self.tramos: list[str] = []
         self.bloques: list[tuple[str, list[str]]] = []  # (fuente, parrafos)
-        self.imagenes: list[tuple[str, bytes]] = []  # (texto alternativo, bytes)
+        self.imagenes: list[tuple[str, bytes, float, float]] = []  # (alt, bytes, ancho in, alto in)
+        self.cuerpo: list[str] = []  # parrafos fuera del titulo y de las tablas
+        self.tablas: list[tuple[bool, list[list[str]]]] = []  # (tiene encabezado, filas de celdas)
+        self.pt_cuerpo: list[float] = []
+        self.pt_tabla: list[float] = []
+        self.notas: list[str] | None = None  # parrafos de las notas del orador
 
     @property
     def texto(self) -> str:
         return "\n".join(self.tramos)
 
+    @property
+    def palabras(self) -> int:
+        return contar_palabras(self.cuerpo)
+
+    def prosa_y_citas(self) -> tuple[list[str], list[tuple[str, list[str]]]]:
+        """Notas partidas en la prosa y, desde el primer parrafo `Fuente: X`, las citas."""
+        prosa: list[str] = []
+        citas: list[tuple[str, list[str]]] = []
+        for p in self.notas or []:
+            if p.startswith(PREFIJO_FUENTE):
+                citas.append((p[len(PREFIJO_FUENTE):], []))
+            elif citas:
+                citas[-1][1].append(p)
+            else:
+                prosa.append(p)
+        return prosa, citas
+
 
 def _parrafos_de(sp: ET.Element) -> list[str]:
     return [_texto_de(p) for p in sp.iter(f"{{{_NS['a']}}}p")]
+
+
+def _tamanios(elemento: ET.Element) -> list[float]:
+    salida = []
+    for rpr in elemento.iter(f"{{{_NS['a']}}}rPr"):
+        sz = rpr.get("sz")
+        if sz is not None and sz.isdigit():
+            salida.append(int(sz) / 100.0)
+    return salida
 
 
 def _cargar_diapositivas(ruta) -> list[Diapositiva]:
@@ -340,15 +444,23 @@ def _cargar_diapositivas(ruta) -> list[Diapositiva]:
                 posixpath.dirname(nombre), "_rels", posixpath.basename(nombre) + ".rels"
             )
             destinos = {}
+            parte_notas = None
             if rels_slide in nombres:
                 for r in ET.fromstring(z.read(rels_slide)).findall("rel:Relationship", _NS):
-                    destinos[r.get("Id")] = _resolver(posixpath.dirname(nombre), r.get("Target", ""))
+                    if r.get("TargetMode") == "External":
+                        continue
+                    destino = _resolver(posixpath.dirname(nombre), r.get("Target", ""))
+                    destinos[r.get("Id")] = destino
+                    if r.get("Type") == f"{_REL_BASE}/notesSlide":
+                        parte_notas = destino
 
             titulo = ""
+            forma_titulo = None
             for sp in raiz.iter(f"{{{_NS['p']}}}sp"):
                 ph = sp.find("p:nvSpPr/p:nvPr/p:ph", _NS)
                 if ph is not None and ph.get("type") in ("title", "ctrTitle"):
                     titulo = _texto_de(sp)
+                    forma_titulo = sp
                     break
             d = Diapositiva(n, titulo)
             for r in raiz.iter(f"{{{_NS['a']}}}r"):
@@ -359,6 +471,15 @@ def _cargar_diapositivas(ruta) -> list[Diapositiva]:
                 forma = c.get("name", "") if c is not None else ""
                 if forma.startswith("salida: "):
                     d.bloques.append((forma[len("salida: "):], _parrafos_de(sp)))
+                if sp is not forma_titulo:
+                    d.cuerpo.extend(_parrafos_de(sp))
+                    d.pt_cuerpo.extend(_tamanios(sp))
+            for tbl in raiz.iter(f"{{{_NS['a']}}}tbl"):
+                props = tbl.find("a:tblPr", _NS)
+                encabezado = props is not None and props.get("firstRow") == "1"
+                filas = [[_texto_de(tc) for tc in tr.findall("a:tc", _NS)] for tr in tbl.findall("a:tr", _NS)]
+                d.tablas.append((encabezado, filas))
+                d.pt_tabla.extend(_tamanios(tbl))
             for pic in raiz.iter(f"{{{_NS['p']}}}pic"):
                 c = pic.find("p:nvPicPr/p:cNvPr", _NS)
                 alt = c.get("descr", "") if c is not None else ""
@@ -367,9 +488,28 @@ def _cargar_diapositivas(ruta) -> list[Diapositiva]:
                 datos = b""
                 if rid in destinos and destinos[rid] in nombres:
                     datos = z.read(destinos[rid])
-                d.imagenes.append((alt, datos))
+                ext = pic.find("p:spPr/a:xfrm/a:ext", _NS)
+                ancho = alto = 0.0
+                if ext is not None:
+                    try:
+                        ancho = int(ext.get("cx", "0")) / EMU_POR_PULGADA
+                        alto = int(ext.get("cy", "0")) / EMU_POR_PULGADA
+                    except ValueError:
+                        pass
+                d.imagenes.append((alt, datos, ancho, alto))
+            if parte_notas is not None and parte_notas in nombres and not _ruta_insegura(parte_notas):
+                d.notas = []
+                for sp in ET.fromstring(z.read(parte_notas)).iter(f"{{{_NS['p']}}}sp"):
+                    ph = sp.find("p:nvSpPr/p:nvPr/p:ph", _NS)
+                    if ph is not None and ph.get("type") == "body":
+                        d.notas.extend(_parrafos_de(sp))
             salida.append(d)
     return salida
+
+
+def notas(ruta) -> list[tuple[int, list[str]]]:
+    """(numero de diapositiva, parrafos de sus notas del orador); lista vacia si no tiene."""
+    return [(d.n, list(d.notas or [])) for d in _cargar_diapositivas(ruta)]
 
 
 def _comprobar_secciones(diaps: list[Diapositiva]) -> list[str]:
@@ -437,20 +577,22 @@ def _corpus_de_numeros(raiz: Path, raiz_repo: Path) -> set[str]:
 
 
 def _comprobar_numeros(diaps, corpus: set[str]) -> tuple[list[str], int]:
+    """La misma regla para el texto de la diapositiva y para sus notas del orador."""
     errores: list[str] = []
     verificados = 0
     for d in diaps:
-        vistos: set[str] = set()
-        for t in d.tramos:
-            for tok in numeros_a_verificar(t):
-                verificados += 1
-                if tok in corpus or tok in CONSTANTES_DE_TEORIA or tok in vistos:
-                    continue
-                vistos.add(tok)
-                errores.append(
-                    f"diapositiva {d.n}: el numero {tok} no aparece en ninguna salida regenerada "
-                    "ni en los documentos de analisis"
-                )
+        for donde, textos_ in (("", d.tramos), (" (notas)", d.notas or [])):
+            vistos: set[str] = set()
+            for t in textos_:
+                for tok in numeros_a_verificar(t):
+                    verificados += 1
+                    if tok in corpus or tok in CONSTANTES_DE_TEORIA or tok in vistos:
+                        continue
+                    vistos.add(tok)
+                    errores.append(
+                        f"diapositiva {d.n}{donde}: el numero {tok} no aparece en ninguna salida regenerada "
+                        "ni en los documentos de analisis"
+                    )
     return errores, verificados
 
 
@@ -458,7 +600,20 @@ def _comprobar_imagenes(diaps, raiz: Path) -> tuple[list[str], int]:
     errores: list[str] = []
     verificadas = 0
     for d in diaps:
-        for alt, datos in d.imagenes:
+        if len(d.imagenes) > MAX_IMAGENES:
+            errores.append(
+                f"diapositiva {d.n}: tiene {len(d.imagenes)} imagenes y el maximo es {MAX_IMAGENES}"
+            )
+        for alt, datos, ancho, alto in d.imagenes:
+            if (
+                ancho < FRACCION_FIGURA * CONTENIDO_W_IN - 1e-3
+                and alto < FRACCION_FIGURA * CONTENIDO_H_IN - 1e-3
+            ):
+                errores.append(
+                    f"diapositiva {d.n}: la imagen «{alt}» mide {ancho:.2f} x {alto:.2f} pulgadas y debe ocupar "
+                    f"al menos el {FRACCION_FIGURA:.0%} del ancho ({FRACCION_FIGURA * CONTENIDO_W_IN:.2f}) "
+                    f"o del alto ({FRACCION_FIGURA * CONTENIDO_H_IN:.2f}) del area de contenido"
+                )
             m = _ALT.match(alt)
             if m is None:
                 errores.append(
@@ -481,45 +636,57 @@ def _comprobar_imagenes(diaps, raiz: Path) -> tuple[list[str], int]:
 
 
 def _comprobar_citas(diaps, raiz: Path) -> tuple[list[str], int]:
+    """Bloques `salida:` de las diapositivas y lineas citadas tras `Fuente:` en las notas."""
     errores: list[str] = []
     citadas = 0
     transcripciones: dict[str, set[str] | None] = {}
+
+    def lineas_de(fuente: str) -> set[str] | None:
+        if fuente not in transcripciones:
+            partes = fuente.split("/")
+            lineas = None
+            if len(partes) == 2 and partes[0] in EJERCICIOS and partes[1] not in ("", ".", ".."):
+                ruta = raiz / partes[0] / partes[1]
+                if ruta.is_file():
+                    lineas = set(ruta.read_text(encoding="utf-8").splitlines())
+            transcripciones[fuente] = lineas
+        return transcripciones[fuente]
+
     for d in diaps:
-        for fuente, parrafos in d.bloques:
-            if fuente not in transcripciones:
-                partes = fuente.split("/")
-                lineas = None
-                if len(partes) == 2 and partes[0] in EJERCICIOS and partes[1] not in ("", ".", ".."):
-                    ruta = raiz / partes[0] / partes[1]
-                    if ruta.is_file():
-                        lineas = set(ruta.read_text(encoding="utf-8").splitlines())
-                transcripciones[fuente] = lineas
-            lineas = transcripciones[fuente]
+        _prosa, citas = d.prosa_y_citas()
+        grupos = [("el bloque citado", f, ps) for f, ps in d.bloques]
+        grupos += [("la cita de las notas", f, ps) for f, ps in citas]
+        for que, fuente, parrafos in grupos:
+            lineas = lineas_de(fuente)
             if lineas is None:
                 errores.append(
-                    f"diapositiva {d.n}: el bloque citado «{fuente}» nombra una transcripcion "
+                    f"diapositiva {d.n}: {que} «{fuente}» nombra una transcripcion "
                     f"que no existe en {raiz}"
                 )
                 continue
+            if not parrafos:
+                errores.append(f"diapositiva {d.n}: {que} «{fuente}» no cita ninguna linea")
             for p in parrafos:
                 if p in lineas:
                     citadas += 1
                 else:
                     errores.append(
-                        f"diapositiva {d.n}: la linea {p!r} del bloque «{fuente}» "
+                        f"diapositiva {d.n}: la linea {p!r} de «{fuente}» ({que}) "
                         "no es una linea de la transcripcion"
                     )
     return errores, citadas
 
 
-def _contiene_secuencia(tramos: list[str], fila: list[str]) -> bool:
-    n = len(fila)
-    return any(tramos[i : i + n] == fila for i in range(len(tramos) - n + 1))
+def _es_subsecuencia(fila: list[str], fuente: list[str]) -> bool:
+    resto = iter(fuente)
+    return all(any(celda == c for c in resto) for celda in fila)
 
 
-def _comprobar_tablas(diaps, salidas: Salidas) -> tuple[list[str], int]:
+def _variantes(salidas: Salidas) -> tuple[list[str], dict, dict]:
+    """Errores de lectura, fila fuente por variante y variantes por (ejercicio, archivo, estudio)."""
     errores: list[str] = []
-    filas_ok = 0
+    fila_de: dict[str, tuple[str, str, str, list[str]]] = {}
+    de_estudio: dict[tuple[str, str, str], list[str]] = {}
     for ej, archivo, estudios in TABLAS:
         for estudio in estudios:
             try:
@@ -527,28 +694,140 @@ def _comprobar_tablas(diaps, salidas: Salidas) -> tuple[list[str], int]:
             except (FaltaEntrada, ValueError) as e:
                 errores.append(f"presentacion: no se pudo leer la tabla {estudio} de {ej}/{archivo}: {e}")
                 continue
+            de_estudio[(ej, archivo, estudio)] = [f[0] for f in filas]
+            for f in filas:
+                fila_de[f[0]] = (ej, archivo, estudio, f)
+    return errores, fila_de, de_estudio
+
+
+def _comprobar_tablas(diaps, fila_de: dict, de_estudio: dict) -> tuple[list[str], int]:
+    """Cada fila de tabla que empieza con una variante conocida es una subsecuencia en orden de su
+    fila fuente; cada estudio se muestra con todas sus variantes en tablas o con su figura de curvas."""
+    errores: list[str] = []
+    filas_ok = 0
+    mostradas: set[str] = set()
+    for d in diaps:
+        if len(d.tablas) > MAX_TABLAS:
+            errores.append(f"diapositiva {d.n}: tiene {len(d.tablas)} tablas y el maximo es {MAX_TABLAS}")
+        if d.tablas and d.imagenes:
+            errores.append(f"diapositiva {d.n}: tiene una tabla y una imagen; van en diapositivas separadas")
+        for encabezado, filas in d.tablas:
+            datos = len(filas) - (1 if encabezado else 0)
+            columnas = max((len(f) for f in filas), default=0)
+            if datos > MAX_FILAS_DATOS or columnas > MAX_COLUMNAS:
+                errores.append(
+                    f"diapositiva {d.n}: una tabla tiene {datos} filas de datos y {columnas} columnas; "
+                    f"el maximo es {MAX_FILAS_DATOS} filas y {MAX_COLUMNAS} columnas"
+                )
             for fila in filas:
-                if any(_contiene_secuencia(d.tramos, fila) for d in diaps):
+                if not fila or fila[0] not in fila_de:
+                    continue
+                ej, archivo, estudio, fuente = fila_de[fila[0]]
+                if _es_subsecuencia(fila, fuente):
                     filas_ok += 1
+                    mostradas.add(fila[0])
                 else:
                     errores.append(
-                        f"presentacion: la fila {fila!r} de la tabla {estudio} de {ej}/{archivo} "
-                        "no esta completa y en orden en ninguna diapositiva"
+                        f"diapositiva {d.n}: la fila {fila!r} no es una subsecuencia en orden de la fila "
+                        f"{fuente!r} de la tabla {estudio} de {ej}/{archivo}"
                     )
+    incrustadas = {alt for d in diaps for alt, *_ in d.imagenes}
+    for (ej, archivo, estudio), variantes in de_estudio.items():
+        faltan = [v for v in variantes if v not in mostradas]
+        figuras = [f.format(e=estudio) for f in FIGURAS_DE_ESTUDIO.get(ej, ())]
+        if faltan and not any(f in incrustadas for f in figuras):
+            errores.append(
+                f"presentacion: el estudio {estudio} de {ej}/{archivo} no se muestra ni con todas sus variantes "
+                f"en tablas (faltan {', '.join(faltan)}) ni con su figura de curvas ({' o '.join(figuras)})"
+            )
     return errores, filas_ok
 
 
 def _comprobar_retiradas(diaps) -> list[str]:
     errores: list[str] = []
     for d in diaps:
-        bajo = d.texto.lower()
-        for frase in AFIRMACIONES_RETIRADAS:
-            if frase in bajo:
-                errores.append(f"diapositiva {d.n}: contiene la afirmacion retirada «{frase}»")
+        for donde, texto in (("", d.texto), (" (notas)", "\n".join(d.notas or []))):
+            bajo = texto.lower()
+            for frase in AFIRMACIONES_RETIRADAS:
+                if frase in bajo:
+                    errores.append(f"diapositiva {d.n}{donde}: contiene la afirmacion retirada «{frase}»")
     return errores
 
 
-def verificar_consistencia(ruta_pptx, raiz_salidas, raiz_repo) -> tuple[list[str], dict]:
+def _comprobar_texto(diaps) -> tuple[list[str], int]:
+    """Presupuesto de texto: palabras fuera del titulo y de las tablas, titulo de una linea y
+    tamanos de letra minimos."""
+    errores: list[str] = []
+    maximo = 0
+    for d in diaps:
+        maximo = max(maximo, d.palabras)
+        if d.palabras > MAX_PALABRAS:
+            errores.append(
+                f"diapositiva {d.n} («{d.titulo}»): tiene {d.palabras} palabras fuera del titulo y de las "
+                f"tablas y el maximo es {MAX_PALABRAS}; lo que sobra va a las notas del orador"
+            )
+        if len(d.titulo) > MAX_TITULO:
+            errores.append(
+                f"diapositiva {d.n}: el titulo «{d.titulo}» tiene {len(d.titulo)} caracteres y el maximo "
+                f"para una linea es {MAX_TITULO}"
+            )
+        if d.pt_cuerpo and min(d.pt_cuerpo) < MIN_PT_CUERPO:
+            errores.append(
+                f"diapositiva {d.n}: hay texto de {min(d.pt_cuerpo):g} pt y el minimo es {MIN_PT_CUERPO} pt"
+            )
+        if d.pt_tabla and min(d.pt_tabla) < MIN_PT_TABLA:
+            errores.append(
+                f"diapositiva {d.n}: hay celdas de tabla de {min(d.pt_tabla):g} pt y el minimo es {MIN_PT_TABLA} pt"
+            )
+    return errores, maximo
+
+
+def _comprobar_notas(diaps) -> tuple[list[str], int]:
+    errores: list[str] = []
+    con_notas = 0
+    for d in diaps:
+        if not d.notas:
+            errores.append(f"diapositiva {d.n} («{d.titulo}»): no tiene notas del orador")
+            continue
+        con_notas += 1
+        prosa, _citas = d.prosa_y_citas()
+        palabras = contar_palabras(prosa)
+        if d.n > 1 and palabras < MIN_PALABRAS_NOTAS:
+            errores.append(
+                f"diapositiva {d.n} («{d.titulo}»): las notas del orador tienen {palabras} palabras "
+                f"y el minimo es {MIN_PALABRAS_NOTAS}"
+            )
+    return errores, con_notas
+
+
+def _comprobar_consigna(diaps, de_estudio: dict, consigna=CONSIGNA) -> list[str]:
+    errores: list[str] = []
+    variantes_de = {estudio: v for (_ej, _archivo, estudio), v in de_estudio.items()}
+    for item, patron, imagenes, estudios in consigna:
+        candidatas = [d for d in diaps if re.match(patron, d.titulo)]
+        if not candidatas:
+            errores.append(f"consigna {item}: falta la diapositiva cuyo titulo empieza con «{patron}»")
+            continue
+        faltas: list[str] = []
+        for d in candidatas:
+            faltas = []
+            alts = [alt for alt, *_ in d.imagenes]
+            for img in imagenes:
+                if not any(re.fullmatch(img, a) for a in alts):
+                    faltas.append(f"no incrusta la imagen {img}")
+            primeras = {f[0] for _enc, filas in d.tablas for f in filas if f}
+            for estudio in estudios:
+                faltan = [v for v in variantes_de.get(estudio, [f"(tabla {estudio} ilegible)"]) if v not in primeras]
+                if faltan:
+                    faltas.append(f"no muestra en una tabla las variantes {', '.join(faltan)} del estudio {estudio}")
+            if not faltas:
+                break
+        for f in faltas:
+            errores.append(f"consigna {item}: la diapositiva {candidatas[-1].n} («{candidatas[-1].titulo}») {f}")
+    return errores
+
+
+def verificar_consistencia(ruta_pptx, raiz_salidas, raiz_repo, *, consigna=CONSIGNA) -> tuple[list[str], dict]:
     """Errores (cada uno nombra su diapositiva y el elemento) y contadores."""
     raiz = Path(raiz_salidas)
     repo = Path(raiz_repo)
@@ -562,15 +841,24 @@ def verificar_consistencia(ruta_pptx, raiz_salidas, raiz_repo) -> tuple[list[str
     errores += e
     e, n_lin = _comprobar_citas(diaps, raiz)
     errores += e
-    e, n_fil = _comprobar_tablas(diaps, salidas)
+    e, fila_de, de_estudio = _variantes(salidas)
+    errores += e
+    e, n_fil = _comprobar_tablas(diaps, fila_de, de_estudio)
     errores += e
     errores += _comprobar_retiradas(diaps)
+    e, max_palabras = _comprobar_texto(diaps)
+    errores += e
+    e, n_notas = _comprobar_notas(diaps)
+    errores += e
+    errores += _comprobar_consigna(diaps, de_estudio, consigna)
     contadores = {
         "diapositivas": len(diaps),
         "imagenes": n_img,
         "numeros": n_num,
         "lineas": n_lin,
         "filas": n_fil,
+        "palabras": max_palabras,
+        "notas": n_notas,
     }
     return errores, contadores
 
@@ -580,6 +868,11 @@ def main(argv=None) -> int:
     ap.add_argument("--pptx", required=True, help="ruta del archivo .pptx")
     ap.add_argument("--listar", action="store_true", help="imprime 'N: titulo' por diapositiva")
     ap.add_argument("--texto", action="store_true", help="imprime 'N: texto' por tramo de texto")
+    ap.add_argument(
+        "--notas",
+        action="store_true",
+        help="imprime 'N: parrafo' por parrafo de las notas del orador y cuantas diapositivas tienen notas",
+    )
     ap.add_argument(
         "--salida",
         default=None,
@@ -603,6 +896,12 @@ def main(argv=None) -> int:
     if args.texto:
         for n, t in textos(args.pptx):
             print(f"{n}: {t}")
+    if args.notas:
+        todas = notas(args.pptx)
+        for n, parrafos in todas:
+            for p in parrafos:
+                print(f"{n}: {p}")
+        print(f"NOTAS: {sum(1 for _n, ps in todas if ps)} de {len(todas)} diapositivas")
     if args.salida is not None:
         try:
             errores, c = verificar_consistencia(args.pptx, args.salida, AQUI.parent)
@@ -616,7 +915,8 @@ def main(argv=None) -> int:
             return 1
         print(
             f"CONSISTENCIA OK: {c['diapositivas']} diapositivas, {c['imagenes']} imagenes verificadas, "
-            f"{c['numeros']} numeros verificados, {c['lineas']} lineas citadas, {c['filas']} filas de tablas"
+            f"{c['numeros']} numeros verificados, {c['lineas']} lineas citadas, {c['filas']} filas de tablas, "
+            f"maximo {c['palabras']} palabras por diapositiva, {c['notas']} con notas del orador"
         )
     return 0
 

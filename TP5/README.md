@@ -100,7 +100,7 @@ El segundo comando copia a un directorio temporal solo los archivos versionados 
 
 ## Presentación
 
-La presentación es un archivo PowerPoint, `presentacion/TP5-autoencoders.pptx`, versionado en git. Tiene una portada, un Resumen, una sección por ejercicio (Ej 1a, Ej 1b y Ej 2, cada una con arquitectura, técnicas probadas, resultados con sus gráficos y conclusiones con sus límites) y una diapositiva final de Reproducibilidad.
+La presentación es un archivo PowerPoint, `presentacion/TP5-autoencoders.pptx`, versionado en git. Tiene una portada, un Resumen, una sección por ejercicio (Ej 1a, Ej 1b y Ej 2, cada una con arquitectura, técnicas probadas, resultados con sus gráficos y conclusiones) y una diapositiva final de Reproducibilidad. Cada diapositiva lleva notas del orador (visibles en la vista del presentador de PowerPoint) con la explicación hablada, la lectura de las figuras, las preguntas probables y las líneas de reporte citadas tras un párrafo `Fuente: EJ/ARCHIVO`.
 
 ```bash
 bash scripts/presentacion.sh
@@ -114,16 +114,17 @@ El comando hace, en orden: regenera los tres ejercicios (`bash scripts/regenerar
 
 Hace falta solo Python 3 y su biblioteca estándar: no hay nada que instalar y no hace falta PowerPoint para construirla. El archivo se escribe sin comprimir y con fechas fijas, así que dos construcciones a partir de las mismas salidas son idénticas byte a byte.
 
-Garantías y cómo se comprueba cada una:
+Tres reglas de diseño y qué verifica cada herramienta:
 
-- **Los números salen de lo que regenera el código.** Las diapositivas no tipean cifras: las leen de los reportes, CSV y tablas Markdown de `output/` a través de `presentacion/lector.py`. Las líneas que se muestran como bloque de salida son líneas exactas de la transcripción del ejercicio.
-- **Cada gráfico es el PNG regenerado.** Cada imagen lleva como texto alternativo su ruta, `output/ejX/ARCHIVO`.
-- `presentacion/verificar.py --pptx ARCHIVO --salida RAIZ` compara la presentación con los archivos regenerados en esa máquina: las secciones y su orden, cada número contra las salidas y los documentos de análisis, cada imagen por SHA-256 contra su PNG, cada línea citada contra su transcripción, cada fila de las tablas de comparación y la ausencia de las afirmaciones retiradas. Como compara los bytes de los PNG, que dependen de las fuentes del sistema, solo vale en la máquina que los regeneró.
-- `cargo test --release --test deck_consistency` comprueba la presentación versionada contra lo que la biblioteca recalcula en el propio proceso (líneas, filas de tablas, cifras y coordenadas), sin leer `output/` ni comparar bytes de PNG: pasa en cualquier máquina.
+- **Presupuesto de texto y notas del orador.** Cada diapositiva tiene como máximo 40 palabras fuera del título y de las celdas de las tablas, un título de una sola línea (a lo sumo 60 caracteres), cuerpo de al menos 18 pt y celdas de tabla de al menos 16 pt; a lo sumo 2 tablas por diapositiva (hasta 8 filas de datos y 5 columnas) y ninguna imagen en una diapositiva con tabla. En la diapositiva queda solo lo comprobable contra `output/` o contra la figura de esa misma diapositiva; la interpretación pasa a las notas del orador (al menos 30 palabras de prosa en cada diapositiva salvo la portada).
+- **Legibilidad y ubicación de las figuras.** Los gráficos de curvas y del espacio latente no tienen grilla (`disable_mesh()`) y las figuras de letras de 7x5 llevan un único recuadro exterior por patrón sin grilla por celda. Al generar cada PNG, `src/plots.rs` exige que el texto más chico de la figura equivalga a al menos 16 pt en la escala del área de contenido de la diapositiva (`12.333 x 5.35` pulgadas); en la diapositiva cada figura ocupa al menos el 90 % del ancho o del alto del área de contenido (a lo sumo 2 imágenes por diapositiva).
+- **Cobertura de la consigna y trazabilidad de números.** La tabla `CONSIGNA` de `presentacion/verificar.py` asocia cada ítem de `docs/SIATP5.pdf` (`1.a.1`, `1.a.2`, `1.a.3`, `1.a.4`, `1.b.1`, `1.b.2`, `2.a`, `2.b`, `2.c`) con su diapositiva y su evidencia obligatoria (figuras o estudios en tablas). Las diapositivas y las notas no tipean cifras: las leen de `output/` mediante `presentacion/lector.py`.
+- `presentacion/verificar.py --pptx ARCHIVO --salida RAIZ` comprueba la estructura del paquete y la consistencia con `RAIZ`: secciones y orden, presupuesto de texto y tamaños de letra, notas del orador en cada diapositiva (también se listan con `--notas`), números en diapositivas y en notas contra las salidas y los documentos de análisis, imágenes por SHA-256, texto alternativo y tamaño en la diapositiva, líneas citadas en bloques `salida:` y tras `Fuente:` en las notas, subsecuencias en orden de las filas de las tablas de comparación (o la figura de curvas del estudio), cobertura de la consigna y ausencia de las afirmaciones retiradas. Como compara los bytes de los PNG, que dependen de las fuentes del sistema, solo vale en la máquina que los regeneró.
+- `cargo test --release --test deck_consistency` comprueba la presentación contra lo que la biblioteca recalcula en el propio proceso (en diapositivas y en notas: líneas citadas, subsecuencias de tablas o figuras de estudio, cifras, coordenadas y ausencia de afirmaciones retiradas), sin leer `output/` ni comparar bytes de PNG: pasa en cualquier máquina. Por defecto lee `presentacion/TP5-autoencoders.pptx`; si se define la variable de entorno `TP5_DECK`, lee esa ruta (por ejemplo `TP5_DECK=output/presentacion/TP5-autoencoders.pptx` cuando el archivo versionado está abierto en PowerPoint).
 
 Pruebas del propio armado, sin dependencia de `output/`: `python3 -B -m unittest discover -s presentacion/pruebas`.
 
-Organización: cada sección es un módulo `presentacion/secciones/seccion_NN_nombre.py` con una función `agregar(pres, salidas)`; `construir.py` las toma en orden de nombre.
+Organización: cada sección es un módulo `presentacion/secciones/seccion_NN_nombre.py` con una función `agregar(pres, salidas)`; `construir.py` las toma en orden de nombre y `presentacion/disposicion.py` concentra las ayudas de ubicación.
 
 | Módulo | Diapositivas |
 |--------|--------------|

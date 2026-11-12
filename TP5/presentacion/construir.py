@@ -79,7 +79,8 @@ def main(argv=None) -> int:
         print(f"ENTRADA INVALIDA: {e}")
         return 1
     print(
-        f"PRESENTACION: {pres.n_diapositivas} diapositivas, {pres.n_imagenes} imagenes -> {args.destino}"
+        f"PRESENTACION: {pres.n_diapositivas} diapositivas, {pres.n_imagenes} imagenes, "
+        f"{pres.n_notas} con notas del orador -> {args.destino}"
     )
     return 0
 

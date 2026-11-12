@@ -57,7 +57,7 @@ class Base(unittest.TestCase):
         d.imagen(self.png, 7, 1.7, 5, 3, alt="output/ej1a/g.png")
         d.tabla(0.5, 4.6, 8, [["a", "b"], ["1", "2"], ["3", "4"]])
         d.caja(9, 4.6, 3.5, 1.0, "Caja")
-        d.cifra(9, 5.8, 3.5, 1.1, "32/32", "patrones")
+        d.cifra(9, 5.65, 3.5, 1.3, "32/32", "patrones")
         ruta = self.dir / "ejemplo.pptx"
         p.guardar(ruta)
         return ruta
@@ -134,18 +134,18 @@ class PruebasEscritor(Base):
         d = pm.Presentacion("t").diapositiva("Titulo")
         largo = "palabra " * 200
         with self.assertRaises(pm.ErrorDeLayout) as ctx:
-            d.texto(0.5, 1.7, 4, 0.5, largo, tam=16)
+            d.texto(0.5, 1.7, 4, 0.5, largo, tam=18)
         self.assertIn("Titulo", str(ctx.exception))
         with self.assertRaises(pm.ErrorDeLayout):
             d.codigo(0.5, 1.7, 3, 0.4, ["x" * 200], fuente="a/b.txt")
 
     def test_text_that_fits_does_not_raise(self):
         d = pm.Presentacion("t").diapositiva("Titulo")
-        d.texto(0.5, 1.7, 6, 1.0, "Una linea corta", tam=16)
-        # 0.52 * 16 / 72 = 0.1156 in por caracter; 5.8 in utiles -> 50 caracteres por renglon
-        d.texto(0.5, 3.0, 6, 0.5, "x" * 50, tam=16)
-        self.assertEqual(pm.altura_estimada([pm.Parrafo("x" * 50)], 6, tam=16), 16 * 1.2 / 72 + 0.1)
-        self.assertGreater(pm.altura_estimada([pm.Parrafo("x" * 51)], 6, tam=16), 2 * 16 * 1.2 / 72)
+        d.texto(0.5, 1.7, 6, 1.0, "Una linea corta", tam=18)
+        # 0.52 * 18 / 72 = 0.13 in por caracter; 5.8 in utiles -> 44 caracteres por renglon
+        d.texto(0.5, 3.0, 6, 0.5, "x" * 44, tam=18)
+        self.assertEqual(pm.altura_estimada([pm.Parrafo("x" * 44)], 6, tam=18), 18 * 1.2 / 72 + 0.1)
+        self.assertGreater(pm.altura_estimada([pm.Parrafo("x" * 45)], 6, tam=18), 2 * 18 * 1.2 / 72)
 
     def test_height_estimate_uses_monospace_and_bullet_rules(self):
         mono = pm.altura_estimada([pm.Parrafo("x" * 30)], 4, tam=10, mono=True)
@@ -267,12 +267,125 @@ class PruebasEscritor(Base):
 
     def test_font_size_floors(self):
         d = pm.Presentacion("t").diapositiva("Titulo")
+        self.assertEqual((pm.TAM_MINIMO_TEXTO, pm.TAM_MINIMO_TABLA), (18, 16))
         with self.assertRaises(pm.ErrorDeLayout):
-            d.texto(0.5, 1.7, 6, 1, "x", tam=9)
+            d.texto(0.5, 1.7, 6, 1, "x", tam=17)
         with self.assertRaises(pm.ErrorDeLayout):
-            d.tabla(0.5, 1.7, 6, [["a"]], tam=10)
+            d.texto(0.5, 1.7, 6, 1, [pm.Parrafo("x", tam=17)], tam=18)
         with self.assertRaises(pm.ErrorDeLayout):
-            d.codigo(0.5, 1.7, 6, 1, ["x"], fuente="f", tam=9)
+            d.tabla(0.5, 1.7, 6, [["a"]], tam=15)
+        with self.assertRaises(pm.ErrorDeLayout):
+            d.codigo(0.5, 1.7, 6, 1, ["x"], fuente="f", tam=17)
+        with self.assertRaises(pm.ErrorDeLayout):
+            d.caja(0.5, 1.7, 6, 1, "x", tam=17)
+        d.texto(0.5, 1.7, 6, 1, "x", tam=18)
+        d.tabla(0.5, 3.0, 6, [["a"]], tam=16)
+        d.codigo(0.5, 4.0, 6, 1, ["x"], fuente="f", tam=18)
+        d.caja(0.5, 5.2, 6, 1, "x", tam=18)
+
+
+class PruebasNotas(Base):
+    PROSA = ["Primer párrafo de las notas.", 'Segundo con "comillas", 3 < 4 y A & B.']
+    CITA = ["RESULTADO: 32/32", "   con sangria & <marcas>"]
+
+    def mazo_con_notas(self):
+        p = pm.Presentacion("Notas")
+        portada = p.diapositiva("Portada", portada=True)
+        portada.notas("Saludo & <presentación>")
+        d = p.diapositiva("Con figura")
+        d.imagen(self.png, 0.5, 1.7, 5, 3, alt="output/ej1a/g.png")
+        d.notas(self.PROSA, citas=[("ej1a/salida-ej1a.txt", self.CITA)])
+        p.diapositiva("Sin notas")
+        ruta = self.dir / "notas.pptx"
+        p.guardar(ruta)
+        return p, ruta
+
+    def test_notes_round_trip(self):
+        p, ruta = self.mazo_con_notas()
+        self.assertEqual(p.n_notas, 2)
+        self.assertEqual(vf.verificar_estructura(ruta), [])
+        self.assertEqual(
+            vf.notas(ruta),
+            [
+                (1, ["Saludo & <presentación>"]),
+                (2, self.PROSA + ["Fuente: ej1a/salida-ej1a.txt"] + self.CITA),
+                (3, []),
+            ],
+        )
+
+    def test_notes_parts_and_relationships(self):
+        _p, ruta = self.mazo_con_notas()
+        partes = dict(self.partes(ruta))
+        for nombre in (
+            "ppt/notesMasters/notesMaster1.xml",
+            "ppt/notesMasters/_rels/notesMaster1.xml.rels",
+            "ppt/theme/theme2.xml",
+            "ppt/notesSlides/notesSlide1.xml",
+            "ppt/notesSlides/notesSlide2.xml",
+            "ppt/notesSlides/_rels/notesSlide2.xml.rels",
+        ):
+            self.assertIn(nombre, partes)
+        self.assertNotIn("ppt/notesSlides/notesSlide3.xml", partes)
+        self.assertIn(b"<Notes>2</Notes>", partes["docProps/app.xml"])
+        pres = partes["ppt/presentation.xml"].decode("utf-8")
+        self.assertIn("</p:sldMasterIdLst><p:notesMasterIdLst>", pres)
+        rels = ET.fromstring(partes["ppt/slides/_rels/slide2.xml.rels"])
+        ids = [r.get("Id") for r in rels]
+        self.assertEqual(len(ids), len(set(ids)), ids)
+        tipos = [r.get("Type").rsplit("/", 1)[-1] for r in rels]
+        self.assertEqual(sorted(tipos), ["image", "notesSlide", "slideLayout"])
+        notas_rels = ET.fromstring(partes["ppt/notesSlides/_rels/notesSlide2.xml.rels"])
+        self.assertEqual(
+            sorted(r.get("Target") for r in notas_rels),
+            ["../notesMasters/notesMaster1.xml", "../slides/slide2.xml"],
+        )
+        cuerpo = ET.fromstring(partes["ppt/notesSlides/notesSlide2.xml"])
+        tipos_ph = [ph.get("type") for ph in cuerpo.iter("{http://schemas.openxmlformats.org/presentationml/2006/main}ph")]
+        self.assertEqual(tipos_ph, ["sldImg", "body"])
+        for par in cuerpo.iter(f"{NS_A}p"):
+            self.assertEqual(len(par.findall(f"{NS_A}r")), 1)
+
+    def test_notes_bytes_are_deterministic(self):
+        a = self.mazo_con_notas()[1].read_bytes()
+        b = self.mazo_con_notas()[1].read_bytes()
+        self.assertEqual(a, b)
+
+    def test_deck_without_notes_is_still_valid(self):
+        ruta = self.mazo_ejemplo()
+        partes = dict(self.partes(ruta))
+        self.assertFalse([n for n in partes if "notes" in n.lower() or n.endswith("theme2.xml")])
+        self.assertIn(b"<Notes>0</Notes>", partes["docProps/app.xml"])
+        self.assertNotIn(b"notesMasterIdLst", partes["ppt/presentation.xml"])
+        self.assertEqual(vf.verificar_estructura(ruta), [])
+        self.assertEqual(vf.notas(ruta), [(1, []), (2, [])])
+
+    def test_invalid_notes_raise(self):
+        d = pm.Presentacion("t").diapositiva("Titulo")
+        for malo in ([], [""], ["dos\nrenglones"], ["con \x07 control"], ["Fuente: ej1a/x.txt"]):
+            with self.assertRaises(pm.ErrorDeLayout, msg=repr(malo)):
+                d.notas(malo)
+        with self.assertRaises(pm.ErrorDeLayout):
+            d.notas("bien", citas=[("ej1a/x.txt", [])])
+        with self.assertRaises(pm.ErrorDeLayout):
+            d.notas("bien", citas=[("ej1a/x.txt", ["dos\nrenglones"])])
+        d.notas("bien")
+        with self.assertRaises(pm.ErrorDeLayout):
+            d.notas("otra vez")
+
+    def test_cli_prints_notes(self):
+        _p, ruta = self.mazo_con_notas()
+        salida = io.StringIO()
+        antes = sys.stdout
+        sys.stdout = salida
+        try:
+            codigo = vf.main(["--pptx", str(ruta), "--notas"])
+        finally:
+            sys.stdout = antes
+        lineas = salida.getvalue().splitlines()
+        self.assertEqual(codigo, 0)
+        self.assertIn("2: Primer párrafo de las notas.", lineas)
+        self.assertIn("2:    con sangria & <marcas>", lineas)
+        self.assertEqual(lineas[-1], "NOTAS: 2 de 3 diapositivas")
 
 
 class PruebasVerificador(Base):

@@ -260,7 +260,7 @@ fn new_emoji_png_is_written_with_the_fixed_name_and_fails_when_empty() {
     let k = search.accepted.len();
     let tiles = build_new_emoji_tiles(&search, ds);
     assert_eq!(tiles.len(), 2 * k);
-    assert!(tiles[0].0.starts_with("nuevo 1: "));
+    assert!(tiles[0].0.starts_with("1: "));
     assert_eq!(tiles[k].0, ds.names[search.accepted[0].judgement.nearest_index]);
 
     let dir = unique_tmp_dir("new-emoji");

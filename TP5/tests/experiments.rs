@@ -105,3 +105,27 @@ fn latent_dimension_is_two_in_every_config() {
         }
     }
 }
+
+/// La perdida 20.802142 en la que terminan varias corridas de SGD y Momentum del estudio `optim`
+/// (comparison.md, sweep.csv) es la entropia cruzada de una salida constante: la frecuencia con que
+/// cada pixel esta encendido en los 32 patrones, sea cual sea la entrada. La presentacion lo dice
+/// en las notas de la diapositiva de optimizadores.
+#[test]
+fn constant_output_loss_is_the_plateau_of_the_stuck_runs() {
+    let ds = load_font().unwrap();
+    let n = ds.x.nrows() as f64;
+    let entropy: f64 = ds
+        .x
+        .columns()
+        .into_iter()
+        .map(|col| {
+            let p = col.sum() / n;
+            if p <= 0.0 || p >= 1.0 {
+                0.0
+            } else {
+                -(p * p.ln() + (1.0 - p) * (1.0 - p).ln())
+            }
+        })
+        .sum();
+    assert_eq!(format!("{entropy:.6}"), "20.802142");
+}

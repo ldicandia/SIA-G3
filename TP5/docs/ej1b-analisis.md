@@ -103,7 +103,7 @@ nivel 0.10 | pixeles invertidos: a=5 b=3 e=5 g=3 k=3 s=3 w=3 z=3
 nivel 0.20 | pixeles invertidos: a=7 b=8 e=6 g=6 k=6 s=5 w=4 z=5
 ```
 
-Las mismas letras, con todos los niveles evaluados, están en `output/ej1b/noise_examples.png` (una fila `original` y una fila por nivel, con la cantidad de pixeles invertidos como pie de cada letra). A 0.05 las letras se leen casi sin esfuerzo; a 0.20 ya cuesta reconocer algunas a simple vista (la `b` con 8 pixeles invertidos); a partir de 0.30 cuesta reconocer la mayoría de las entradas.
+Las mismas letras, con todos los niveles evaluados, están en `output/ej1b/noise_examples.png` (una fila `original` y una fila por nivel con el nivel como etiqueta, repartidas en dos bloques lado a lado; la cantidad de pixeles invertidos de cada letra está en la salida en texto de arriba). A 0.05 las letras se leen casi sin esfuerzo; a 0.20 ya cuesta reconocer algunas a simple vista (la `b` con 8 pixeles invertidos); a partir de 0.30 cuesta reconocer la mayoría de las entradas.
 
 ## Eliminación de ruido por nivel
 

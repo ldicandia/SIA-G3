@@ -12,7 +12,7 @@ use tp5::analysis::analyze;
 use tp5::autoencoder::Autoencoder;
 use tp5::dae_experiments::{
     chosen_dae_config, dae_sweep_grid, render_dae_comparison_md, run_dae_sweep, select_dae_variant, selection_line,
-    train_chosen_dae, DaeResult,
+    train_chosen_dae, DaeResult, DAE_STUDIES,
 };
 use tp5::dae_figures::dae_examples_filename;
 use tp5::data::{format_grid, load_font};
@@ -20,8 +20,7 @@ use tp5::denoising::{
     evaluate_levels, max_level_line, render_level_table, DEFAULT_LEVELS, N_EVAL_SAMPLES, TEST_NOISE_SEED,
 };
 use tp5::ej2::{dataset_line, result_line, run_ej2, separation_line, Ej2Options, Ej2Run};
-use tp5::emoji::format_emojis_side_by_side;
-use tp5::experiments::{chosen_config, render_comparison_md, run_sweep, sweep_grid, train_chosen};
+use tp5::experiments::{chosen_config, render_comparison_md, run_sweep, sweep_grid, train_chosen, STUDIES};
 use tp5::generate::{pick_new_letter, scan_novel};
 use tp5::vae::{config_line, loss_summary_line, reconstruction_line, render_loss_table};
 use tp5::vae_eval::{
@@ -29,7 +28,18 @@ use tp5::vae_eval::{
     render_gallery,
 };
 
-const DECK_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/presentacion/TP5-autoencoders.pptx");
+const TRACKED_DECK: &str = "presentacion/TP5-autoencoders.pptx";
+
+/// Ruta de la presentacion: la variable de entorno `TP5_DECK` si esta definida (una ruta relativa se
+/// resuelve contra la raiz del crate), si no la versionada. Sirve para verificar una copia recien
+/// construida antes de reemplazar la versionada.
+fn deck_path() -> std::path::PathBuf {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    match std::env::var("TP5_DECK") {
+        Ok(p) if !p.trim().is_empty() => root.join(p.trim()),
+        _ => root.join(TRACKED_DECK),
+    }
+}
 const PORTADA: &str = "TP5: autoencoders (básico, denoising y variacional)";
 
 /// Las afirmaciones retiradas del primer criterio de novedad (tests/vae_doc_consistency.rs y sus formas
@@ -99,8 +109,12 @@ struct Slide {
     /// Numero desde 1, el orden de ppt/slides/slideN.xml.
     index: usize,
     title: String,
-    /// Todos los tramos de texto (a:t) en el orden del documento, con los espacios iniciales intactos.
+    /// Todos los tramos de texto (a:t) de la diapositiva en el orden del documento, con los espacios iniciales intactos.
     runs: Vec<String>,
+    /// Parrafos de las notas del orador (ppt/notesSlides/notesSlideN.xml).
+    notes: Vec<String>,
+    /// Filas de las tablas de la diapositiva (a:tr).
+    table_rows: Vec<Vec<String>>,
     /// Textos alternativos (descr) de las imagenes.
     pictures: Vec<String>,
 }
@@ -116,6 +130,19 @@ fn text_runs(xml: &str) -> Vec<(usize, String)> {
         from = end + "</a:t>".len();
     }
     runs
+}
+
+fn table_rows(xml: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut from = 0;
+    while let Some(open) = xml[from..].find("<a:tr") {
+        let start = from + open;
+        let end = start + xml[start..].find("</a:tr>").expect("fila de tabla sin cierre");
+        let block = &xml[start..end];
+        rows.push(text_runs(block).into_iter().map(|(_, t)| t).collect());
+        from = end + "</a:tr>".len();
+    }
+    rows
 }
 
 fn picture_descriptions(xml: &str) -> Vec<String> {
@@ -144,7 +171,8 @@ struct Deck {
 fn deck() -> &'static Deck {
     static DECK: OnceLock<Deck> = OnceLock::new();
     DECK.get_or_init(|| {
-        let bytes = std::fs::read(DECK_PATH).unwrap_or_else(|e| panic!("no se pudo leer {DECK_PATH}: {e}"));
+        let path = deck_path();
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("no se pudo leer {}: {e}", path.display()));
         let members = read_stored_package(&bytes);
         let member_names: Vec<String> = members.iter().map(|(n, _)| n.clone()).collect();
         let by_name: HashMap<&str, &Vec<u8>> = members.iter().map(|(n, d)| (n.as_str(), d)).collect();
@@ -165,10 +193,19 @@ fn deck() -> &'static Deck {
                     .and_then(|m| runs.iter().find(|(at, _)| *at > m))
                     .map(|(_, t)| t.clone())
                     .unwrap_or_default();
+                let notes = by_name
+                    .get(format!("ppt/notesSlides/notesSlide{n}.xml").as_str())
+                    .map(|b| {
+                        let notes_xml = String::from_utf8((*b).clone()).expect("notas UTF-8");
+                        text_runs(&notes_xml).into_iter().map(|(_, t)| t).collect()
+                    })
+                    .unwrap_or_default();
                 Slide {
                     index: n,
                     title,
                     runs: runs.into_iter().map(|(_, t)| t).collect(),
+                    notes,
+                    table_rows: table_rows(&xml),
                     pictures: picture_descriptions(&xml),
                 }
             })
@@ -177,18 +214,66 @@ fn deck() -> &'static Deck {
     })
 }
 
+fn is_subsequence(row: &[String], source: &[String]) -> bool {
+    let mut it = source.iter();
+    row.iter().all(|cell| it.any(|c| c == cell))
+}
+
 impl Deck {
     fn has_run(&self, text: &str) -> bool {
-        self.slides.iter().any(|s| s.runs.iter().any(|r| r == text))
+        self.slides.iter().any(|s| s.runs.iter().chain(s.notes.iter()).any(|r| r == text))
     }
 
     fn has_run_containing(&self, fragment: &str) -> bool {
-        self.slides.iter().any(|s| s.runs.iter().any(|r| r.contains(fragment)))
+        self.slides
+            .iter()
+            .any(|s| s.runs.iter().chain(s.notes.iter()).any(|r| r.contains(fragment)))
     }
 
-    /// Una fila de tabla: sus celdas, en orden, como tramos consecutivos de una sola diapositiva.
-    fn has_row(&self, cells: &[String]) -> bool {
-        self.slides.iter().any(|s| s.runs.windows(cells.len()).any(|w| w == cells))
+    fn has_picture(&self, alt: &str) -> bool {
+        self.slides.iter().any(|s| s.pictures.iter().any(|p| p == alt))
+    }
+
+    /// Comprueba que cada fila de tabla cuya primera celda es una variante de `source_rows` sea una
+    /// subsecuencia en orden de esa fila fuente, y que cada estudio de `studies` muestre todas sus
+    /// variantes en tablas o incruste una de sus figuras de curvas.
+    fn assert_study_tables_or_figures(&self, source_rows: &[Vec<String>], studies: &[&str], figure_patterns: &[&str]) {
+        let by_variant: HashMap<&str, &Vec<String>> = source_rows.iter().map(|r| (r[0].as_str(), r)).collect();
+        let mut shown: HashSet<String> = HashSet::new();
+        for s in &self.slides {
+            for row in &s.table_rows {
+                let Some(first) = row.first().map(String::as_str) else {
+                    continue;
+                };
+                let Some(source) = by_variant.get(first) else {
+                    continue;
+                };
+                assert!(
+                    row.len() >= 2 && is_subsequence(row, source),
+                    "diapositiva {}: la fila {:?} no es una subsecuencia en orden de la fila fuente {:?}",
+                    s.index,
+                    row,
+                    source
+                );
+                shown.insert(first.to_string());
+            }
+        }
+        for study in studies {
+            let prefix = format!("{study}-");
+            let missing: Vec<&str> = source_rows
+                .iter()
+                .map(|r| r[0].as_str())
+                .filter(|v| v.starts_with(&prefix) && !shown.contains(*v))
+                .collect();
+            let has_figure = figure_patterns
+                .iter()
+                .map(|pat| pat.replace("{e}", study))
+                .any(|alt| self.has_picture(&alt));
+            assert!(
+                missing.is_empty() || has_figure,
+                "el estudio {study} no muestra todas sus variantes en tablas (faltan {missing:?}) ni incrusta su figura de curvas"
+            );
+        }
     }
 }
 
@@ -301,6 +386,7 @@ fn ej1a() -> &'static Ej1aFacts {
         blob += &format!("{}\n{}\n{}\n", res.report.render_table(), res.report.result_line(), analysis);
         for (i, (l, r)) in ds.labels.iter().zip(codes.rows()).enumerate() {
             blob += &format!("{:>3}  {:<8}  {:.4}  {:.4}\n", i, l, r[0], r[1]);
+            blob += &format!("{},{:.6},{:.6}\n", l, r[0], r[1]);
         }
         blob += &format!("{point_line}\n{}\n", format_grid(letter.pattern.view()));
         blob += &format!("{} {} {:.4}\n", letter.nearest_label, letter.min_hamming, letter.latent_distance);
@@ -346,6 +432,9 @@ fn ej1b() -> &'static Ej1bFacts {
             cfg.train_noise.label(),
             cfg.seed
         );
+        for r in &sweep {
+            blob += &format!("{} {:.4}\n", r.config.name, r.score);
+        }
         blob += &format!("{N_EVAL_SAMPLES} {TEST_NOISE_SEED}\n{level_table}\n{max_line}\n{selection}\n{comparison}");
         Ej1bFacts {
             level_table,
@@ -363,19 +452,17 @@ fn ej2_run() -> &'static Ej2Run {
     RUN.get_or_init(|| run_ej2(&Ej2Options::default()).expect("corrida completa del Ej 2"))
 }
 
-/// Cada bloque de texto que el reporte del Ej 2 imprime y que la presentacion cita, con su nombre.
+/// Cada bloque de texto que el reporte del Ej 2 imprime y que la presentacion cita (en diapositiva o
+/// notas), con su nombre. La tabla de perdida, el listado de galeria y el dibujo ASCII no se exigen
+/// como tramos porque los muestran las figuras.
 fn ej2_texts() -> &'static Vec<(&'static str, String)> {
     static CELL: OnceLock<Vec<(&'static str, String)>> = OnceLock::new();
     CELL.get_or_init(|| {
         let run = ej2_run();
-        let first = run.search.accepted.first().expect("la corrida acepto un emoji nuevo");
-        let nearest = run.ds.x.row(first.judgement.nearest_index).to_owned();
-        let binarized = first.image.mapv(|v| if v >= 0.5 { 1.0 } else { 0.0 });
         vec![
             ("linea del dataset", dataset_line()),
             ("linea de separacion", separation_line(&run.sep)),
             ("linea de configuracion", config_line(&run.cfg, &run.vae)),
-            ("tabla de perdida", render_loss_table(&run.history)),
             ("resumen de perdida", loss_summary_line(&run.history)),
             ("linea RECONSTRUCCION", reconstruction_line(&run.recon)),
             ("linea MANIFOLD", manifold_line(&run.grid, &run.sep)),
@@ -384,11 +471,9 @@ fn ej2_texts() -> &'static Vec<(&'static str, String)> {
             ("linea PRIOR del autoencoder simple", format!("AE simple {}", prior_line(&run.plain_prior, &run.sep))),
             ("linea EMOJI NUEVO", new_emoji_line(&run.search, &run.ds, &run.sep)),
             ("linea REGIONES", regions_line(&run.judge)),
-            ("galeria", render_gallery(&run.search, &run.ds)),
             ("linea CONTROL NEGATIVO", control_line(&run.control)),
             ("lineas de aceptacion", render_acceptance(&run.checks)),
             ("linea RESULTADO EJ2", result_line(run)),
-            ("dibujo del emoji nuevo junto al mas cercano", format_emojis_side_by_side(&[binarized, nearest])),
         ]
     })
 }
@@ -397,6 +482,7 @@ fn ej2_texts() -> &'static Vec<(&'static str, String)> {
 fn corpus() -> &'static HashSet<String> {
     static CELL: OnceLock<HashSet<String>> = OnceLock::new();
     CELL.get_or_init(|| {
+        let run = ej2_run();
         let mut text = String::new();
         text += &ej1a().blob;
         text += &ej1b().blob;
@@ -404,6 +490,10 @@ fn corpus() -> &'static HashSet<String> {
             text += t;
             text += "\n";
         }
+        text += &render_loss_table(&run.history);
+        text += "\n";
+        text += &render_gallery(&run.search, &run.ds);
+        text += "\n";
         for doc in ["ej1a-analisis.md", "ej1b-analisis.md", "ej2-analisis.md"] {
             let path = format!("{}/docs/{doc}", env!("CARGO_MANIFEST_DIR"));
             text += &std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
@@ -433,6 +523,12 @@ fn deck_is_a_stored_package() {
     assert!(d.slides.len() >= 20, "la presentacion tiene {} diapositivas y se esperaban al menos 20", d.slides.len());
     for (i, s) in d.slides.iter().enumerate() {
         assert_eq!(s.index, i + 1, "las partes de diapositiva deben numerarse sin huecos desde 1");
+        assert!(
+            !s.notes.is_empty(),
+            "diapositiva {} ({:?}): no tiene parte de notas del orador",
+            s.index,
+            s.title
+        );
     }
 }
 
@@ -485,9 +581,11 @@ fn deck_quotes_the_ej1a_lines_the_code_produces() {
         f.config_name
     );
     assert!(f.sweep_rows.len() >= 18, "el barrido completo debe tener al menos 18 filas de variantes");
-    for row in &f.sweep_rows {
-        assert!(deck().has_row(row), "ninguna diapositiva tiene la fila completa y en orden {row:?} de comparison.md");
-    }
+    deck().assert_study_tables_or_figures(
+        &f.sweep_rows,
+        &STUDIES,
+        &["output/ej1a/curves_{e}_loss.png", "output/ej1a/curves_{e}_wrongpx.png"],
+    );
 }
 
 #[test]
@@ -502,9 +600,11 @@ fn deck_quotes_the_ej1b_lines_the_code_produces() {
         f.config_name
     );
     assert!(f.comparison_rows.len() >= 13, "el barrido completo debe tener al menos 13 filas de variantes");
-    for row in &f.comparison_rows {
-        assert!(deck().has_row(row), "ninguna diapositiva tiene la fila completa y en orden {row:?} de dae_comparison.md");
-    }
+    deck().assert_study_tables_or_figures(
+        &f.comparison_rows,
+        &DAE_STUDIES,
+        &["output/ej1b/dae_curves_{e}_loss.png"],
+    );
 }
 
 #[test]
@@ -520,17 +620,18 @@ fn deck_embeds_the_exercise_figures() {
     let pictures: HashSet<&str> =
         deck().slides.iter().flat_map(|s| s.pictures.iter().map(String::as_str)).collect();
     for path in [
+        "output/ej1a/curves_optim_loss.png",
+        "output/ej1a/latent.png",
+        "output/ej1a/new_letter.png",
+        "output/ej1b/noise_examples.png",
+        "output/ej1b/dae_error_vs_noise.png",
+        "output/ej1b/dae_within_vs_noise.png",
         "output/ej2/emojis.png",
         "output/ej2/vae_loss.png",
         "output/ej2/vae_reconstruction.png",
         "output/ej2/vae_manifold.png",
         "output/ej2/vae_new_emoji.png",
         "output/ej2/plain_manifold.png",
-        "output/ej1a/latent.png",
-        "output/ej1a/new_letter.png",
-        "output/ej1b/noise_examples.png",
-        "output/ej1b/dae_error_vs_noise.png",
-        "output/ej1b/dae_within_vs_noise.png",
     ] {
         assert!(pictures.contains(path), "ninguna diapositiva incrusta la imagen {path}");
     }
@@ -550,15 +651,17 @@ fn deck_embeds_the_exercise_figures() {
 fn deck_numbers_come_from_the_code_or_verified_documents() {
     let corpus = corpus();
     for s in &deck().slides {
-        for run in &s.runs {
-            for token in numeric_tokens(run) {
-                assert!(
-                    corpus.contains(&token) || THEORY_CONSTANTS.contains(&token.as_str()),
-                    "diapositiva {} ({:?}): el numero {token} no sale de lo que el codigo recalcula ni de los documentos de analisis; \
-                     cite la linea del reporte o agregue su valor a la biblioteca",
-                    s.index,
-                    s.title
-                );
+        for (where_label, items) in [("", &s.runs), (" (notas)", &s.notes)] {
+            for run in items {
+                for token in numeric_tokens(run) {
+                    assert!(
+                        corpus.contains(&token) || THEORY_CONSTANTS.contains(&token.as_str()),
+                        "diapositiva {}{where_label} ({:?}): el numero {token} no sale de lo que el codigo recalcula ni de los documentos de analisis; \
+                         cite la linea del reporte o agregue su valor a la biblioteca",
+                        s.index,
+                        s.title
+                    );
+                }
             }
         }
     }
@@ -567,9 +670,16 @@ fn deck_numbers_come_from_the_code_or_verified_documents() {
 #[test]
 fn deck_contains_no_retracted_claims() {
     for s in &deck().slides {
-        let text = s.runs.join("\n").to_lowercase();
-        for phrase in RETRACTED {
-            assert!(!text.contains(phrase), "diapositiva {} ({:?}) contiene la afirmacion retirada {phrase:?}", s.index, s.title);
+        for (where_label, items) in [("", &s.runs), (" (notas)", &s.notes)] {
+            let text = items.join("\n").to_lowercase();
+            for phrase in RETRACTED {
+                assert!(
+                    !text.contains(phrase),
+                    "diapositiva {}{where_label} ({:?}) contiene la afirmacion retirada {phrase:?}",
+                    s.index,
+                    s.title
+                );
+            }
         }
     }
 }

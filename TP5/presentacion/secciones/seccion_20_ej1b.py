@@ -1,211 +1,151 @@
 """Seccion 20: Ejercicio 1b (denoising autoencoder).
 
-Ninguna cifra se escribe a mano: todas salen de los reportes, tablas y CSV que
-regenera scripts/regenerar.sh, leidos con lector.Salidas. Las lineas que se
-muestran literalmente son lineas exactas de ej1b/salida-ej1b.txt y de
-ej1b/salida-dae-sweep.txt. Las frases sobre las figuras parafrasean
-docs/ej1b-analisis.md y se contrastaron con la imagen abierta.
+Ocho diapositivas: la arquitectura y su eleccion (1.b.1), el barrido que la respalda y el
+estudio de la capacidad de eliminar ruido por nivel (1.b.2). En la diapositiva queda solo lo
+comprobable contra output/ o contra la figura; la explicacion va a las notas del orador.
+
+Ninguna cifra se escribe a mano, ni en la diapositiva ni en las notas: todas salen de los
+reportes, tablas y CSV que regenera scripts/regenerar.sh, leidos con lector.Salidas.
 """
 
 from __future__ import annotations
 
 import re
 
+from disposicion import (
+    ANCHO_UTIL,
+    TAM_TABLA,
+    destacado,
+    diagrama,
+    enumerar,
+    figura_alta_centrada,
+    figura_ancha,
+    lineas_md,
+    px,
+    texto_justo,
+    vinetas,
+)
 from lector import campo, numero
-from pptx_minimo import ALTO_IN, ANCHO_IN, COLOR_AMBAR, CONTENIDO_Y_IN, MARGEN_IN, Parrafo
+from pptx_minimo import COLOR_AMBAR, CONTENIDO_Y_IN, MARGEN_IN
 
 EJ = "ej1b"
 SALIDA = "salida-ej1b.txt"
-BARRIDO = "salida-dae-sweep.txt"
 FUENTE = f"{EJ}/{SALIDA}"
+TABLA = "dae_comparison.md"
+FUENTE_TABLA = f"{EJ}/{TABLA}"
+BARRIDO = "salida-dae-sweep.txt"
 FUENTE_BARRIDO = f"{EJ}/{BARRIDO}"
 
-ANCHO_UTIL = ANCHO_IN - 2 * MARGEN_IN
-Y_FIN = ALTO_IN - MARGEN_IN
-TAM_CUERPO = 16
-TAM_TEXTO = 15
-TAM_PIE = 14
-TAM_CODIGO = 11
-TAM_TABLA = 11
-
-# Unidades y umbrales de calculo (no son cifras del resultado).
-CIEN = 100
-MITAD = 0.5
-HUECO = 0.15
-HUECO_CHICO = 0.1
-
-# Pesos de las columnas de las tablas de los estudios de dae_comparison.md.
-PESOS_TABLA = [1.7, 0.9, 1.0, 0.9, 0.9, 0.9, 1.3, 1.2]
-ANCHO_TABLA_IZQ = 7.6
-
-# Alturas de los bloques de texto y de las imagenes de cada diapositiva.
-ALTO_CAJA = 1.2
-ANCHO_CAJA = 1.7
-Y_CONFIG = 6.4
-ALTO_CONFIG = 0.6
-ANCHO_IMG_DER = 4.53
-ALTO_IMG_DER = 2.72
-ALTO_IMG_LAT = 2.2
-ALTO_BLOQUE_SEL = 0.45
-ALTO_FIG_NIVEL = 3.0
-ALTO_CAPTION_NIVEL = 1.3
-ANCHO_BLOQUE_TABLA = 7.3
-ALTO_BLOQUE_TABLA = 2.55
-TAM_BLOQUE_TABLA = 16
-ALTO_BLOQUE_TITULAR = 0.55
-ALTO_IMG_EJEMPLO = 2.0
-ALTO_CAPTION_EJEMPLO = 0.6
-ALTO_CIFRA = 1.7
-ANCHO_CIFRA = 3.4
-ANCHO_TEXTO_CONCL = 8.6
-
-
-# --------------------------------------------------------------------------
-# Utilidades de lectura
-# --------------------------------------------------------------------------
-
-
-def _px(n) -> str:
-    return "píxel" if str(n) == "1" else "píxeles"
-
-
-def _enumerar(items: list[str]) -> str:
-    if len(items) == 1:
-        return items[0]
-    return ", ".join(items[:-1]) + " y " + items[-1]
-
-
-def _pct(fraccion) -> str:
-    """Fraccion (0 a 1) como porcentaje con un decimal, igual que la tabla impresa."""
-    valor = float(fraccion) * CIEN
-    return f"{valor:.1f}"
-
-
-def _calendario(valor: str) -> str:
-    """Calendario de ruido de entrenamiento tal como lo imprime el reporte."""
-    m = re.fullmatch(r"fix(\S+)", valor)
-    if m:
-        return f"fijo en {m.group(1)}"
-    m = re.fullmatch(r"u(\S+)-(\S+)", valor)
-    if m:
-        return f"uniforme entre {m.group(1)} y {m.group(2)}"
-    return valor
-
-
-def _corto(celda: str) -> str:
-    """Encabezados acortados de las tablas de los estudios (el cuerpo va tal cual)."""
-    celda = celda.replace("semillas elegibles", "semillas ok")
-    celda = celda.replace("nivel ", "")
-    celda = celda.replace("(mediana)", "(med.)")
-    celda = celda.replace("perdida", "pérdida")
-    return celda
+# Columnas de dae_comparison.md que se muestran, en su orden: variante, puntaje y px por nivel.
+COLUMNAS = [0, 2, 3, 4, 5]
+ANCHOS = [1.4, 1.2, 1.1, 1.1, 1.1]
 
 
 def _k_de_n(celda: str) -> tuple[int, int]:
     return int(numero(celda, r"^(\d+)/")), int(numero(celda, r"/(\d+)$"))
 
 
-def _rango_semillas(puntajes: dict[str, list[float]], variante: str) -> tuple[float, float]:
-    valores = puntajes.get(variante)
-    if not valores:
-        raise ValueError(f"{EJ}/{BARRIDO}: no hay corridas de la variante {variante!r}")
-    return min(valores), max(valores)
-
-
-def _estudio(salidas, nombre: str) -> tuple[list[str], list[list[str]]]:
-    encabezado, filas = salidas.tabla_md(EJ, "dae_comparison.md", nombre)
-    return encabezado, filas
-
-
 class _Datos:
-    """Todo lo que las diapositivas toman de los reportes, las tablas y el CSV."""
+    """Todo lo que las diapositivas toman de los reportes y las tablas."""
 
     def __init__(self, salidas) -> None:
         self.cfg = salidas.linea(EJ, SALIDA, "configuracion:")
         self.evaluacion = salidas.linea(EJ, SALIDA, "evaluacion:")
-        self.tabla = salidas.bloque(EJ, SALIDA, "nivel  entrada_px", 9)
         self.titular = salidas.linea(EJ, SALIDA, "NIVEL MAXIMO ELIMINADO:")
-        self.seleccion = salidas.linea(EJ, BARRIDO, "SELECCION:")
-        self.corridas = numero(
-            salidas.linea(EJ, BARRIDO, "dae-sweep:"), r"dae-sweep: (\d+) corridas"
-        )
-
         self.nombre = campo(self.cfg, "configuracion")
-        self.tamanios = [int(n) for n in campo(self.cfg, "arquitectura").split("-")]
-        self.perdida = campo(self.cfg, "perdida")
-        self.optimizador = campo(self.cfg, "optimizador")
+        self.variante = re.sub(r"-s\d+$", "", self.nombre)
+        self.semilla = campo(self.cfg, "semilla")
         self.epocas = campo(self.cfg, "epocas")
         self.copias = campo(self.cfg, "copias por epoca")
-        self.ruido_entrenamiento = campo(self.cfg, "ruido de entrenamiento")
-        self.semilla = campo(self.cfg, "semilla")
-
+        self.optimizador = campo(self.cfg, "optimizador")
+        self.perdida = campo(self.cfg, "perdida")
+        self.ruido = campo(self.cfg, "ruido de entrenamiento")
+        self.tamanios = [int(n) for n in campo(self.cfg, "arquitectura").split("-")]
+        self.latente = min(self.tamanios)
         self.nivel_max = numero(self.titular, r"ELIMINADO: (\S+) \(")
         self.umbral = numero(self.titular, r"al menos el (\d+) %")
         self.tol = numero(self.titular, r"a lo sumo (\d+) pixel")
-        self.px_tol = _px(self.tol)
+        self.px_ok = f"≤ {self.tol} {px(self.tol)} incorrecto"
+        self.por_patron = numero(self.evaluacion, r"evaluacion: (\d+) distorsiones")
 
-        # CSV de niveles: define los niveles y las fracciones con las que se eligen ejemplos.
-        self.csv = salidas.csv(EJ, "dae_levels.csv")
-        self.niveles = [r["level"] for r in self.csv]
-        self.frac = {r["level"]: float(r["frac_within_1px"]) for r in self.csv}
-        self.frac_entrada = {r["level"]: float(r["input_frac_within_1px"]) for r in self.csv}
+        # Tabla por nivel: la linea de encabezado y una linea por nivel, literales.
+        todas = salidas.lineas(EJ, SALIDA)
+        i = next((k for k, l in enumerate(todas) if l.startswith("nivel ")), None)
+        if i is None:
+            raise ValueError(f"{FUENTE}: no esta la tabla por nivel")
+        self.encabezado_niveles = todas[i]
+        self.lineas_nivel: dict[str, str] = {}
+        for l in todas[i + 1 :]:
+            celdas = l.split()
+            if len(celdas) != 5 or not re.fullmatch(r"\d\.\d\d", celdas[0]):
+                break
+            self.lineas_nivel[celdas[0]] = l
+        self.niveles = list(self.lineas_nivel)
+        if len(self.niveles) < 3:
+            raise ValueError(f"{FUENTE}: la tabla por nivel tiene {len(self.niveles)} filas")
+        self.csv = {r["level"]: r for r in salidas.csv(EJ, "dae_levels.csv")}
+        if list(self.csv) != self.niveles:
+            raise ValueError(f"{EJ}/dae_levels.csv: los niveles no coinciden con la tabla del reporte")
 
-        # Tabla impresa: se citan sus cifras para que coincidan con el bloque literal.
-        self.impreso: dict[str, list[str]] = {}
-        for linea in self.tabla[1:]:
-            partes = linea.split()
-            self.impreso[partes[0]] = partes[1:]
-        if sorted(self.impreso) != sorted(self.niveles):
-            raise ValueError(
-                f"{EJ}: los niveles de la tabla impresa {sorted(self.impreso)} no coinciden "
-                f"con los de dae_levels.csv {sorted(self.niveles)}"
-            )
-
-        n_dist = int(numero(self.evaluacion, r"evaluacion: (\d+) distorsiones"))
-        self.n_dist = n_dist
-        self.muestras = int(self.csv[0]["n_samples"])
-        self.patrones = self.muestras // n_dist
-
-        self.enc_lat, self.lat = _estudio(salidas, "lat")
-        self.enc_hid, self.hid = _estudio(salidas, "hid")
-        self.enc_noise, self.noise = _estudio(salidas, "noise")
-        for enc in (self.enc_hid, self.enc_noise):
-            if enc != self.enc_lat:
-                raise ValueError(f"{EJ}/dae_comparison.md: las tablas no tienen los mismos encabezados")
-        if len(self.enc_lat) != len(PESOS_TABLA):
-            raise ValueError(
-                f"{EJ}/dae_comparison.md: las tablas tienen {len(self.enc_lat)} columnas "
-                f"y la diapositiva espera {len(PESOS_TABLA)}"
-            )
-
-        # Puntajes de cada semilla, de las lineas "variante-sN | puntaje X | elegible ...".
-        self.puntajes: dict[str, list[float]] = {}
-        for linea in salidas.lineas(EJ, BARRIDO):
-            m = re.match(r"^(\S+)-s\d+ \| puntaje (\S+) \| elegible", linea)
+        self.encabezados: dict[str, list[str]] = {}
+        self.estudios: dict[str, list[list[str]]] = {}
+        for estudio in ("lat", "hid", "noise"):
+            self.encabezados[estudio], self.estudios[estudio] = salidas.tabla_md(EJ, TABLA, estudio)
+        self.seleccion = salidas.linea(EJ, BARRIDO, "SELECCION:")
+        self.linea_barrido = salidas.linea(EJ, BARRIDO, "dae-sweep:")
+        self.corridas = numero(self.linea_barrido, r"dae-sweep: (\d+) corridas")
+        self.puntajes: dict[str, list[str]] = {}
+        for l in salidas.lineas(EJ, BARRIDO):
+            m = re.match(r"^(\S+)-s\d+ \| puntaje (\d+\.\d+) \|", l)
             if m:
-                self.puntajes.setdefault(m.group(1), []).append(float(m.group(2)))
+                self.puntajes.setdefault(m.group(1), []).append(m.group(2))
+        columnas = list(salidas.csv(EJ, "dae_sweep.csv")[0])
+        self.niveles_puntaje = sorted(
+            c[len("wrong_p") :] for c in columnas if c.startswith("wrong_p") and float(c[len("wrong_p") :]) > 0
+        )
 
-    # -- accesos ---------------------------------------------------------
+    def celda(self, nivel: str, columna: int) -> str:
+        """Celda de la tabla por nivel: 1 entrada_px, 2 salida_px, 3 max_px, 4 dentro_1px_%."""
+        return self.lineas_nivel[nivel].split()[columna]
 
-    def fila_nivel(self, nivel: str) -> list[str]:
-        """[entrada_px, salida_px, max_px, dentro_1px_%] como los imprime el reporte."""
-        return self.impreso[nivel]
+    def fila(self, variante: str) -> list[str]:
+        for filas in self.estudios.values():
+            for f in filas:
+                if f[0] == variante:
+                    return f
+        raise ValueError(f"{FUENTE_TABLA}: no esta la variante {variante!r}")
 
-    def nivel_de(self, texto: str) -> str:
-        """Nivel del CSV cuyo valor numerico coincide con `texto`."""
-        for nivel in self.niveles:
-            if float(nivel) == float(texto):
-                return nivel
-        raise ValueError(f"{EJ}/dae_levels.csv: no hay el nivel {texto!r}")
+    def tabla(self, estudio: str) -> list[list[str]]:
+        enc = self.encabezados[estudio]
+        return [[enc[i] for i in COLUMNAS]] + [[f[i] for i in COLUMNAS] for f in self.estudios[estudio]]
 
-    def primer_nivel_bajo(self, tabla: dict[str, float], limite: float) -> str:
-        for nivel in self.niveles:
-            if tabla[nivel] < limite:
-                return nivel
-        raise ValueError(f"{EJ}/dae_levels.csv: ningun nivel baja de {limite}")
+    def extremos(self, estudio: str) -> tuple[list[str], list[str]]:
+        filas = sorted(self.estudios[estudio], key=lambda f: float(f[2]))
+        return filas[0], filas[-1]
 
-    def puntaje(self, fila: list[str]) -> float:
-        return float(fila[2])
+    def base(self) -> list[str]:
+        """Nombres con los que la configuracion base aparece en los estudios (misma fila)."""
+        vistas: dict[tuple, list[str]] = {}
+        for filas in self.estudios.values():
+            for f in filas:
+                vistas.setdefault(tuple(f[1:]), []).append(f[0])
+        return max(vistas.values(), key=len)
+
+    def ruido_en_palabras(self) -> str:
+        m = re.fullmatch(r"fix(\d+\.\d+)", self.ruido)
+        if m:
+            return f"fijo en {m.group(1)}"
+        m = re.fullmatch(r"u(\d+\.\d+)-(\d+\.\d+)", self.ruido)
+        if m:
+            return f"sorteado entre {m.group(1)} y {m.group(2)}"
+        raise ValueError(f"{FUENTE}: ruido de entrenamiento desconocido {self.ruido!r}")
+
+    def primer_nivel(self, columna: str, limite: float) -> str | None:
+        """Primer nivel cuya fraccion `columna` del CSV queda por debajo de `limite`."""
+        return next((n for n in self.niveles if float(self.csv[n][columna]) < limite), None)
+
+    def cita_tabla(self, niveles: list[str] | None = None) -> list[str]:
+        return [self.encabezado_niveles] + [self.lineas_nivel[n] for n in (niveles or self.niveles)]
 
 
 # --------------------------------------------------------------------------
@@ -214,442 +154,317 @@ class _Datos:
 
 
 def _arquitectura(pres, dat: _Datos) -> None:
-    d = pres.diapositiva("Ej 1b: Arquitectura del denoising autoencoder")
+    d = pres.diapositiva("Ej 1b: Arquitectura")
     tam = dat.tamanios
-    i_lat = tam.index(min(tam))
-    latente = tam[i_lat]
+    i_lat = tam.index(dat.latente)
     codificador = "-".join(str(n) for n in tam[1:i_lat])
     decodificador = "-".join(str(n) for n in tam[i_lat + 1 : -1])
-
-    cajas = [
-        ("Entrada ruidosa", f"{tam[0]} píxeles", None),
-        ("Encoder", f"capas {codificador}", None),
-        ("Latente", f"{latente} neuronas", COLOR_AMBAR),
-        ("Decoder", f"capas {decodificador}", None),
-        ("Salida", f"{tam[-1]} píxeles", None),
-        ("Objetivo", "patrón limpio", COLOR_AMBAR),
-    ]
-    hueco = (ANCHO_UTIL - len(cajas) * ANCHO_CAJA) / (len(cajas) - 1)
-    y_diag = CONTENIDO_Y_IN + HUECO_CHICO
-    for i, (titulo, detalle, relleno) in enumerate(cajas):
-        x = MARGEN_IN + i * (ANCHO_CAJA + hueco)
-        d.caja(
-            x, y_diag, ANCHO_CAJA, ALTO_CAJA,
-            [Parrafo(titulo, negrita=True), Parrafo(detalle)],
-            tam=TAM_PIE, relleno=relleno,
+    y = diagrama(
+        d,
+        [
+            ("Entrada", "con ruido", None),
+            ("Encoder", codificador, None),
+            ("Latente", f"{dat.latente} neuronas", COLOR_AMBAR),
+            ("Decoder", decodificador, None),
+            ("Salida", f"{tam[-1]} píxeles", None),
+        ],
+    )
+    # La eleccion del latente se afirma solo si los datos del barrido la sostienen.
+    propia = f"lat-l{dat.latente}"
+    mayores = [f for f in dat.estudios["lat"] if int(f[0].split("-l")[1]) > dat.latente]
+    if propia not in dat.puntajes or not mayores:
+        raise ValueError(f"{FUENTE_TABLA}: el estudio lat no tiene {propia} y un latente mayor")
+    mayor = mayores[0]
+    semillas = [float(p) for p in dat.puntajes[propia]]
+    mejora = float(dat.fila(propia)[2]) - float(mayor[2])
+    if mejora >= max(semillas) - min(semillas):
+        raise ValueError(
+            f"{FUENTE_BARRIDO}: {mayor[0]} mejora a {propia} mas que la diferencia entre semillas; "
+            "revisar la frase de la diapositiva de arquitectura"
         )
-        if i < len(cajas) - 1:
-            flecha = "↔" if i == len(cajas) - 2 else "→"
-            d.texto(x + ANCHO_CAJA, y_diag + HUECO, hueco, 0.6, flecha, tam=24)
-
-    nombre_perdida = {"BCE": "entropía cruzada binaria", "MSE": "error cuadrático medio"}.get(
-        dat.perdida, dat.perdida
+    mejor = min((f for filas in dat.estudios.values() for f in filas), key=lambda f: float(f[2]))
+    if mejor[0] != dat.variante:
+        raise ValueError(f"{FUENTE_TABLA}: la variante elegida {dat.variante} no es la de menor puntaje")
+    mayor_latente = mayor[0].split("-l")[1]
+    texto_justo(
+        d, MARGEN_IN, y + 0.5, ANCHO_UTIL,
+        vinetas(
+            [
+                "Objetivo del entrenamiento: el patrón limpio.",
+                f"Latente {dat.latente}: con {mayor_latente} el puntaje no mejora más que entre semillas.",
+                f"Ruido de entrenamiento {dat.ruido_en_palabras()}: el menor puntaje.",
+            ]
+        ),
     )
-    viñetas = [
-        "La red recibe el patrón distorsionado y se entrena para devolver el patrón limpio: lo que "
-        "no forma parte del patrón, el ruido, no puede atravesar el cuello de la red.",
-        f"Modelo de ruido: cada píxel se invierte de forma independiente con una probabilidad, el "
-        f"nivel. El ruido de entrenamiento es {_calendario(dat.ruido_entrenamiento)} y se sortea de "
-        f"nuevo en cada época, con {dat.copias} copias de los {dat.patrones} patrones por época.",
-        f"Pérdida {dat.perdida} ({nombre_perdida}), optimizador {dat.optimizador}, {dat.epocas} "
-        f"épocas, semilla {dat.semilla}.",
-        f"El tamaño del latente es un factor de diseño: la consigna no lo impone como en el Ej 1a, "
-        f"y la configuración elegida usa {latente} neuronas.",
-    ]
-    y_vin = y_diag + ALTO_CAJA + HUECO
-    d.texto(
-        MARGEN_IN, y_vin, ANCHO_UTIL, Y_CONFIG - HUECO_CHICO - y_vin,
-        [Parrafo(t, vineta=True) for t in viñetas], tam=TAM_CUERPO,
+    lo, hi = min(dat.puntajes[propia], key=float), max(dat.puntajes[propia], key=float)
+    peor = dat.extremos("lat")[1]
+    d.notas(
+        [
+            "Mensaje: es la red del Ej 1a con un latente más ancho. Lo que cambia es qué se le muestra: entra "
+            "el patrón con ruido y se le exige el patrón limpio.",
+            "Modelo de ruido: cada píxel se invierte de forma independiente con una probabilidad, que llamamos "
+            f"nivel de ruido. En el entrenamiento el ruido se sortea de nuevo en cada época, con {dat.copias} "
+            f"copias de los patrones por época, y el nivel queda {dat.ruido_en_palabras()}.",
+            "Puntaje, que aparece en esta diapositiva y en las dos siguientes: media de píxeles incorrectos de "
+            f"la salida sobre distorsiones con ruido de {dat.niveles_puntaje[0]} a {dat.niveles_puntaje[-1]}, "
+            "sorteadas con una semilla propia de la selección. Menor es mejor.",
+            f"Por qué latente {dat.latente}: la consigna no fija dos dimensiones para el denoising. En el estudio "
+            f"del latente el puntaje va de {peor[2]} con {peor[0]} a {dat.fila(propia)[2]} con {propia}; con "
+            f"{mayor[0]} es {mayor[2]}, una diferencia menor que la que hay entre las semillas de {propia}, que "
+            f"van de {lo} a {hi}.",
+            f"Por qué ese ruido de entrenamiento: {dat.variante} tiene el menor puntaje de todo el barrido, "
+            f"{mejor[2]}. Está en la diapositiva del ruido de entrenamiento.",
+            f"El resto es igual al Ej 1a: capas ocultas {codificador}, pérdida {dat.perdida} y {dat.optimizador}; "
+            f"{dat.epocas} épocas, semilla {dat.semilla}.",
+            "Interpretación nuestra: como el objetivo no es la entrada, la red no puede limitarse a copiarla; "
+            "para acertar tiene que haber aprendido la forma de las letras.",
+        ],
+        citas=[(FUENTE, [dat.cfg])],
     )
-    d.codigo(MARGEN_IN, Y_CONFIG, ANCHO_UTIL, ALTO_CONFIG, [dat.cfg], fuente=FUENTE, tam=TAM_CODIGO)
 
 
 def _tecnicas_latente(pres, salidas, dat: _Datos) -> None:
-    d = pres.diapositiva("Ej 1b: Técnicas probadas: tamaño del latente y capacidad del encoder")
-    encabezado = [_corto(c) for c in dat.enc_lat]
-
+    d = pres.diapositiva("Ej 1b: Técnicas: latente y capas ocultas")
     y = CONTENIDO_Y_IN
-    alto_lat = d.tabla(
-        MARGEN_IN, y, ANCHO_TABLA_IZQ, [encabezado] + dat.lat, anchos=PESOS_TABLA, tam=TAM_TABLA
+    y += d.tabla(MARGEN_IN, y, ANCHO_UTIL, dat.tabla("lat"), anchos=ANCHOS, tam=TAM_TABLA) + 0.25
+    y += d.tabla(MARGEN_IN, y, ANCHO_UTIL, dat.tabla("hid"), anchos=ANCHOS, tam=TAM_TABLA) + 0.25
+    texto_justo(
+        d, MARGEN_IN, y, ANCHO_UTIL,
+        f"Puntaje: media de píxeles incorrectos de la salida con ruido de {dat.niveles_puntaje[0]} a "
+        f"{dat.niveles_puntaje[-1]}; menor es mejor.",
     )
-    y += alto_lat + HUECO
-    alto_hid = d.tabla(
-        MARGEN_IN, y, ANCHO_TABLA_IZQ, [encabezado] + dat.hid, anchos=PESOS_TABLA, tam=TAM_TABLA
-    )
-    y += alto_hid + HUECO_CHICO
-
-    # Que factor separa mas: la diferencia entre el mejor y el peor puntaje de cada estudio.
-    p_lat = [dat.puntaje(f) for f in dat.lat]
-    p_hid = [dat.puntaje(f) for f in dat.hid]
-    d_lat = max(p_lat) - min(p_lat)
-    d_hid = max(p_hid) - min(p_hid)
-    # Los extremos se citan como los imprime la tabla, nunca como una resta recalculada.
-    lat_mejor, lat_peor = min(dat.lat, key=dat.puntaje), max(dat.lat, key=dat.puntaje)
-    hid_mejor, hid_peor = min(dat.hid, key=dat.puntaje), max(dat.hid, key=dat.puntaje)
-    if d_lat >= d_hid:
-        factor = "El tamaño del latente"
-    else:
-        factor = "La capacidad del encoder"
-    d.texto(
-        MARGEN_IN, y, ANCHO_TABLA_IZQ, Y_FIN - y,
-        [
-            Parrafo(
-                "Arriba, estudio lat (tamaño del latente); abajo, estudio hid (capacidad del "
-                "encoder). El puntaje es la media de píxeles incorrectos de la salida en los "
-                "niveles de selección: menor es mejor.",
-            )
-        ],
-        tam=TAM_PIE,
-    )
-
-    x = MARGEN_IN + ANCHO_TABLA_IZQ + 0.3
-    ancho = ANCHO_IN - MARGEN_IN - x
-    alto_img = ALTO_IMG_LAT
-    d.imagen(
-        salidas.png(EJ, "dae_curves_lat_loss.png"), x, CONTENIDO_Y_IN, ancho, alto_img,
-        alt=salidas.alt(EJ, "dae_curves_lat_loss.png"),
-    )
-
-    # Los dos latentes mas grandes: la diferencia contra la dispersion entre semillas.
-    mayor = dat.lat[-1]
-    anterior = dat.lat[-2]
-    dif = abs(dat.puntaje(mayor) - dat.puntaje(anterior))
-    a_min, a_max = _rango_semillas(dat.puntajes, anterior[0])
-    m_min, m_max = _rango_semillas(dat.puntajes, mayor[0])
-    dispersion = max(a_max - a_min, m_max - m_min)
-    if dif <= dispersion:
-        cierre = (
-            f"queda dentro de la dispersión entre semillas: no hay evidencia de que {mayor[0]} "
-            f"sea mejor que {anterior[0]}."
+    notas = [
+        "Mensaje: estas dos tablas respaldan el tamaño de la red. Arriba cambia solo el latente; abajo, solo "
+        "las capas ocultas.",
+    ]
+    for estudio, que in (("lat", "del latente"), ("hid", "de las capas ocultas")):
+        mejor, peor = dat.extremos(estudio)
+        notas.append(
+            f"Estudio {que}: el puntaje va de {peor[2]} con {peor[0]} a {mejor[2]} con {mejor[0]}."
         )
-    else:
-        cierre = "supera la dispersión entre semillas."
-    y_txt = CONTENIDO_Y_IN + alto_img + HUECO_CHICO
-    d.texto(
-        x, y_txt, ancho, Y_FIN - y_txt,
-        [
-            Parrafo(
-                f"{factor} es el factor que más separa los resultados: el puntaje va de "
-                f"{lat_mejor[2]} a {lat_peor[2]} en lat y de {hid_mejor[2]} a {hid_peor[2]} en hid.",
-                vineta=True,
-            ),
-            Parrafo(
-                f"Entre {anterior[0]} y {mayor[0]} la diferencia ({dif:.4f}) {cierre}",
-                vineta=True,
-            ),
-            Parrafo(
-                f"Curva de pérdida de la primera semilla: la de {dat.lat[0][0]} queda por encima de "
-                f"las demás y las de {dat.lat[-2][0]} y {dat.lat[-1][0]} casi se superponen.",
-                vineta=True,
-            ),
-        ],
-        tam=TAM_PIE,
+    base = dat.base()
+    elegibles = all(_k_de_n(f[1])[0] == _k_de_n(f[1])[1] for filas in dat.estudios.values() for f in filas)
+    semillas = _k_de_n(dat.estudios["lat"][0][1])[1]
+    notas += [
+        f"Cómo leer las tablas: cada celda es la mediana de {semillas} semillas. Las columnas «px a nivel» son "
+        "los píxeles incorrectos medios de la salida con ese nivel de ruido. El nombre de la variante lleva el "
+        "tamaño del latente (l) o las capas ocultas del encoder (h).",
+        f"La base se repite con otro nombre en los estudios: {enumerar(base)} son la misma configuración y por "
+        "eso tienen la misma fila.",
+        "Las columnas que no entran en la diapositiva están en las filas citadas abajo: semillas elegibles, "
+        f"porcentaje dentro de {dat.tol} {px(dat.tol)} y pérdida final.",
+    ]
+    if elegibles:
+        notas.append(
+            "Todas las variantes son elegibles: con todas sus semillas reconstruyen los patrones limpios con "
+            f"{dat.px_ok}, el criterio del Ej 1a."
+        )
+    notas.append(
+        "Límite: son tres semillas por variante y un solo factor por vez respecto de la base; no se probó la "
+        "grilla completa de combinaciones."
     )
+    variantes = [f[0] for f in dat.estudios["lat"] + dat.estudios["hid"]]
+    d.notas(notas, citas=[(FUENTE_TABLA, lineas_md(salidas, EJ, TABLA, variantes))])
 
 
 def _tecnicas_ruido(pres, salidas, dat: _Datos) -> None:
-    d = pres.diapositiva("Ej 1b: Técnicas probadas: ruido de entrenamiento y selección")
-    encabezado = [_corto(c) for c in dat.enc_lat]
-    ancho_tab = ANCHO_TABLA_IZQ
-    alto_tab = d.tabla(
-        MARGEN_IN, CONTENIDO_Y_IN, ancho_tab, [encabezado] + dat.noise,
-        anchos=PESOS_TABLA, tam=TAM_TABLA,
+    d = pres.diapositiva("Ej 1b: Técnicas: ruido de entrenamiento")
+    y = CONTENIDO_Y_IN
+    y += d.tabla(MARGEN_IN, y, ANCHO_UTIL, dat.tabla("noise"), anchos=ANCHOS, tam=TAM_TABLA) + 0.35
+    texto_justo(
+        d, MARGEN_IN, y, ANCHO_UTIL,
+        vinetas(
+            [
+                "«fix»: nivel de ruido fijo. «u0-»: nivel sorteado entre 0 y el valor indicado.",
+                f"Elegida: {dat.variante}, la de menor puntaje; dentro de ella, la semilla {dat.semilla}.",
+            ]
+        ),
     )
-    x = MARGEN_IN + ancho_tab + 0.3
-    ancho = ANCHO_IN - MARGEN_IN - x
-    alto_img = ancho / ANCHO_IMG_DER * ALTO_IMG_DER
-    d.imagen(
-        salidas.png(EJ, "dae_curves_noise_loss.png"), x, CONTENIDO_Y_IN, ancho, alto_img,
-        alt=salidas.alt(EJ, "dae_curves_noise_loss.png"),
+    por_perdida = sorted(dat.estudios["noise"], key=lambda f: float(f[7]))
+    elegida = dat.fila(dat.variante)
+    notas = [
+        f"Mensaje: entrenar con ruido {dat.ruido_en_palabras()} dio el menor puntaje de todo el barrido, y por "
+        "eso es la configuración del ejercicio.",
+        "Regla de selección, escrita en el código: una variante es elegible si todas sus semillas reconstruyen "
+        "los patrones limpios dentro de la tolerancia; entre las elegibles gana la de menor mediana de puntaje "
+        "y, dentro de ella, la semilla de menor puntaje. El resultado es la línea SELECCION citada abajo.",
+        f"El barrido son {dat.corridas} corridas entre los tres estudios, con el ruido de selección sorteado "
+        "con una semilla distinta de la del entrenamiento y de la de la evaluación final.",
+    ]
+    if por_perdida[0][0] != dat.variante:
+        notas.append(
+            f"Pregunta probable sobre las filas completas: la pérdida final de {dat.variante} ({elegida[7]}) es "
+            f"mayor que la de {por_perdida[0][0]} ({por_perdida[0][7]}) y aun así corrige mejor. La pérdida se "
+            "mide sobre el lote ruidoso del entrenamiento: con más ruido el lote es más difícil y la pérdida "
+            "queda más alta. Por eso no se comparan pérdidas entre variantes con distinto ruido y se elige por "
+            "puntaje."
+        )
+    notas.append(
+        "Límite: las diferencias de puntaje entre variantes de ruido son chicas y hay tres semillas por "
+        "variante; la regla elige, no prueba que una variante sea mejor en general."
     )
-
-    y = CONTENIDO_Y_IN + max(alto_tab, alto_img) + HUECO
-    d.codigo(MARGEN_IN, y, ANCHO_UTIL, ALTO_BLOQUE_SEL, [dat.seleccion], fuente=FUENTE_BARRIDO, tam=TAM_CODIGO)
-    y += ALTO_BLOQUE_SEL + HUECO
-
-    perdidas = [(float(f[7]), f[0]) for f in dat.noise]
-    piso_bajo = min(perdidas)[1]
-    piso_alto = max(perdidas)[1]
-    ancho_regla = 5.6
-    d.texto(
-        MARGEN_IN, y, ancho_regla, Y_FIN - y,
-        [
-            "elegible = todas las semillas aprenden los patrones limpios",
-            "elegida = menor mediana de puntaje entre las elegibles",
-            f"corridas = {dat.corridas}",
+    d.notas(
+        notas,
+        citas=[
+            (FUENTE_TABLA, lineas_md(salidas, EJ, TABLA, [f[0] for f in dat.estudios["noise"]])),
+            (FUENTE_BARRIDO, [dat.seleccion]),
         ],
-        tam=TAM_CODIGO, mono=True,
-    )
-    x_txt = MARGEN_IN + ancho_regla + 0.2
-    d.texto(
-        x_txt, y, ANCHO_IN - MARGEN_IN - x_txt, Y_FIN - y,
-        [
-            Parrafo(
-                "Las pérdidas finales de variantes con distinto calendario de ruido no son "
-                "comparables entre sí: un lote con más ruido tiene un piso de pérdida más alto "
-                "aunque la red corrija mejor.",
-                vineta=True,
-            ),
-            Parrafo(
-                f"En la curva, los pisos quedan ordenados por la cantidad de ruido del lote "
-                f"({piso_bajo} lo más abajo, {piso_alto} lo más arriba), no por la calidad de "
-                "la corrección.",
-                vineta=True,
-            ),
-        ],
-        tam=TAM_PIE,
     )
 
 
 def _distorsion(pres, salidas, dat: _Datos) -> None:
     d = pres.diapositiva("Ej 1b: Resultados: distorsión de las entradas")
-    alto = Y_FIN - CONTENIDO_Y_IN
-    ancho_img = 4.3
-    d.imagen(
-        salidas.png(EJ, "noise_examples.png"), MARGEN_IN, CONTENIDO_Y_IN, ancho_img, alto,
-        alt=salidas.alt(EJ, "noise_examples.png"),
+    primero, ultimo = dat.niveles[0], dat.niveles[-1]
+    figura_ancha(
+        d, salidas, EJ, "noise_examples.png",
+        f"Cada píxel se invierte con probabilidad igual al nivel de ruido. Niveles: de {primero} a {ultimo}.",
     )
-    x = MARGEN_IN + ancho_img + 0.4
-    ancho = ANCHO_IN - MARGEN_IN - x
-    pixeles = dat.tamanios[0]
-    primero = dat.niveles[1]
-    # Indice del nivel en el que la mayoria de las entradas ya cuesta reconocer.
-    dificil = dat.niveles[-3]
-    ultimo = dat.niveles[-1]
-    fila_primero = dat.fila_nivel(primero)
-    fila_ultimo = dat.fila_nivel(ultimo)
-    d.texto(
-        x, CONTENIDO_Y_IN, ancho, alto,
-        [
-            Parrafo(
-                "Modelo de ruido: cada píxel se invierte de forma independiente con probabilidad "
-                f"igual al nivel p, para los {pixeles} píxeles de cada letra.",
-                vineta=True,
-            ),
-            Parrafo(
-                f"Con p igual a un medio, el último nivel evaluado ({ultimo}), el valor de cada "
-                "píxel de entrada es cero o uno con igual probabilidad sea cual sea el patrón: la "
-                "entrada no lleva información sobre el patrón y ningún método podría recuperarlo.",
-                vineta=True,
-            ),
-            Parrafo(
-                f"Niveles evaluados: {_enumerar(dat.niveles)}. Con nivel {dat.niveles[0]} la entrada "
-                "es el patrón limpio.",
-                vineta=True,
-            ),
-            Parrafo(
-                f"Los píxeles incorrectos medios de la entrada crecen de {fila_primero[0]} en "
-                f"{primero} a {fila_ultimo[0]} en {ultimo} (media sobre {dat.muestras} muestras "
-                "por nivel).",
-                vineta=True,
-            ),
-            Parrafo(
-                f"En la figura, con el pie de cada letra como cantidad de píxeles invertidos: en "
-                f"{primero} las letras se leen casi sin esfuerzo y desde {dificil} cuesta reconocer "
-                "la mayoría de las entradas.",
-                vineta=True,
-            ),
-        ],
-        tam=TAM_PIE,
+    con_ruido = [n for n in dat.niveles if float(n) > 0]
+    mitad = (len(dat.niveles) + 2) // 2 - 1
+    notas = [
+        "Mensaje: así se distorsionan las entradas. El nivel de ruido es la probabilidad de invertir cada "
+        "píxel, de forma independiente.",
+        f"Cómo leer la figura: las mismas ocho letras en cada fila. El bloque izquierdo tiene la fila original "
+        f"y los niveles {enumerar(dat.niveles[:mitad])}; el derecho, {enumerar(dat.niveles[mitad:])}.",
+        f"Píxeles invertidos por entrada, en promedio: {dat.celda(con_ruido[0], 1)} con ruido {con_ruido[0]} y "
+        f"{dat.celda(ultimo, 1)} con {ultimo}. Es el nivel por los {dat.tamanios[0]} píxeles.",
+    ]
+    if float(primero) == 0:
+        notas.append(f"Con nivel {primero} la entrada es el patrón limpio: sirve de control.")
+    if float(ultimo) == 0.5:
+        notas.append(
+            f"Con {ultimo} cada píxel de la entrada queda encendido o apagado con igual probabilidad sea cual "
+            "sea la letra: la entrada ya no tiene información del patrón y ningún método puede recuperarlo. "
+            "Por eso es el último nivel."
+        )
+    notas.append(
+        "Los ejemplos se sortean con una semilla propia, distinta de la del entrenamiento y de la evaluación."
     )
+    d.notas(notas, citas=[(FUENTE, dat.cita_tabla([con_ruido[0], ultimo]))])
 
 
 def _error_por_nivel(pres, salidas, dat: _Datos) -> None:
     d = pres.diapositiva("Ej 1b: Resultados: error por nivel de ruido")
-    ancho = 6.0
-    x_izq = MARGEN_IN
-    x_der = ANCHO_IN - MARGEN_IN - ancho
-    y_fig = CONTENIDO_Y_IN
-    y_cap = y_fig + ALTO_FIG_NIVEL + HUECO_CHICO
-
-    d.imagen(
-        salidas.png(EJ, "dae_error_vs_noise.png"), x_izq, y_fig, ancho, ALTO_FIG_NIVEL,
-        alt=salidas.alt(EJ, "dae_error_vs_noise.png"),
+    n = dat.nivel_max
+    muestras = dat.csv[n]["n_samples"]
+    figura_ancha(
+        d, salidas, EJ, "dae_error_vs_noise.png",
+        f"Ruido {n}: en promedio, {dat.celda(n, 1)} píxeles incorrectos en la entrada y {dat.celda(n, 2)} en "
+        "la salida.",
     )
-    d.imagen(
-        salidas.png(EJ, "dae_within_vs_noise.png"), x_der, y_fig, ancho, ALTO_FIG_NIVEL,
-        alt=salidas.alt(EJ, "dae_within_vs_noise.png"),
-    )
-
     ultimo = dat.niveles[-1]
-    nivel_cambio = dat.niveles[-4]
-    d.texto(
-        x_izq, y_cap, ancho, ALTO_CAPTION_NIVEL,
-        f"Píxeles incorrectos medios por nivel: la curva de la salida casi coincide con el eje "
-        f"horizontal hasta {dat.nivel_max} mientras la de la entrada crece en línea recta; la "
-        f"salida cambia de pendiente cerca de {nivel_cambio}.",
-        tam=TAM_PIE,
-    )
-    mitad = dat.primer_nivel_bajo(dat.frac_entrada, MITAD)
-    d.texto(
-        x_der, y_cap, ancho, ALTO_CAPTION_NIVEL,
-        f"Muestras con a lo sumo {dat.tol} {dat.px_tol} incorrecto: sin autoencoder, la entrada "
-        f"cae por debajo de la mitad ya en {mitad}; la salida sigue sobre el {dat.umbral} % hasta "
-        f"{dat.nivel_max} y después baja de forma continua hasta {dat.fila_nivel(ultimo)[3]} % en {ultimo}.",
-        tam=TAM_PIE,
-    )
-    y_eval = y_cap + ALTO_CAPTION_NIVEL + HUECO_CHICO
-    d.texto(
-        MARGEN_IN, y_eval, ANCHO_UTIL, Y_FIN - y_eval,
-        f"Evaluación: {dat.n_dist} distorsiones no vistas de cada uno de los {dat.patrones} "
-        f"patrones en cada nivel ({dat.muestras} muestras por nivel), con una semilla distinta de "
-        "la del entrenamiento y de la selección; se binariza la salida y se cuentan los píxeles "
-        "que difieren del patrón limpio.",
-        tam=TAM_PIE,
-    )
-
-
-def _tabla_y_titular(pres, dat: _Datos) -> None:
-    d = pres.diapositiva("Ej 1b: Resultados: tabla por nivel y nivel máximo eliminado")
-    y = CONTENIDO_Y_IN
-    d.codigo(
-        MARGEN_IN, y, ANCHO_BLOQUE_TABLA, ALTO_BLOQUE_TABLA, dat.tabla,
-        fuente=FUENTE, tam=TAM_BLOQUE_TABLA,
-    )
-    x_cifra = MARGEN_IN + ANCHO_BLOQUE_TABLA + 0.3
-    d.cifra(
-        x_cifra, y, ANCHO_IN - MARGEN_IN - x_cifra, ALTO_BLOQUE_TABLA,
-        dat.nivel_max, "nivel máximo eliminado",
-    )
-    y += ALTO_BLOQUE_TABLA + HUECO
-    d.codigo(
-        MARGEN_IN, y, ANCHO_UTIL, ALTO_BLOQUE_TITULAR, [dat.titular], fuente=FUENTE, tam=TAM_CODIGO
-    )
-    y += ALTO_BLOQUE_TITULAR + HUECO
-
-    limite = float(dat.umbral) / CIEN
-    primero_bajo = dat.primer_nivel_bajo(dat.frac, limite)
-    d.texto(
-        MARGEN_IN, y, ANCHO_UTIL, Y_FIN - y,
+    d.notas(
         [
-            Parrafo(
-                f"El nivel máximo eliminado es una convención: el mayor nivel en el que, a ese "
-                f"nivel y a todos los menores, al menos el {dat.umbral} % de las distorsiones no "
-                f"vistas queda con a lo sumo {dat.tol} {dat.px_tol} incorrecto.",
-                vineta=True,
-            ),
-            Parrafo(
-                f"Con otro umbral el nivel cambia: en {primero_bajo} queda el "
-                f"{dat.fila_nivel(primero_bajo)[3]} %, apenas por debajo de {dat.umbral} %. La "
-                "información que no depende de la convención es el perfil de la tabla completa.",
-                vineta=True,
-            ),
+            "Mensaje: el autoencoder saca casi todo el ruido en los niveles bajos y deja de poder a medida que "
+            "el ruido crece.",
+            "Cómo leer la figura: en el eje horizontal el nivel de ruido; en el vertical, los píxeles "
+            "incorrectos medios contra el patrón limpio. La curva azul es la entrada con ruido, sin "
+            "autoencoder; la naranja es la salida.",
+            f"Cómo se evalúa: {dat.por_patron} distorsiones nuevas de cada patrón en cada nivel, {muestras} "
+            "muestras por nivel, sorteadas con una semilla que no es la del entrenamiento ni la de la "
+            "selección. Se binariza la salida y se cuentan los píxeles que difieren del patrón limpio.",
+            f"En el otro extremo, con ruido {ultimo}, la salida tiene {dat.celda(ultimo, 2)} píxeles incorrectos "
+            f"contra {dat.celda(ultimo, 1)} de la entrada: ya casi no corrige.",
+            "La tabla completa está citada abajo: nivel, píxeles incorrectos medios de la entrada y de la "
+            f"salida, peor caso de la salida y porcentaje de muestras con {dat.px_ok}.",
         ],
-        tam=TAM_TEXTO,
+        citas=[(FUENTE, [dat.evaluacion] + dat.cita_tabla())],
     )
+
+
+def _nivel_maximo(pres, salidas, dat: _Datos) -> None:
+    d = pres.diapositiva("Ej 1b: Resultados: nivel máximo eliminado")
+    figura_ancha(
+        d, salidas, EJ, "dae_within_vs_noise.png",
+        [
+            destacado(f"Nivel máximo eliminado: {dat.nivel_max}"),
+            f"Hasta ese nivel, al menos el {dat.umbral} % de las distorsiones queda con {dat.px_ok}.",
+        ],
+        fraccion=0.905,
+    )
+    limite = float(dat.umbral) / 100.0
+    bajo = dat.primer_nivel("frac_within_1px", limite)
+    entrada_bajo_mitad = dat.primer_nivel("input_frac_within_1px", 0.5)
+    ultimo = dat.niveles[-1]
+    notas = [
+        f"Mensaje: con el criterio del {dat.umbral} %, el autoencoder elimina el ruido hasta el nivel "
+        f"{dat.nivel_max}.",
+        f"Cómo leer la figura: porcentaje de muestras que quedan con {dat.px_ok}, por nivel de ruido. La curva "
+        "azul es la entrada con ruido; la naranja, la salida.",
+        f"Definición: el nivel máximo eliminado es el mayor nivel tal que, a ese nivel y a todos los menores, "
+        f"al menos el {dat.umbral} % de las distorsiones no vistas queda con {dat.px_ok}. La tolerancia es la "
+        f"del Ej 1a. El {dat.umbral} % es una convención de este trabajo.",
+    ]
+    if bajo is not None:
+        notas.append(
+            f"Si preguntan qué pasa con otro umbral: con ruido {bajo} queda el {dat.celda(bajo, 4)} %, por "
+            f"debajo del {dat.umbral} %. Lo que no depende de la convención es la curva completa, que está "
+            "en la tabla citada."
+        )
+    if entrada_bajo_mitad is not None:
+        notas.append(
+            f"Sin autoencoder, menos de la mitad de las entradas queda dentro de la tolerancia ya con ruido "
+            f"{entrada_bajo_mitad}."
+        )
+    if float(ultimo) == 0.5:
+        notas.append(
+            f"Con ruido {ultimo} queda dentro de la tolerancia el {dat.celda(ultimo, 4)} %. A ese nivel la "
+            "entrada no tiene información del patrón, así que esos aciertos son azar y no eliminación de ruido."
+        )
+    d.notas(notas, citas=[(FUENTE, [dat.titular] + dat.cita_tabla())])
 
 
 def _ejemplos(pres, salidas, dat: _Datos) -> None:
     d = pres.diapositiva("Ej 1b: Resultados: original, entrada ruidosa y salida")
-    titular = dat.nivel_de(dat.nivel_max)
-    siguiente = dat.niveles[dat.niveles.index(titular) + 1]
-    mitad = dat.primer_nivel_bajo(dat.frac, MITAD)
-    ultimo = dat.niveles[-1]
-    # (nivel elegido por regla, lectura confirmada sobre la imagen abierta)
-    elegidos = [
-        (
-            titular,
-            "las ocho salidas son exactas aunque cada entrada llega con píxeles invertidos.",
-        ),
-        (
-            siguiente,
-            "último nivel de los ejemplos en que las ocho letras vuelven exactas.",
-        ),
-        (
-            mitad,
-            "fallan varias letras (a, b, e, s y z); g, k y w quedan dentro de la tolerancia.",
-        ),
-        (
-            ultimo,
-            "salidas con forma de letra pero sin relación con la de partida: la entrada no "
-            "tiene información.",
-        ),
-    ]
-    vistos: list[str] = []
-    ejemplos = []
-    for nivel, lectura in elegidos:
-        if nivel in vistos:
-            continue
-        vistos.append(nivel)
-        ejemplos.append((nivel, lectura))
-    if len(ejemplos) < 2:
-        raise ValueError(f"{EJ}/dae_levels.csv: menos de dos niveles distintos para los ejemplos")
-
-    ancho = (ANCHO_UTIL - HUECO) / 2
-    alto_celda = ALTO_IMG_EJEMPLO + ALTO_CAPTION_EJEMPLO + HUECO_CHICO
-    for i, (nivel, lectura) in enumerate(ejemplos):
-        fila, col = divmod(i, 2)
-        x = MARGEN_IN + col * (ancho + HUECO)
-        y = CONTENIDO_Y_IN + fila * alto_celda
-        nombre = f"dae_examples_p{nivel}.png"
-        d.imagen(
-            salidas.png(EJ, nombre), x, y, ancho, ALTO_IMG_EJEMPLO,
-            alt=salidas.alt(EJ, nombre),
-        )
-        d.texto(
-            x, y + ALTO_IMG_EJEMPLO, ancho, ALTO_CAPTION_EJEMPLO,
-            f"Nivel {nivel}: {lectura}", tam=TAM_PIE,
-        )
+    figura_alta_centrada(d, salidas, EJ, f"dae_examples_p{dat.nivel_max}.png")
+    d.notas(
+        [
+            f"Mensaje: un ejemplo concreto en el nivel máximo eliminado, {dat.nivel_max}.",
+            "Cómo leer la figura: arriba las ocho letras originales; en el medio las mismas letras con ruido, "
+            "con la cantidad de píxeles invertidos como pie; abajo la salida del autoencoder, con sus píxeles "
+            "incorrectos contra el original como pie.",
+            "En estos ocho ejemplos todas las salidas coinciden con el original: el pie de la fila de abajo es "
+            "cero en las ocho.",
+            f"Son ocho ejemplos, no la medida. La medida es la tabla: con ruido {dat.nivel_max} el "
+            f"{dat.celda(dat.nivel_max, 4)} % de las muestras queda con {dat.px_ok}, y el peor caso de la "
+            f"salida tiene {dat.celda(dat.nivel_max, 3)} píxeles incorrectos.",
+            "Hay una figura igual por cada nivel en la carpeta de salidas, por si piden ver un nivel más alto.",
+        ],
+        citas=[(FUENTE, dat.cita_tabla([dat.nivel_max]))],
+    )
 
 
 def _conclusiones(pres, dat: _Datos) -> None:
     d = pres.diapositiva("Ej 1b: Conclusiones")
-    n1, n2 = dat.niveles[1], dat.niveles[2]
-    f1, f2 = dat.fila_nivel(n1), dat.fila_nivel(n2)
+    bajo_mitad = dat.primer_nivel("frac_within_1px", 0.5)
     ultimo = dat.niveles[-1]
-    f_ultimo = dat.fila_nivel(ultimo)
-
-    limite = float(dat.umbral) / CIEN
-    falla = dat.primer_nivel_bajo(dat.frac, limite)
-    i_falla = dat.niveles.index(falla)
-    siguientes = dat.niveles[i_falla + 1 : i_falla + 3]
-    f_falla = dat.fila_nivel(falla)
-    cola = _enumerar([f"{dat.fila_nivel(n)[3]} % en {n}" for n in siguientes])
-
-    p_lat = [dat.puntaje(f) for f in dat.lat]
-    p_hid = [dat.puntaje(f) for f in dat.hid]
-    separa_latente = (max(p_lat) - min(p_lat)) >= (max(p_hid) - min(p_hid))
-    mejor_lat = min(dat.lat, key=dat.puntaje)
-    peor_lat = max(dat.lat, key=dat.puntaje)
-    mejor_ruido = min(dat.noise, key=dat.puntaje)
-    peor_ruido = max(dat.noise, key=dat.puntaje)
-    if separa_latente:
-        frase_factor = (
-            f"El tamaño del latente fue el factor que más separó las arquitecturas (puntaje "
-            f"{peor_lat[2]} con {peor_lat[0]} contra {mejor_lat[2]} con {mejor_lat[0]})"
-        )
-    else:
-        frase_factor = "La capacidad del encoder fue el factor que más separó las arquitecturas"
-    semillas = _k_de_n(dat.noise[0][1])[1]
-
-    puntos = [
-        f"En los niveles bajos elimina casi todo el ruido: de {f1[0]} píxeles incorrectos en la "
-        f"entrada a {f1[1]} en la salida en {n1}, y de {f2[0]} a {f2[1]} en {n2}.",
-        f"Empieza a fallar en {falla}: el {f_falla[3]} % de las salidas queda con a lo sumo "
-        f"{dat.tol} {dat.px_tol} incorrecto, por debajo de la convención de {dat.umbral} %, y "
-        f"después baja a {cola}.",
-        f"En el nivel más alto, {ultimo}, la salida queda cerca de la entrada ({f_ultimo[1]} "
-        f"contra {f_ultimo[0]} píxeles incorrectos) y ningún método puede recuperar el patrón: el "
-        f"{f_ultimo[3]} % que queda dentro de la tolerancia es azar, no eliminación de ruido.",
-        f"{frase_factor}, y el calendario de ruido de entrenamiento decidió la mejor variante: "
-        f"{mejor_ruido[0]} tiene el menor puntaje del estudio ({mejor_ruido[2]}, contra "
-        f"{peor_ruido[2]} de {peor_ruido[0]}).",
-        f"Límites: solo ruido de inversión de píxeles; la red es un modelo de los {dat.patrones} "
-        f"patrones y, si el ruido la engaña, devuelve otro de ellos; la red elegida es una entre "
-        f"{semillas} semillas por una regla escrita como código; el umbral de {dat.umbral} % es "
-        "una convención de este trabajo.",
-    ]
-    d.texto(
-        MARGEN_IN, CONTENIDO_Y_IN, ANCHO_TEXTO_CONCL, Y_FIN - CONTENIDO_Y_IN,
-        [Parrafo(t, vineta=True) for t in puntos], tam=TAM_TEXTO,
+    if bajo_mitad is None or bajo_mitad == ultimo:
+        raise ValueError(f"{EJ}/dae_levels.csv: no hay un nivel intermedio bajo la mitad; revisar las conclusiones")
+    texto_justo(
+        d, MARGEN_IN, CONTENIDO_Y_IN + 0.5, ANCHO_UTIL,
+        vinetas(
+            [
+                f"Hasta ruido {dat.nivel_max}, al menos el {dat.umbral} % de las distorsiones queda con "
+                f"{dat.px_ok}.",
+                f"Con ruido {bajo_mitad} lo logra el {dat.celda(bajo_mitad, 4)} %; con {ultimo}, el "
+                f"{dat.celda(ultimo, 4)} %.",
+                f"Configuración elegida: latente {dat.latente} y ruido de entrenamiento {dat.ruido_en_palabras()}.",
+            ]
+        ),
+        tam=24,
     )
-    x = MARGEN_IN + ANCHO_TEXTO_CONCL + 0.3
-    ancho = ANCHO_IN - MARGEN_IN - x
-    alto = (Y_FIN - CONTENIDO_Y_IN - HUECO) / 2
-    d.cifra(x, CONTENIDO_Y_IN, ancho, alto, dat.nivel_max, "nivel máximo eliminado")
-    d.cifra(
-        x, CONTENIDO_Y_IN + alto + HUECO, ancho, alto,
-        f"{f_ultimo[3]} %", f"dentro de la tolerancia en {ultimo}: azar",
+    d.notas(
+        [
+            "Mensaje de cierre del ejercicio: el autoencoder elimina el ruido bajo casi por completo y pierde "
+            "capacidad de forma gradual; no hay un nivel a partir del cual deje de servir de golpe.",
+            "Las tres frases salen del reporte: la primera es la línea NIVEL MAXIMO ELIMINADO, la segunda son "
+            "dos filas de la tabla por nivel y la tercera es la línea de configuración.",
+            f"Límites: solo se probó ruido de inversión de píxeles; el {dat.umbral} % es una convención de este "
+            "trabajo; la red elegida es una semilla de su variante, elegida por una regla escrita en el código; "
+            "la red es un modelo de estas letras y no se probó con otras.",
+            "Si preguntan qué haríamos distinto: más semillas por variante y otros tipos de ruido.",
+        ],
+        citas=[(FUENTE, [dat.cfg, dat.titular] + dat.cita_tabla([bajo_mitad, ultimo]))],
     )
 
 
@@ -660,6 +475,6 @@ def agregar(pres, salidas) -> None:
     _tecnicas_ruido(pres, salidas, dat)
     _distorsion(pres, salidas, dat)
     _error_por_nivel(pres, salidas, dat)
-    _tabla_y_titular(pres, dat)
+    _nivel_maximo(pres, salidas, dat)
     _ejemplos(pres, salidas, dat)
     _conclusiones(pres, dat)

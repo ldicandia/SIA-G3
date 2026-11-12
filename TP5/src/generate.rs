@@ -172,8 +172,8 @@ pub fn export_new_letter(
         }
     };
     let items = vec![
-        ("nueva letra".to_string(), letter.pattern.clone()),
-        (format!("mas cercana: {}", letter.nearest_label), ds.x.row(letter.nearest_index).to_owned()),
+        ("letra nueva".to_string(), letter.pattern.clone()),
+        (format!("más cercana: {}", letter.nearest_label), ds.x.row(letter.nearest_index).to_owned()),
     ];
     plot_pattern_grid(&out_dir.join(NEW_LETTER_PNG), &items).context("no se pudo escribir new_letter.png")?;
     Ok(letter)

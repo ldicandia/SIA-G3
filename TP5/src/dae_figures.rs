@@ -10,7 +10,7 @@ use crate::autoencoder::Autoencoder;
 use crate::data::{format_grid, Dataset, N_PIXELS};
 use crate::denoising::LevelStats;
 use crate::noise::{distort, level_rng, validate_level};
-use crate::plots::{plot_pattern_rows, plot_series, PatternRow, Series};
+use crate::plots::{plot_pattern_rows, plot_pattern_rows_in_blocks, plot_series, PatternRow, Series};
 use crate::report::wrong_pixel_counts;
 
 /// Letras que se muestran como ejemplo, en este orden.
@@ -55,19 +55,19 @@ pub fn export_level_charts(stats: &[LevelStats], out_dir: &Path) -> Result<Vec<P
     if stats.len() < 2 {
         bail!("se necesitan al menos 2 niveles para graficar una linea (hay {})", stats.len());
     }
-    let x_label = "nivel de ruido (probabilidad de invertir cada pixel)";
+    let x_label = "nivel de ruido";
     let series = |input: Vec<(f64, f64)>, output: Vec<(f64, f64)>| {
         vec![
-            Series { name: "entrada ruidosa (sin autoencoder)".to_string(), points: input },
+            Series { name: "entrada ruidosa".to_string(), points: input },
             Series { name: "salida del autoencoder".to_string(), points: output },
         ]
     };
     let error_path = out_dir.join(ERROR_CHART_PNG);
     plot_series(
         &error_path,
-        "Ej 1b - pixeles incorrectos por nivel de ruido (distorsiones no vistas)",
+        "Píxeles incorrectos medios por nivel de ruido",
         x_label,
-        "pixeles incorrectos por patron (media)",
+        "píxeles incorrectos",
         &series(
             stats.iter().map(|s| (s.level, s.input_mean_wrong)).collect(),
             stats.iter().map(|s| (s.level, s.output_mean_wrong)).collect(),
@@ -77,9 +77,9 @@ pub fn export_level_charts(stats: &[LevelStats], out_dir: &Path) -> Result<Vec<P
     let within_path = out_dir.join(WITHIN_CHART_PNG);
     plot_series(
         &within_path,
-        "Ej 1b - muestras con a lo sumo 1 pixel incorrecto",
+        "Muestras con a lo sumo 1 píxel incorrecto",
         x_label,
-        "porcentaje de muestras",
+        "% de muestras",
         &series(
             stats.iter().map(|s| (s.level, s.input_frac_within * 100.0)).collect(),
             stats.iter().map(|s| (s.level, s.frac_within * 100.0)).collect(),
@@ -127,7 +127,7 @@ pub fn export_dae_examples(ae: &Autoencoder, ex: &NoiseExamples, out_dir: &Path)
         let path = out_dir.join(dae_examples_filename(level));
         plot_pattern_rows(
             &path,
-            &format!("Ej 1b - nivel de ruido p={level:.2}: original, entrada ruidosa y salida del autoencoder"),
+            &format!("Nivel de ruido {level:.2}: original, entrada ruidosa y salida"),
             &build_dae_example_rows(ae, ex, li),
         )?;
         paths.push(path);
@@ -190,29 +190,28 @@ pub fn format_grids_side_by_side(patterns: &[Array1<f64>]) -> String {
         .join("\n")
 }
 
-/// Escribe `noise_examples.png` en `out_dir`: una fila `original` y una fila `p=..` por nivel,
-/// con la cantidad de pixeles invertidos como pie de cada letra.
+/// Bloques lado a lado de `noise_examples.png`.
+const NOISE_EXAMPLE_BLOCKS: usize = 2;
+
+/// Escribe `noise_examples.png` en `out_dir`: una fila `original` y una fila por nivel, con el nivel
+/// como etiqueta, repartidas en dos bloques lado a lado. Sin pie por letra: con el tamano minimo de
+/// letra de las figuras los pies obligarian a separar y achicar las letras
+/// (`NoiseExamples::inverted_pixels` da la cuenta de pixeles invertidos).
 pub fn export_noise_examples(ex: &NoiseExamples, out_dir: &Path) -> Result<PathBuf> {
     if ex.levels.len() != ex.noisy.len() {
         bail!("hay {} niveles y {} matrices ruidosas", ex.levels.len(), ex.noisy.len());
     }
     let mut rows = vec![PatternRow {
         label: "original".to_string(),
-        cells: ex.labels.iter().cloned().zip(ex.clean.rows().into_iter().map(|r| r.to_owned())).collect(),
+        cells: ex.clean.rows().into_iter().map(|r| (String::new(), r.to_owned())).collect(),
     }];
     for (li, &level) in ex.levels.iter().enumerate() {
-        let counts = ex.inverted_pixels(li);
         rows.push(PatternRow {
-            label: format!("p={level:.2}"),
-            cells: ex.noisy[li]
-                .rows()
-                .into_iter()
-                .zip(counts)
-                .map(|(r, k)| (format!("{k} px"), r.to_owned()))
-                .collect(),
+            label: format!("{level:.2}"),
+            cells: ex.noisy[li].rows().into_iter().map(|r| (String::new(), r.to_owned())).collect(),
         });
     }
     let path = out_dir.join(NOISE_EXAMPLES_PNG);
-    plot_pattern_rows(&path, "Ej 1b - ejemplos de distorsion por nivel de ruido", &rows)?;
+    plot_pattern_rows_in_blocks(&path, "Las mismas 8 letras por nivel de ruido", &rows, NOISE_EXAMPLE_BLOCKS)?;
     Ok(path)
 }

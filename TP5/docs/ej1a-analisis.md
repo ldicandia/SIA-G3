@@ -106,7 +106,7 @@ El camino de análisis de fallos existe (`src/analysis.rs`: para cada patrón no
 
 `output/ej1a/latent.png` ubica los 32 patrones en el plano latente de la configuración elegida (cada punto con su carácter; las coordenadas exactas están en `output/ej1a/latent_codes.csv`). Los 32 códigos son distintos entre sí. Lo que se ve en el gráfico:
 
-- Las letras `b`, `h`, `k`, `p`, `r` y `n` quedan juntas en el borde izquierdo (`z1` entre -16.2 y -14.4). En `font.h` todas comparten el trazo vertical del lado izquierdo, lo que sugiere que el encoder agrupa por esa característica.
+- Las seis letras de menor `z1` (`p`, `k`, `h`, `r`, `n` y `b`, en ese orden) quedan juntas en el borde izquierdo (`z1` entre -16.2 y -14.4); la séptima es `m` (`z1` = -13.3). En `font.h` todas ellas tienen un trazo vertical del lado izquierdo, lo que sugiere (como interpretación cualitativa) que el encoder usa `z1` para esa característica.
 - Sobre una diagonal hacia abajo a la izquierda se ordenan `m`, `e`, `o`, `w`, `u` y `a` (de `z1` = -13.3, `z2` = -5.8 hacia `z1` = -3.7, `z2` = -14.6).
 - Los signos de puntuación y letras de trazo vertical con poco relleno (`` ` ``, `|`, `l`, `~` e `i`) quedan arriba, con `z2` entre 10.9 y 15.7.
 - Un grupo denso rodea el origen: `t`, `x`, `z`, `g`, `y`, `s`, `j`, `{` y `}`, con `z1` entre -2.6 y 1.2 y `z2` entre -2.1 y 3.9. Es la zona con menor separación entre códigos y donde se ubica la letra nueva generada más abajo.
