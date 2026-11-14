@@ -3,15 +3,14 @@
 use std::sync::OnceLock;
 
 use tp5::ej2::{dataset_line, run_ej2, separation_line, Ej2Options, Ej2Run};
-use tp5::emoji::format_emojis_side_by_side;
 use tp5::vae::{config_line, loss_summary_line, reconstruction_line, render_loss_table};
 use tp5::vae_eval::{
-    contrast_line, control_line, manifold_line, new_emoji_line, prior_line, regions_line, render_acceptance,
+    contrast_line, control_line, judge_line, manifold_line, new_ore_line, prior_line, render_acceptance,
     render_gallery,
 };
 
 /// La oracion exacta que el documento debe contener (en una sola linea).
-const IMPOSSIBILITY_SENTENCE: &str = "El dataset es el producto completo de 6 estilos de ojos por 6 estilos de boca: no existe ninguna combinación de ojos y boca que esté ausente, de modo que un emoji nuevo no puede ser una combinación inédita de estilos conocidos.";
+const COMBINATIONS_SENTENCE: &str = "El dataset tiene 18 de las 27 combinaciones posibles de 9 minerales por 3 rocas: faltan los 7 minerales que no aparecen en el Nether y el cuarzo en piedra y en pizarra.";
 
 fn doc() -> &'static str {
     static DOC: OnceLock<String> = OnceLock::new();
@@ -34,11 +33,11 @@ fn assert_contains(what: &str, text: &str) {
 #[test]
 fn document_has_the_six_sections() {
     let headings = [
-        "## Dataset de emojis",
+        "## Dataset de bloques",
         "## Arquitectura y esquema variacional",
         "## Evolución de la pérdida",
         "## Reconstrucción y espacio latente",
-        "## Generación de un emoji nuevo",
+        "## Generación de un bloque nuevo",
         "## Alcance y limitaciones",
     ];
     let found: Vec<&str> = doc().lines().filter(|l| l.starts_with("## ")).collect();
@@ -76,15 +75,15 @@ fn document_contains_reconstruction_manifold_and_contrast_lines() {
 #[test]
 fn document_contains_the_prior_lines() {
     let run = run();
-    assert_contains("la linea PRIOR del VAE", &prior_line(&run.prior, &run.sep));
-    assert_contains("la linea PRIOR del autoencoder simple", &prior_line(&run.plain_prior, &run.sep));
+    assert_contains("la linea PRIOR del VAE", &format!("VAE {}", prior_line(&run.prior)));
+    assert_contains("la linea PRIOR del autoencoder simple", &format!("AE simple {}", prior_line(&run.plain_prior)));
 }
 
 #[test]
-fn document_contains_the_new_emoji_lines() {
+fn document_contains_the_new_ore_lines() {
     let run = run();
-    assert_contains("la linea EMOJI NUEVO", &new_emoji_line(&run.search, &run.ds, &run.sep));
-    assert_contains("la linea REGIONES", &regions_line(&run.judge));
+    assert_contains("la linea BLOQUE NUEVO", &new_ore_line(&run.search, &run.ds));
+    assert_contains("la linea JUEZ", &judge_line(&run.judge));
     for line in render_gallery(&run.search, &run.ds).lines() {
         assert_contains("una linea de la galeria", line);
     }
@@ -97,17 +96,14 @@ fn document_contains_the_negative_control_line() {
 }
 
 #[test]
-fn document_states_that_new_combinations_are_impossible() {
-    assert_contains("la oracion de imposibilidad de combinaciones nuevas", IMPOSSIBILITY_SENTENCE);
-    assert_contains(
-        "la prueba que respalda la oracion",
-        "every_combination_of_known_styles_is_already_a_dataset_emoji",
-    );
+fn document_states_which_combinations_are_missing() {
+    assert_contains("la oracion de las combinaciones ausentes", COMBINATIONS_SENTENCE);
+    assert_contains("la prueba que respalda la oracion", "combinations_present_are_18_of_27");
 }
 
 #[test]
-fn document_does_not_claim_novelty_by_pixel_distance() {
-    for obsolete in ["no es una copia de ninguno", "**Nuevo:** está a al menos"] {
+fn document_does_not_mention_the_previous_dataset() {
+    for obsolete in ["emoji", "Emoji", "no es una copia de ninguno", "**Nuevo:** está a al menos"] {
         assert!(!doc().contains(obsolete), "el documento todavia contiene la afirmacion obsoleta: {obsolete}");
     }
 }
@@ -124,23 +120,22 @@ fn document_contains_every_acceptance_line() {
 }
 
 #[test]
-fn document_contains_the_headline_emoji_rendering() {
+fn document_names_the_headline_ore_and_its_nearest_block() {
     let run = run();
-    let first = run.search.accepted.first().expect("la corrida acepto un emoji nuevo");
-    let nearest = run.ds.x.row(first.judgement.nearest_index).to_owned();
-    let binarized = first.image.mapv(|v| if v >= 0.5 { 1.0 } else { 0.0 });
-    assert_contains("el dibujo del emoji nuevo junto al mas cercano", &format_emojis_side_by_side(&[binarized, nearest]));
+    let first = run.search.accepted.first().expect("la corrida acepto un bloque nuevo");
+    assert_contains("la combinacion del bloque principal", &format!("{} (combinacion ausente del dataset)", first.verdict.combination()));
+    assert_contains("el bloque mas cercano", &format!("`{}`, está a {:.1} niveles", run.ds.names[first.nearest.0], first.nearest.1));
 }
 
 #[test]
 fn document_cites_generated_artifacts() {
     for path in [
-        "output/ej2/emojis.png",
+        "output/ej2/ores.png",
         "output/ej2/vae_loss.csv",
         "output/ej2/vae_loss.png",
         "output/ej2/vae_reconstruction.png",
         "output/ej2/vae_manifold.png",
-        "output/ej2/vae_new_emoji.png",
+        "output/ej2/vae_new_ore.png",
         "output/ej2/plain_manifold.png",
     ] {
         assert_contains("una figura o dato citado", path);

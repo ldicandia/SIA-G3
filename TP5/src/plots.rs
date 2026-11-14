@@ -692,15 +692,41 @@ pub fn plot_gray_tiles(
     cols: usize,
     scale: usize,
 ) -> Result<()> {
+    plot_tiles(path, title, tiles, side, cols, scale, 1)
+}
+
+/// Como `plot_gray_tiles`, pero cada tile es una imagen RGB de `side x side` pixeles con sus 3 canales
+/// en [0, 1] seguidos (orden fila, columna, canal), dibujada con sus propios colores.
+pub fn plot_color_tiles(
+    path: &Path,
+    title: &str,
+    tiles: &[(String, Array1<f64>)],
+    side: usize,
+    cols: usize,
+    scale: usize,
+) -> Result<()> {
+    plot_tiles(path, title, tiles, side, cols, scale, 3)
+}
+
+fn plot_tiles(
+    path: &Path,
+    title: &str,
+    tiles: &[(String, Array1<f64>)],
+    side: usize,
+    cols: usize,
+    scale: usize,
+    channels: usize,
+) -> Result<()> {
     if tiles.is_empty() {
         bail!("no hay imagenes para graficar");
     }
     if cols == 0 || scale == 0 || side == 0 {
         bail!("el lado ({side}), las columnas ({cols}) y la escala ({scale}) deben ser positivos");
     }
+    let values = side * side * channels;
     for (caption, tile) in tiles {
-        if tile.len() != side * side {
-            bail!("la imagen '{caption}' tiene {} valores y se esperaban {}", tile.len(), side * side);
+        if tile.len() != values {
+            bail!("la imagen '{caption}' tiene {} valores y se esperaban {values}", tile.len());
         }
         if tile.iter().any(|v| !v.is_finite()) {
             bail!("la imagen '{caption}' tiene valores no finitos");
@@ -763,11 +789,18 @@ pub fn plot_gray_tiles(
         let y0 = row_y[row];
         for r in 0..side {
             for c in 0..side {
-                let level = 255 - (255.0 * tile[r * side + c].clamp(0.0, 1.0)).round() as u8;
+                let at = (r * side + c) * channels;
+                let byte = |v: f64| (255.0 * v.clamp(0.0, 1.0)).round() as u8;
+                let color = if channels == 1 {
+                    let level = 255 - byte(tile[at]);
+                    RGBColor(level, level, level)
+                } else {
+                    RGBColor(byte(tile[at]), byte(tile[at + 1]), byte(tile[at + 2]))
+                };
                 let (px, py) = (x0 + c as i64 * scale as i64, y0 + r as i64 * scale as i64);
                 root.draw(&Rectangle::new(
                     [(px as i32, py as i32), ((px + scale as i64) as i32, (py + scale as i64) as i32)],
-                    RGBColor(level, level, level).filled(),
+                    color.filled(),
                 ))
                 .map_err(de)?;
             }

@@ -339,7 +339,7 @@ CONSIGNA = (
         (r"output/ej1b/dae_examples_p\d\.\d\d\.png",),
         (),
     ),
-    ("2.a", r"Ej 2: Dataset", (r"output/ej2/emojis\.png",), ()),
+    ("2.a", r"Ej 2: Dataset", (r"output/ej2/ores\.png",), ()),
     ("2.b", r"Ej 2: Arquitectura", (), ()),
     (
         "2.b",
@@ -349,7 +349,7 @@ CONSIGNA = (
     ),
     ("2.b", r"Ej 2: Resultados: evolución de la pérdida", (r"output/ej2/vae_loss\.png",), ()),
     ("2.b", r"Ej 2: Resultados: reconstrucción", (r"output/ej2/vae_reconstruction\.png",), ()),
-    ("2.c", r"Ej 2: Resultados: emoji nuevo", (r"output/ej2/vae_new_emoji\.png",), ()),
+    ("2.c", r"Ej 2: Resultados: bloque nuevo", (r"output/ej2/vae_new_ore\.png",), ()),
 )
 
 _NUMERO = re.compile(r"(?<!\w)(\d+\.\d+|\d{3,})(?!\w)")

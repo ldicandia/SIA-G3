@@ -5,7 +5,7 @@ pub mod dae_figures;
 pub mod data;
 pub mod denoising;
 pub mod ej2;
-pub mod emoji;
+pub mod ores;
 pub mod experiments;
 pub mod generate;
 pub mod mlp;

@@ -122,17 +122,17 @@ fn gray_tiles_return_an_error_instead_of_an_illegible_figure() {
     let dir = unique_tmp_dir("plots-tiles");
     let tile = |c: &str| (c.to_string(), Array1::from_elem(24 * 24, 0.5));
     // 36 nombres en una sola fila: el pie no llega a 16 pt por mas que se separen los tiles.
-    let named: Vec<_> = (0..36).map(|i| tile(&format!("wide-frown-{i}"))).collect();
+    let named: Vec<_> = (0..36).map(|i| tile(&format!("patron-{i}"))).collect();
     assert!(plot_gray_tiles(&dir.join("a.png"), "t", &named, 24, 36, 4).is_err());
     assert!(!dir.join("a.png").exists());
-    // Las formas reales: 36 sin pies, 72 con pie en filas alternas, 15 x 15 sin pies, tira de 16.
+    // Formas tipicas de mosaico: 36 sin pies, 72 con pie en filas alternas, 15 x 15 sin pies, tira de 16.
     let bare: Vec<_> = (0..36).map(|_| tile("")).collect();
     plot_gray_tiles(&dir.join("b.png"), "titulo", &bare, 24, 6, 4).unwrap();
     let recon: Vec<_> = (0..72).map(|i| if (i / 12) % 2 == 1 { tile("16 px") } else { tile("") }).collect();
     plot_gray_tiles(&dir.join("c.png"), "titulo", &recon, 24, 12, 3).unwrap();
     let grid: Vec<_> = (0..225).map(|_| tile("")).collect();
     plot_gray_tiles(&dir.join("d.png"), "titulo", &grid, 24, 15, 2).unwrap();
-    let strip: Vec<_> = (0..16).map(|i| if i < 8 { tile("1: 25 px") } else { tile("wide-frown") }).collect();
+    let strip: Vec<_> = (0..16).map(|i| if i < 8 { tile("1: 25 px") } else { tile("patron-x") }).collect();
     plot_gray_tiles(&dir.join("e.png"), "titulo", &strip, 24, 8, 4).unwrap();
     for name in ["b.png", "c.png", "d.png", "e.png"] {
         let (w, h) = png_size(&dir.join(name));

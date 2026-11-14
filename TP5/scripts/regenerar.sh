@@ -133,8 +133,15 @@ ej1b() {
 ej2() {
     local inicio=$SECONDS
     local dir="$RAIZ/ej2"
-    local esperados=(emojis.png vae_loss.csv vae_loss.png vae_reconstruction.png vae_manifold.png
-        vae_new_emoji.png plain_manifold.png salida-ej2.txt)
+    local esperados=(ores.png vae_loss.csv vae_loss.png vae_reconstruction.png vae_manifold.png
+        vae_new_ore.png plain_manifold.png salida-ej2.txt)
+    # Las texturas de las menas son de Mojang y no se versionan: se bajan (o se verifican si ya estan) en
+    # TP5_MENAS o, si no esta definida, en datos/menas.
+    if [ -n "${TP5_MENAS:-}" ]; then
+        bash scripts/descargar_menas.sh --destino "$TP5_MENAS"
+    else
+        bash scripts/descargar_menas.sh
+    fi
     construir
     mkdir -p "$dir"
     borrar_esperados "$dir" "${esperados[@]}"

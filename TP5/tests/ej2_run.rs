@@ -6,13 +6,13 @@ use std::sync::OnceLock;
 use ndarray::Array2;
 
 use tp5::ej2::{dataset_line, result_line, run_ej2, separation_line, Ej2Options, Ej2Run};
-use tp5::emoji::{build_emojis, separation};
+use tp5::ores::{load_ores, separation};
 use tp5::vae::{
     chosen_vae_config, loss_summary_line, reconstruction_line, render_loss_table, train_vae,
 };
 use tp5::vae_eval::{
-    contrast_line, control_line, decode_grid, manifold_line, manifold_metrics, negative_control, new_emoji_line,
-    prior_line, regions_line, render_acceptance, render_gallery, search_new_emoji, GRID_HALF_RANGE,
+    contrast_line, control_line, decode_grid, manifold_line, manifold_metrics, negative_control, new_ore_line,
+    prior_line, judge_line, render_acceptance, render_gallery, search_new_ore, OreJudge, GRID_HALF_RANGE,
 };
 
 const QUICK_EPOCHS: usize = 100;
@@ -32,11 +32,11 @@ fn report_lines(run: &Ej2Run) -> Vec<String> {
         loss_summary_line(&run.history),
         reconstruction_line(&run.recon),
         manifold_line(&run.grid, &run.sep),
-        regions_line(&run.judge),
-        new_emoji_line(&run.search, &run.ds, &run.sep),
+        judge_line(&run.judge),
+        new_ore_line(&run.search, &run.ds),
         render_gallery(&run.search, &run.ds),
-        prior_line(&run.prior, &run.sep),
-        prior_line(&run.plain_prior, &run.sep),
+        prior_line(&run.prior),
+        prior_line(&run.plain_prior),
         control_line(&run.control),
         contrast_line(&run.contrast),
         render_acceptance(&run.checks),
@@ -70,7 +70,7 @@ fn ej2_run_fields_are_consistent() {
 fn ej2_numbers_equal_the_individual_computations() {
     let run = quick_run();
     let opts = quick_opts();
-    let ds = build_emojis();
+    let ds = ores();
     let sep = separation(&ds);
     let mut cfg = chosen_vae_config();
     cfg.epochs = QUICK_EPOCHS;
@@ -78,9 +78,11 @@ fn ej2_numbers_equal_the_individual_computations() {
     assert_eq!(run.cfg.epochs, QUICK_EPOCHS);
     assert_eq!(render_loss_table(&run.history), render_loss_table(&history));
     let decoded: Array2<f64> = decode_grid(&vae, 7, GRID_HALF_RANGE);
-    assert_eq!(run.grid, manifold_metrics(&decoded, 7, &ds, &sep));
-    let search = search_new_emoji(&vae, &ds, opts.seed, opts.draws);
-    assert_eq!(new_emoji_line(&run.search, &run.ds, &run.sep), new_emoji_line(&search, &ds, &sep));
+    let judge = OreJudge::new(&ds, &vae.reconstruct_mean(&ds.x));
+    assert_eq!(run.grid, manifold_metrics(&decoded, 7, &judge));
+    let search = search_new_ore(&vae, &ds, opts.seed, opts.draws);
+    assert_eq!(new_ore_line(&run.search, &run.ds), new_ore_line(&search, &ds));
+    assert_eq!(run.sep, sep);
     assert_eq!(run.search.examined, search.examined);
     assert_eq!(run.search.accepted.len(), search.accepted.len());
 }
@@ -97,13 +99,16 @@ fn options_are_validated() {
 
 #[test]
 fn dataset_and_separation_lines_have_the_exact_format() {
-    assert_eq!(dataset_line(), "emojis: 36 imagenes de 24x24 (576 valores en [0,1], 1 = tinta)");
-    let sep = separation(&build_emojis());
+    assert_eq!(
+        dataset_line(),
+        "bloques de mena: 18 texturas de Minecraft 1.21.4 de 16x16 RGB (768 valores en [0,1]) | 9 minerales, 3 rocas"
+    );
+    let sep = separation(&ores());
     assert_eq!(
         separation_line(&sep),
         format!(
-            "separacion: minima {} px, mediana {:.1} px, radio de cercania {} px",
-            sep.min, sep.median, sep.near_radius
+            "separacion (error medio por canal al bloque mas cercano): minima {:.1} niveles, mediana {:.1} niveles",
+            sep.min, sep.median
         )
     );
 }
@@ -129,5 +134,10 @@ fn result_line_reports_ok_and_failure() {
     empty.search.accepted.clear();
     let line = result_line(&empty);
     assert!(line.starts_with("RESULTADO EJ2: FALLA"), "{line}");
-    assert!(line.contains("no se encontro ningun emoji nuevo"), "{line}");
+    assert!(line.contains("no se encontro ningun bloque nuevo"), "{line}");
+}
+
+/// El dataset de menas; falta si no se corrio `bash scripts/descargar_menas.sh`.
+fn ores() -> tp5::ores::OreDataset {
+    load_ores().expect("dataset de menas: corra `bash scripts/descargar_menas.sh`")
 }

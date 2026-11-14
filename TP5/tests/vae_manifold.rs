@@ -5,10 +5,10 @@ use std::sync::OnceLock;
 
 use ndarray::{array, Array1, Array2};
 
-use tp5::emoji::{build_emojis, separation, EmojiDataset, Separation};
+use tp5::ores::{load_ores, separation, OreDataset, Separation};
 use tp5::vae::{chosen_vae_config, train_vae, Vae};
 use tp5::vae_eval::{
-    decode_grid, latent_grid, manifold_line, manifold_metrics, validate_grid, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
+    decode_grid, latent_grid, manifold_line, manifold_metrics, validate_grid, OreJudge, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
     LARGE_STEP_FACTOR,
 };
 use tp5::vae_figures::{build_manifold_tiles, export_manifold, MANIFOLD_PNG};
@@ -21,10 +21,10 @@ fn unique_tmp_dir(tag: &str) -> PathBuf {
     dir
 }
 
-fn model() -> &'static (EmojiDataset, Separation, Vae) {
-    static MODEL: OnceLock<(EmojiDataset, Separation, Vae)> = OnceLock::new();
+fn model() -> &'static (OreDataset, Separation, Vae) {
+    static MODEL: OnceLock<(OreDataset, Separation, Vae)> = OnceLock::new();
     MODEL.get_or_init(|| {
-        let ds = build_emojis();
+        let ds = ores();
         let sep = separation(&ds);
         let mut cfg = chosen_vae_config();
         cfg.epochs = 300;
@@ -33,8 +33,9 @@ fn model() -> &'static (EmojiDataset, Separation, Vae) {
     })
 }
 
-fn wrong(a: &Array1<f64>, b: &Array1<f64>) -> usize {
-    (0..a.len()).filter(|&k| (a[k] >= 0.5) != (b[k] >= 0.5)).count()
+/// Error medio por canal en niveles, por un bucle simple.
+fn level_distance(a: &Array1<f64>, b: &Array1<f64>) -> f64 {
+    255.0 * (0..a.len()).map(|k| (a[k] - b[k]).abs()).sum::<f64>() / a.len() as f64
 }
 
 #[test]
@@ -67,11 +68,11 @@ fn validate_grid_bounds() {
 fn decode_grid_row_equals_decoding_that_point_alone() {
     let (_, _, vae) = model();
     let grid = decode_grid(vae, 5, GRID_HALF_RANGE);
-    assert_eq!(grid.dim(), (25, 576));
+    assert_eq!(grid.dim(), (25, 768));
     let g = latent_grid(5, GRID_HALF_RANGE);
     let cell = 5 + 2;
     let single = vae.decode(&g.slice(ndarray::s![cell..cell + 1, ..]).to_owned());
-    for k in 0..576 {
+    for k in 0..768 {
         assert!((grid[[cell, k]] - single[[0, k]]).abs() < 1e-12);
     }
 }
@@ -79,60 +80,61 @@ fn decode_grid_row_equals_decoding_that_point_alone() {
 #[test]
 fn manifold_metrics_match_an_independent_computation() {
     let (ds, sep, _) = model();
+    let judge = OreJudge::new(ds, &ds.x);
     let decoded: Array2<f64> = ds.x.slice(ndarray::s![0..9, ..]).to_owned();
-    let m = manifold_metrics(&decoded, 3, ds, sep);
+    let m = manifold_metrics(&decoded, 3, &judge);
     assert_eq!(m.recognizable_frac, 1.0);
+    assert_eq!(m.plausible_frac, 1.0);
     assert_eq!(m.n_cells, 9);
     let mut steps = Vec::new();
     for r in 0..3 {
         for c in 0..3 {
             let here = decoded.row(r * 3 + c).to_owned();
             if c + 1 < 3 {
-                steps.push(wrong(&here, &decoded.row(r * 3 + c + 1).to_owned()));
+                steps.push(level_distance(&here, &decoded.row(r * 3 + c + 1).to_owned()));
             }
             if r + 1 < 3 {
-                steps.push(wrong(&here, &decoded.row((r + 1) * 3 + c).to_owned()));
+                steps.push(level_distance(&here, &decoded.row((r + 1) * 3 + c).to_owned()));
             }
         }
     }
     assert_eq!(steps.len(), 12);
-    let mean = steps.iter().sum::<usize>() as f64 / 12.0;
-    let large = steps.iter().filter(|&&s| s > LARGE_STEP_FACTOR * sep.near_radius).count() as f64 / 12.0;
-    assert!((m.mean_adjacent_step - mean).abs() < 1e-12);
-    assert_eq!(m.max_adjacent_step, *steps.iter().max().unwrap());
+    let mean = steps.iter().sum::<f64>() / 12.0;
+    let large = steps.iter().filter(|&&s| s > LARGE_STEP_FACTOR * sep.median).count() as f64 / 12.0;
+    assert!((m.mean_adjacent_step - mean).abs() < 1e-9);
+    assert!((m.max_adjacent_step - steps.iter().cloned().fold(0.0, f64::max)).abs() < 1e-9);
     assert!((m.large_step_frac - large).abs() < 1e-12);
 }
 
 #[test]
 fn manifold_metrics_count_large_steps() {
     let (ds, sep, _) = model();
-    let big = LARGE_STEP_FACTOR * sep.near_radius + 6;
+    let judge = OreJudge::new(ds, &ds.x);
     let base = ds.x.row(0).to_owned();
-    let mut loud = base.clone();
-    for k in 0..big {
-        assert!(base[k] < 0.5, "el pixel {k} del emoji 0 deberia estar en blanco");
-        loud[k] = 1.0;
-    }
-    let mut decoded = Array2::zeros((4, 576));
-    for (i, row) in [&base, &loud, &base, &base].iter().enumerate() {
+    let white = Array1::from_elem(768, 1.0);
+    let jump = level_distance(&base, &white);
+    assert!(jump > LARGE_STEP_FACTOR * sep.median, "el salto {jump} deberia ser grande");
+    let mut decoded = Array2::zeros((4, 768));
+    for (i, row) in [&base, &white, &base, &base].iter().enumerate() {
         decoded.row_mut(i).assign(row);
     }
-    let m = manifold_metrics(&decoded, 2, ds, sep);
-    assert_eq!(m.max_adjacent_step, big);
-    // Pares: (0,1) = big, (0,2) = 0, (1,3) = big, (2,3) = 0.
+    let m = manifold_metrics(&decoded, 2, &judge);
+    // Pares: (0,1) = salto, (0,2) = 0, (1,3) = salto, (2,3) = 0.
     assert_eq!(m.large_step_frac, 0.5);
-    assert!((m.mean_adjacent_step - big as f64 / 2.0).abs() < 1e-12);
-    assert!(m.recognizable_frac < 1.0 && m.recognizable_frac >= 0.5);
+    assert!((m.mean_adjacent_step - jump / 2.0).abs() < 1e-9);
+    assert!((m.max_adjacent_step - jump).abs() < 1e-9);
+    assert_eq!(m.recognizable_frac, 0.75);
 }
 
 #[test]
 fn manifold_line_format() {
     let (ds, sep, vae) = model();
+    let judge = OreJudge::new(ds, &vae.reconstruct_mean(&ds.x));
     let decoded = decode_grid(vae, GRID_SIDE_DEFAULT, GRID_HALF_RANGE);
-    let m = manifold_metrics(&decoded, GRID_SIDE_DEFAULT, ds, sep);
+    let m = manifold_metrics(&decoded, GRID_SIDE_DEFAULT, &judge);
     let line = manifold_line(&m, sep);
     assert!(line.starts_with("MANIFOLD: 225 celdas (15x15)"), "{line}");
-    assert!(line.contains("reconocibles "), "{line}");
+    assert!(line.contains(" | plausibles "), "{line}");
     assert!(line.contains("salto medio entre celdas vecinas "), "{line}");
 }
 
@@ -160,4 +162,9 @@ fn manifold_png_is_written_with_the_fixed_name_and_rejects_a_mismatched_size() {
     assert!(err.contains("36"), "{err}");
     assert!(!dir2.join(MANIFOLD_PNG).exists());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// El dataset de menas; falta si no se corrio `bash scripts/descargar_menas.sh`.
+fn ores() -> tp5::ores::OreDataset {
+    load_ores().expect("dataset de menas: corra `bash scripts/descargar_menas.sh`")
 }

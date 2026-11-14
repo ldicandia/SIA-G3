@@ -1,35 +1,38 @@
-//! Orquestacion del Ej 2 completo como una sola corrida determinista: dataset, VAE, evaluacion,
-//! busqueda de un emoji nuevo, autoencoder simple de contraste y aceptacion. Solo compone funciones de
+//! Orquestacion del Ej 2 completo como una sola corrida determinista: dataset de menas, VAE, evaluacion,
+//! busqueda de un bloque nuevo, autoencoder simple de contraste y aceptacion. Solo compone funciones de
 //! la biblioteca: no dibuja ni parsea argumentos, y las lineas de reporte salen de funciones
 //! compartidas para que la linea de comandos y las pruebas no se separen.
 
 use ndarray::Array2;
 
 use crate::autoencoder::Autoencoder;
-use crate::emoji::{build_emojis, separation, EmojiDataset, Separation, EMOJI_COUNT, EMOJI_PIXELS, EMOJI_SIDE};
-use crate::report::wrong_pixel_counts;
+use crate::ores::{
+    load_ores, separation, OreDataset, Separation, ORE_COUNT, ORE_MINERALS, ORE_ROCKS, ORE_SIDE, ORE_VALUES,
+};
 use crate::vae::{
     chosen_vae_config, reconstruction_summary, train_vae, validate_epochs, ReconSummary, Vae, VaeConfig, VaeHistory,
     SAMPLE_SEED,
 };
 use crate::vae_eval::{
-    acceptance_checks, decode_grid, manifold_metrics, negative_control, plain_grid_points, prior_stats,
-    search_new_emoji, train_plain_ae, validate_draws, validate_grid, AcceptanceCheck, Contrast, ControlStats,
-    GridMetrics, PriorStats, SampleSearch, StyleJudge, DEFAULT_DRAWS, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
+    acceptance_checks, decode_grid, manifold_metrics, mean_wrong_pixels, negative_control, plain_grid_points,
+    prior_stats, search_new_ore, train_plain_ae, validate_draws, validate_grid, AcceptanceCheck, Contrast,
+    ControlStats, GridMetrics, OreJudge, PriorStats, SampleSearch, DEFAULT_DRAWS, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
 };
 
-/// Linea del dataset, construida con las constantes del modulo `emoji`.
+/// Linea del dataset, construida con las constantes del modulo `ores`.
 pub fn dataset_line() -> String {
     format!(
-        "emojis: {EMOJI_COUNT} imagenes de {EMOJI_SIDE}x{EMOJI_SIDE} ({EMOJI_PIXELS} valores en [0,1], 1 = tinta)"
+        "bloques de mena: {ORE_COUNT} texturas de Minecraft 1.21.4 de {ORE_SIDE}x{ORE_SIDE} RGB ({ORE_VALUES} valores en [0,1]) | {} minerales, {} rocas",
+        ORE_MINERALS.len(),
+        ORE_ROCKS.len()
     )
 }
 
 /// Linea de las estadisticas de separacion del dataset.
 pub fn separation_line(sep: &Separation) -> String {
     format!(
-        "separacion: minima {} px, mediana {:.1} px, radio de cercania {} px",
-        sep.min, sep.median, sep.near_radius
+        "separacion (error medio por canal al bloque mas cercano): minima {:.1} niveles, mediana {:.1} niveles",
+        sep.min, sep.median
     )
 }
 
@@ -39,7 +42,7 @@ pub struct Ej2Options {
     /// Reemplazo de las epocas de la configuracion elegida.
     pub epochs: Option<usize>,
     pub grid: usize,
-    /// Maximo de sorteos de la busqueda del emoji nuevo.
+    /// Maximo de sorteos de la busqueda del bloque nuevo.
     pub draws: usize,
     pub seed: u64,
 }
@@ -53,7 +56,7 @@ impl Default for Ej2Options {
 /// Todo lo que produce el Ej 2 en una corrida.
 #[derive(Debug, Clone)]
 pub struct Ej2Run {
-    pub ds: EmojiDataset,
+    pub ds: OreDataset,
     pub sep: Separation,
     pub cfg: VaeConfig,
     pub vae: Vae,
@@ -62,17 +65,17 @@ pub struct Ej2Run {
     pub grid_decoded: Array2<f64>,
     pub grid: GridMetrics,
     pub search: SampleSearch,
-    /// Juez por region con los pisos de ruido de las reconstrucciones del VAE.
-    pub judge: StyleJudge,
+    /// Juez con los pisos de las reconstrucciones del VAE.
+    pub judge: OreJudge,
     pub prior: PriorStats,
     pub plain: Autoencoder,
-    /// Juez por region con los pisos de ruido de las reconstrucciones del autoencoder simple.
-    pub plain_judge: StyleJudge,
+    /// Juez con los pisos de las reconstrucciones del autoencoder simple.
+    pub plain_judge: OreJudge,
     pub plain_prior: PriorStats,
     pub plain_grid_decoded: Array2<f64>,
     pub plain_grid: GridMetrics,
     pub contrast: Contrast,
-    /// Control negativo: reconstrucciones de los emojis de entrenamiento no deben aceptarse como nuevas.
+    /// Control negativo: reconstrucciones de los bloques de entrenamiento no deben aceptarse como nuevas.
     pub control: ControlStats,
     pub checks: Vec<AcceptanceCheck>,
 }
@@ -83,7 +86,7 @@ pub fn run_ej2(opts: &Ej2Options) -> anyhow::Result<Ej2Run> {
     let grid_side = validate_grid(opts.grid)?;
     let draws = validate_draws(opts.draws)?;
 
-    let ds = build_emojis();
+    let ds = load_ores()?;
     let sep = separation(&ds);
     let mut cfg = chosen_vae_config();
     if let Some(n) = epochs {
@@ -91,23 +94,22 @@ pub fn run_ej2(opts: &Ej2Options) -> anyhow::Result<Ej2Run> {
     }
     let (vae, history) = train_vae(&ds, &cfg)?;
     let recon = reconstruction_summary(&vae, &ds);
+    let judge = OreJudge::new(&ds, &vae.reconstruct_mean(&ds.x));
     let grid_decoded = decode_grid(&vae, grid_side, GRID_HALF_RANGE);
-    let grid = manifold_metrics(&grid_decoded, grid_side, &ds, &sep);
-    let search = search_new_emoji(&vae, &ds, opts.seed, draws);
+    let grid = manifold_metrics(&grid_decoded, grid_side, &judge);
+    let search = search_new_ore(&vae, &ds, opts.seed, draws);
 
     let latent_dim = cfg.spec.latent_dim;
-    let judge = StyleJudge::new(&ds, &vae.reconstruct_mean(&ds.x));
     let vae_decode = |z: &Array2<f64>| vae.decode(z);
     let prior = prior_stats(&vae_decode, latent_dim, &judge, opts.seed, DEFAULT_DRAWS);
 
     let plain = train_plain_ae(&ds, &cfg);
-    let plain_judge = StyleJudge::new(&ds, &plain.reconstruct(&ds.x));
+    let plain_recon = plain.reconstruct(&ds.x);
+    let plain_judge = OreJudge::new(&ds, &plain_recon);
     let plain_decode = |z: &Array2<f64>| plain.decode(z);
     let plain_prior = prior_stats(&plain_decode, latent_dim, &plain_judge, opts.seed, DEFAULT_DRAWS);
     let plain_grid_decoded = plain.decode(&plain_grid_points(&plain, &ds, grid_side));
-    let plain_grid = manifold_metrics(&plain_grid_decoded, grid_side, &ds, &sep);
-    let plain_counts = wrong_pixel_counts(&ds.x, &plain.reconstruct(&ds.x));
-    let plain_recon_mean = plain_counts.iter().sum::<usize>() as f64 / plain_counts.len() as f64;
+    let plain_grid = manifold_metrics(&plain_grid_decoded, grid_side, &plain_judge);
 
     let contrast = Contrast {
         vae_prior: prior.clone(),
@@ -115,10 +117,10 @@ pub fn run_ej2(opts: &Ej2Options) -> anyhow::Result<Ej2Run> {
         vae_grid: grid.clone(),
         plain_grid: plain_grid.clone(),
         vae_recon_mean: recon.mean_wrong,
-        plain_recon_mean,
+        plain_recon_mean: mean_wrong_pixels(&ds, &plain_recon),
     };
     let control = negative_control(&vae, &judge);
-    let checks = acceptance_checks(&recon, &history, &grid, &prior, &plain_prior, &control, &sep);
+    let checks = acceptance_checks(&recon, &history, &grid, &prior, &plain_prior, &control, &judge);
 
     Ok(Ej2Run {
         ds,
@@ -143,15 +145,15 @@ pub fn run_ej2(opts: &Ej2Options) -> anyhow::Result<Ej2Run> {
     })
 }
 
-/// Veredicto final: `OK` solo si pasan todas las comprobaciones y se acepto al menos un emoji nuevo.
+/// Veredicto final: `OK` solo si pasan todas las comprobaciones y se acepto al menos un bloque nuevo.
 pub fn result_line(run: &Ej2Run) -> String {
     let total = run.checks.len();
     let passed = run.checks.iter().filter(|c| c.pass).count();
     let failed: Vec<&str> = run.checks.iter().filter(|c| !c.pass).map(|c| c.name).collect();
     match run.search.accepted.first() {
         Some(first) if failed.is_empty() => format!(
-            "RESULTADO EJ2: OK ({passed}/{total} comprobaciones de aceptacion; emoji nuevo a {} px de {})",
-            first.judgement.distance, run.ds.names[first.judgement.nearest_index]
+            "RESULTADO EJ2: OK ({passed}/{total} comprobaciones de aceptacion; bloque nuevo {})",
+            first.verdict.combination()
         ),
         accepted => {
             let mut reasons: Vec<String> = Vec::new();
@@ -159,7 +161,7 @@ pub fn result_line(run: &Ej2Run) -> String {
                 reasons.push(format!("fallan: {}", failed.join(", ")));
             }
             if accepted.is_none() {
-                reasons.push(format!("no se encontro ningun emoji nuevo en {} sorteos", run.search.examined));
+                reasons.push(format!("no se encontro ningun bloque nuevo en {} sorteos", run.search.examined));
             }
             format!("RESULTADO EJ2: FALLA ({passed}/{total} comprobaciones de aceptacion; {})", reasons.join("; "))
         }

@@ -25,7 +25,7 @@ def agregar(pres, salidas) -> None:
     umbral_1b = numero(l1b, r"al menos el (\d+) %")
 
     prior = salidas.linea("ej2", "salida-ej2.txt", "VAE PRIOR:")
-    reconocibles = numero(prior, r"(\d+\.\d+) % decodifican a un emoji reconocible")
+    plausibles = numero(prior, r"(\d+\.\d+) % decodifican a un bloque plausible")
     sorteos = numero(prior, r"de (\d+) puntos")
     contraste = salidas.linea("ej2", "salida-ej2.txt", "CONTRASTE:")
     simple = numero(contraste, r"sin esquema variacional (\d+\.\d+) %")
@@ -43,7 +43,7 @@ def agregar(pres, salidas) -> None:
     columnas = [
         (f"{ok_1a}/{total_1a}", f"Ej 1a: patrones con {px_ok}"),
         (nivel_1b, f"Ej 1b: nivel máximo eliminado (criterio del {umbral_1b} %)"),
-        (f"{reconocibles} %", "Ej 2: sorteos del prior que dan un emoji reconocible"),
+        (f"{plausibles} %", "Ej 2: sorteos del prior que dan un bloque plausible"),
     ]
     for i, (valor, etiqueta) in enumerate(columnas):
         cifra(d, MARGEN_IN + i * (ancho + hueco), CONTENIDO_Y_IN + 1.2, ancho, valor, etiqueta)
@@ -56,9 +56,9 @@ def agregar(pres, salidas) -> None:
             f"Ej 1b, denoising: llamamos nivel máximo eliminado al mayor nivel de ruido tal que, a ese nivel y a "
             f"todos los menores, al menos el {umbral_1b} % de las distorsiones no vistas queda con {px_ok}. El "
             "nivel de ruido es la probabilidad de invertir cada píxel. Ese umbral es una convención nuestra.",
-            f"Ej 2, variacional: de {sorteos} puntos sorteados del prior, ese porcentaje se decodifica a un emoji "
-            "reconocible, es decir, a pocos píxeles de un emoji del dataset. El mismo autoencoder sin esquema "
-            f"variacional llega a {simple} %.",
+            f"Ej 2, variacional: de {sorteos} puntos sorteados del prior, ese porcentaje se decodifica a un "
+            "bloque de mena plausible, es decir, con el fondo de una roca del dataset, vetas de minerales del "
+            f"dataset y la nitidez de un bloque real. El mismo autoencoder sin esquema variacional llega a {simple} %.",
         ],
         citas=[
             ("ej1a/salida-ej1a.txt", [l1a]),

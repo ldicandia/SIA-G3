@@ -1,15 +1,15 @@
-//! Figuras del Ej 2: montaje de grises, dataset de emojis y reconstrucciones del VAE.
+//! Figuras del Ej 2: mosaicos de grises y de color, dataset de bloques y reconstrucciones del VAE.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use ndarray::Array1;
 
-use tp5::emoji::{build_emojis, EmojiDataset};
-use tp5::plots::plot_gray_tiles;
+use tp5::ores::{load_ores, OreDataset};
+use tp5::plots::{plot_color_tiles, plot_gray_tiles};
 use tp5::vae::{chosen_vae_config, train_vae, Vae};
 use tp5::vae_figures::{
-    build_reconstruction_tiles, export_emoji_montage, export_reconstruction, EMOJIS_PNG, RECON_PNG,
+    build_reconstruction_tiles, export_ore_montage, export_reconstruction, ORES_PNG, RECON_PNG,
 };
 
 const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -20,10 +20,10 @@ fn unique_tmp_dir(tag: &str) -> PathBuf {
     dir
 }
 
-fn quick_model() -> &'static (EmojiDataset, Vae) {
-    static MODEL: OnceLock<(EmojiDataset, Vae)> = OnceLock::new();
+fn quick_model() -> &'static (OreDataset, Vae) {
+    static MODEL: OnceLock<(OreDataset, Vae)> = OnceLock::new();
     MODEL.get_or_init(|| {
-        let ds = build_emojis();
+        let ds = ores();
         let mut cfg = chosen_vae_config();
         cfg.epochs = 100;
         let (vae, _) = train_vae(&ds, &cfg).unwrap();
@@ -89,31 +89,44 @@ fn plot_gray_tiles_without_captions_is_denser() {
 }
 
 #[test]
-fn emoji_montage_writes_png_with_the_fixed_name() {
-    let dir = unique_tmp_dir("emoji-montage");
-    let ds = build_emojis();
-    let path = export_emoji_montage(&ds, &dir).unwrap();
-    assert_eq!(path, dir.join(EMOJIS_PNG));
+fn ore_montage_writes_png_with_the_fixed_name() {
+    let dir = unique_tmp_dir("bloque-montage");
+    let ds = ores();
+    let path = export_ore_montage(&ds, &dir).unwrap();
+    assert_eq!(path, dir.join(ORES_PNG));
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(&bytes[..8], &PNG_SIGNATURE);
     assert!(bytes.len() > 3000);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+
 #[test]
-fn reconstruction_tiles_are_72_in_band_order() {
+fn plot_color_tiles_draws_the_rgb_values_and_checks_the_length() {
+    let dir = unique_tmp_dir("color-tiles");
+    let path = dir.join("color.png");
+    let red = Array1::from_shape_fn(4 * 4 * 3, |k| if k % 3 == 0 { 1.0 } else { 0.0 });
+    plot_color_tiles(&path, "titulo", &[("rojo".to_string(), red.clone())], 4, 1, 20).unwrap();
+    assert_eq!(&std::fs::read(&path).unwrap()[..8], &PNG_SIGNATURE);
+    // Un tile gris (un canal) no tiene el largo de un tile RGB.
+    assert!(plot_color_tiles(&path, "t", &[("g".to_string(), gradient_tile(4))], 4, 1, 1).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn reconstruction_tiles_are_36_in_band_order() {
     let (ds, vae) = quick_model();
     let tiles = build_reconstruction_tiles(vae, ds);
-    assert_eq!(tiles.len(), 72);
+    assert_eq!(tiles.len(), 36);
     let recon = vae.reconstruct_mean(&ds.x);
-    for band in 0..3 {
-        for k in 0..12 {
-            let (name, original) = &tiles[band * 24 + k];
-            assert_eq!(name, &ds.names[band * 12 + k]);
-            assert_eq!(original, &ds.x.row(band * 12 + k).to_owned());
-            let (caption, rec) = &tiles[band * 24 + 12 + k];
+    for band in 0..2 {
+        for k in 0..9 {
+            let (name, original) = &tiles[band * 18 + k];
+            assert_eq!(name, &ds.names[band * 9 + k]);
+            assert_eq!(original, &ds.x.row(band * 9 + k).to_owned());
+            let (caption, rec) = &tiles[band * 18 + 9 + k];
             assert!(caption.ends_with(" px"), "{caption}");
-            assert_eq!(rec, &recon.row(band * 12 + k).to_owned());
+            assert_eq!(rec, &recon.row(band * 9 + k).to_owned());
         }
     }
 }
@@ -123,15 +136,15 @@ fn reconstruction_captions_match_an_independent_pixel_count() {
     let (ds, vae) = quick_model();
     let tiles = build_reconstruction_tiles(vae, ds);
     let recon = vae.reconstruct_mean(&ds.x);
-    for i in 0..36 {
+    for i in 0..18 {
         let mut wrong = 0;
-        for k in 0..576 {
-            if (ds.x[[i, k]] >= 0.5) != (recon[[i, k]] >= 0.5) {
+        for p in 0..256 {
+            if (0..3).any(|c| (ds.x[[i, 3 * p + c]] - recon[[i, 3 * p + c]]).abs() > 32.0 / 255.0) {
                 wrong += 1;
             }
         }
-        let (band, k) = (i / 12, i % 12);
-        assert_eq!(tiles[band * 24 + 12 + k].0, format!("{wrong} px"), "emoji {i}");
+        let (band, k) = (i / 9, i % 9);
+        assert_eq!(tiles[band * 18 + 9 + k].0, format!("{wrong} px"), "bloque {i}");
     }
 }
 
@@ -145,4 +158,9 @@ fn reconstruction_export_writes_png_with_the_fixed_name() {
     assert_eq!(&bytes[..8], &PNG_SIGNATURE);
     assert!(bytes.len() > 3000);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// El dataset de menas; falta si no se corrio `bash scripts/descargar_menas.sh`.
+fn ores() -> OreDataset {
+    load_ores().expect("dataset de menas: corra `bash scripts/descargar_menas.sh`")
 }

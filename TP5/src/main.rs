@@ -19,7 +19,7 @@ use tp5::dae_figures::{
 };
 use tp5::data::{format_grid, load_font, N_PIXELS};
 use tp5::ej2::{dataset_line, result_line, run_ej2, separation_line, Ej2Options};
-use tp5::emoji::{build_emojis, format_emoji, format_emojis_side_by_side, nearest_emoji, separation, EMOJI_COUNT};
+use tp5::ores::{load_ores, nearest_ore, separation, ORE_BLOCKS, ORE_COUNT, ORE_MINERALS, ORE_ROCKS};
 use tp5::denoising::{
     evaluate_levels, max_level_line, render_level_table, DEFAULT_LEVELS, N_EVAL_SAMPLES,
     TEST_NOISE_SEED,
@@ -35,15 +35,15 @@ use tp5::vae::{
     standard_normal_matrix, train_vae, validate_epochs, SAMPLE_SEED,
 };
 use tp5::vae_eval::{
-    acceptance_checks, contrast_line, control_line, decode_grid, manifold_line, manifold_metrics, negative_control,
-    plain_grid_points, render_acceptance, train_plain_ae, validate_grid, Contrast, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
-    new_emoji_line, prior_line, prior_stats, regions_line, render_gallery, search_new_emoji, validate_draws, StyleJudge,
-    DEFAULT_DRAWS,
+    acceptance_checks, contrast_line, control_line, decode_grid, judge_line, manifold_line, manifold_metrics,
+    mean_wrong_pixels, negative_control, new_ore_line, plain_grid_points, prior_line, prior_stats, render_acceptance,
+    render_gallery, search_new_ore, shares_text, train_plain_ae, validate_draws, validate_grid, Contrast, OreJudge,
+    DEFAULT_DRAWS, GRID_HALF_RANGE, GRID_SIDE_DEFAULT,
 };
 use tp5::vae_figures::{
-    export_emoji_montage, export_loss_chart, export_manifold, export_new_emoji, export_reconstruction, write_loss_csv,
+    export_ore_montage, export_loss_chart, export_manifold, export_new_ore, export_reconstruction, write_loss_csv,
     export_plain_manifold, LOSS_CSV, MANIFOLD_PNG, PLAIN_MANIFOLD_PNG,
-    NEW_EMOJI_PNG, RECON_PNG,
+    NEW_ORE_PNG, RECON_PNG,
 };
 
 #[derive(Parser)]
@@ -128,13 +128,13 @@ enum Command {
         #[arg(long, default_value = DEFAULT_OUT)]
         out: PathBuf,
     },
-    /// Muestra el dataset de 36 emojis de 24x24 construido por codigo (texto)
-    Emojis {
+    /// Lista los 18 bloques de mena de Minecraft del dataset y escribe su figura (necesita las texturas descargadas)
+    Ores {
         /// Directorio de salida
         #[arg(long, default_value = EJ2_OUT)]
         out: PathBuf,
     },
-    /// Entrena el autoencoder variacional (VAE) sobre los emojis y decodifica una muestra del prior
+    /// Entrena el autoencoder variacional (VAE) sobre los bloques y decodifica una muestra del prior
     Vae {
         /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
         #[arg(long)]
@@ -146,7 +146,7 @@ enum Command {
         #[arg(long, default_value = EJ2_OUT)]
         out: PathBuf,
     },
-    /// Muestrea el prior N(0, I) del VAE y busca un emoji nuevo que se juzga perteneciente al dataset
+    /// Muestrea el prior N(0, I) del VAE y busca un bloque nuevo que se juzga perteneciente al dataset
     VaeSample {
         /// Sorteos del prior a examinar (entre 1 y 100000)
         #[arg(long, default_value_t = DEFAULT_DRAWS)]
@@ -161,7 +161,7 @@ enum Command {
         #[arg(long, default_value = EJ2_OUT)]
         out: PathBuf,
     },
-    /// Decodifica una grilla del plano latente del VAE y mide cuanto es reconocible y cuan gradual es
+    /// Decodifica una grilla del plano latente del VAE y mide cuanto es plausible y cuan gradual es
     VaeManifold {
         /// Lado de la grilla (entre 3 y 41)
         #[arg(long, default_value_t = GRID_SIDE_DEFAULT)]
@@ -188,7 +188,7 @@ enum Command {
         #[arg(long, default_value = EJ2_OUT)]
         out: PathBuf,
     },
-    /// Corre el Ej 2 completo: dataset, VAE, evaluacion, emoji nuevo, contraste y aceptacion
+    /// Corre el Ej 2 completo: dataset, VAE, evaluacion, bloque nuevo, contraste y aceptacion
     Ej2 {
         /// Epocas de entrenamiento (entre 1 y 20000; por defecto las de la configuracion elegida)
         #[arg(long)]
@@ -196,7 +196,7 @@ enum Command {
         /// Lado de la grilla (entre 3 y 41)
         #[arg(long, default_value_t = GRID_SIDE_DEFAULT)]
         grid: usize,
-        /// Sorteos maximos de la busqueda del emoji nuevo (entre 1 y 100000)
+        /// Sorteos maximos de la busqueda del bloque nuevo (entre 1 y 100000)
         #[arg(long, default_value_t = DEFAULT_DRAWS)]
         draws: usize,
         /// Semilla del flujo de sorteos del prior
@@ -492,34 +492,27 @@ fn noise(levels: Option<Vec<f64>>, seed: u64, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn emojis(out: &Path) -> Result<()> {
-    let ds = build_emojis();
+fn ores(out: &Path) -> Result<()> {
+    let ds = load_ores()?;
     println!("{}", dataset_line());
-    let sep = separation(&ds);
-    println!("{}", separation_line(&sep));
-    let shown = ["dots-smile", "happy-grin", "wide-open", "x-frown"];
-    println!("{}", shown.join(" "));
-    let rows: Vec<_> = shown
-        .iter()
-        .map(|n| {
-            let i = ds.names.iter().position(|m| m == n).expect("emoji del dataset");
-            ds.x.row(i).to_owned()
-        })
-        .collect();
-    println!("{}", format_emojis_side_by_side(&rows));
-    let path = export_emoji_montage(&ds, out)?;
-    println!("emojis.png: {}", path.display());
+    println!("{}", separation_line(&separation(&ds)));
+    println!("bloque  textura  mineral  roca");
+    for (i, (file, m, r)) in ORE_BLOCKS.iter().enumerate() {
+        println!("{:2}  {file}.png  {}  {}", i + 1, ORE_MINERALS[*m], ORE_ROCKS[*r]);
+    }
+    let path = export_ore_montage(&ds, out)?;
+    println!("ores.png: {}", path.display());
     Ok(())
 }
 
 fn vae(epochs: Option<usize>, seed: u64, out: &Path) -> Result<()> {
-    let ds = build_emojis();
+    let ds = load_ores()?;
     let mut cfg = chosen_vae_config();
     if let Some(n) = epochs {
         cfg.epochs = validate_epochs(n)?;
     }
     let (model, hist) = train_vae(&ds, &cfg)?;
-    println!("== Ej 2: autoencoder variacional (VAE) sobre emojis ==");
+    println!("== Ej 2: autoencoder variacional (VAE) sobre bloques de mena ==");
     println!("{}", config_line(&cfg, &model));
     for e in [1, cfg.epochs] {
         let i = e - 1;
@@ -528,7 +521,7 @@ fn vae(epochs: Option<usize>, seed: u64, out: &Path) -> Result<()> {
     println!("{}", render_loss_table(&hist));
     println!("{}", loss_summary_line(&hist));
     export_reconstruction(&model, &ds, out)?;
-    println!("reconstruccion: {EMOJI_COUNT} emojis -> {}/{RECON_PNG}", out.display());
+    println!("reconstruccion: {ORE_COUNT} bloques -> {}/{RECON_PNG}", out.display());
     println!("{}", reconstruction_line(&reconstruction_summary(&model, &ds)));
     write_loss_csv(&out.join(LOSS_CSV), &hist)?;
     println!("datos: {} epocas -> {}/{LOSS_CSV}", cfg.epochs, out.display());
@@ -537,10 +530,26 @@ fn vae(epochs: Option<usize>, seed: u64, out: &Path) -> Result<()> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let z = standard_normal_matrix(&mut rng, 1, cfg.spec.latent_dim);
     let decoded = model.decode(&z);
-    println!("muestra del prior (semilla {seed}): z=({:.4}, {:.4})", z[[0, 0]], z[[0, 1]]);
-    println!("{}", format_emoji(decoded.row(0)));
-    let (idx, dist) = nearest_emoji(&ds, decoded.row(0));
-    println!("emoji mas cercano: {} (distancia {dist} px)", ds.names[idx]);
+    let judge = OreJudge::new(&ds, &model.reconstruct_mean(&ds.x));
+    let v = judge.judge(decoded.row(0));
+    let (idx, dist) = nearest_ore(&ds, decoded.row(0));
+    let kind = if v.new_block {
+        "nuevo"
+    } else if v.known {
+        "reconocible"
+    } else if v.plausible {
+        "plausible"
+    } else {
+        "no plausible"
+    };
+    println!(
+        "muestra del prior (semilla {seed}): z=({:.4}, {:.4}) | {} ({kind}) | mezcla: {} | bloque mas cercano: {} a {dist:.1} niveles",
+        z[[0, 0]],
+        z[[0, 1]],
+        v.combination(),
+        shares_text(&v),
+        ds.names[idx]
+    );
     Ok(())
 }
 
@@ -550,32 +559,25 @@ fn vae_sample(draws: usize, seed: u64, epochs: Option<usize>, out: &Path) -> Res
     if let Some(n) = epochs {
         cfg.epochs = validate_epochs(n)?;
     }
-    let ds = build_emojis();
+    let ds = load_ores()?;
     let (model, _) = train_vae(&ds, &cfg)?;
-    let sep = separation(&ds);
-    println!("== Ej 2: emoji nuevo muestreado del prior del VAE ==");
+    println!("== Ej 2: bloque nuevo muestreado del prior del VAE ==");
     println!("{}", config_line(&cfg, &model));
-    println!("{}", separation_line(&sep));
-    let style_judge = StyleJudge::new(&ds, &model.reconstruct_mean(&ds.x));
-    println!("{}", regions_line(&style_judge));
-    let search = search_new_emoji(&model, &ds, seed, draws);
-    println!("{}", new_emoji_line(&search, &ds, &sep));
+    println!("{}", separation_line(&separation(&ds)));
+    let judge = OreJudge::new(&ds, &model.reconstruct_mean(&ds.x));
+    println!("{}", judge_line(&judge));
+    let search = search_new_ore(&model, &ds, seed, draws);
+    println!("{}", new_ore_line(&search, &ds));
     println!("{}", render_gallery(&search, &ds));
-    if let Some(first) = search.accepted.first() {
-        let nearest = ds.x.row(first.judgement.nearest_index).to_owned();
-        let binarized = first.image.mapv(|v| if v >= 0.5 { 1.0 } else { 0.0 });
-        println!("nuevo (izquierda) y {} (derecha):", ds.names[first.judgement.nearest_index]);
-        println!("{}", format_emojis_side_by_side(&[binarized, nearest]));
-    }
     let vae_decode = |z: &ndarray::Array2<f64>| model.decode(z);
-    let prior = prior_stats(&vae_decode, cfg.spec.latent_dim, &style_judge, seed, DEFAULT_DRAWS);
-    println!("{}", prior_line(&prior, &sep));
-    println!("{}", control_line(&negative_control(&model, &style_judge)));
+    let prior = prior_stats(&vae_decode, cfg.spec.latent_dim, &judge, seed, DEFAULT_DRAWS);
+    println!("{}", prior_line(&prior));
+    println!("{}", control_line(&negative_control(&model, &judge)));
     if search.accepted.is_empty() {
-        bail!("no se encontro ningun emoji nuevo y plausible en {} sorteos", search.examined);
+        bail!("no se encontro ningun bloque nuevo y plausible en {} sorteos", search.examined);
     }
-    export_new_emoji(&search, &ds, out)?;
-    println!("nuevo emoji -> {}/{NEW_EMOJI_PNG}", out.display());
+    export_new_ore(&search, out)?;
+    println!("nuevo bloque -> {}/{NEW_ORE_PNG}", out.display());
     Ok(())
 }
 
@@ -585,14 +587,15 @@ fn vae_manifold(grid: usize, epochs: Option<usize>, out: &Path) -> Result<()> {
     if let Some(n) = epochs {
         cfg.epochs = validate_epochs(n)?;
     }
-    let ds = build_emojis();
+    let ds = load_ores()?;
     let (model, _) = train_vae(&ds, &cfg)?;
     let sep = separation(&ds);
     println!("== Ej 2: plano latente del VAE decodificado en una grilla ==");
     println!("{}", config_line(&cfg, &model));
     println!("{}", separation_line(&sep));
+    let judge = OreJudge::new(&ds, &model.reconstruct_mean(&ds.x));
     let decoded = decode_grid(&model, grid, GRID_HALF_RANGE);
-    let metrics = manifold_metrics(&decoded, grid, &ds, &sep);
+    let metrics = manifold_metrics(&decoded, grid, &judge);
     println!("{}", manifold_line(&metrics, &sep));
     export_manifold(&decoded, grid, out)?;
     println!("manifold: {}/{MANIFOLD_PNG}", out.display());
@@ -605,40 +608,37 @@ fn vae_baseline(grid: usize, epochs: Option<usize>, seed: u64, out: &Path) -> Re
     if let Some(n) = epochs {
         cfg.epochs = validate_epochs(n)?;
     }
-    let ds = build_emojis();
+    let ds = load_ores()?;
     let (model, hist) = train_vae(&ds, &cfg)?;
     let plain = train_plain_ae(&ds, &cfg);
-    let sep = separation(&ds);
     println!("== Ej 2: contraste del VAE con un autoencoder sin esquema variacional ==");
     println!("{}", config_line(&cfg, &model));
     println!("autoencoder simple: arquitectura {} | mismos optimizador, perdida, epocas y semilla", plain.sizes_label());
-    println!("{}", separation_line(&sep));
+    println!("{}", separation_line(&separation(&ds)));
 
     let vae_decode = |z: &ndarray::Array2<f64>| model.decode(z);
     let plain_decode = |z: &ndarray::Array2<f64>| plain.decode(z);
     let latent_dim = cfg.spec.latent_dim;
-    let judge = StyleJudge::new(&ds, &model.reconstruct_mean(&ds.x));
-    let plain_judge = StyleJudge::new(&ds, &plain.reconstruct(&ds.x));
+    let plain_recon = plain.reconstruct(&ds.x);
+    let judge = OreJudge::new(&ds, &model.reconstruct_mean(&ds.x));
+    let plain_judge = OreJudge::new(&ds, &plain_recon);
     let vae_prior = prior_stats(&vae_decode, latent_dim, &judge, seed, DEFAULT_DRAWS);
     let plain_prior = prior_stats(&plain_decode, latent_dim, &plain_judge, seed, DEFAULT_DRAWS);
-    println!("VAE {}", prior_line(&vae_prior, &sep));
-    println!("AE simple {}", prior_line(&plain_prior, &sep));
+    println!("VAE {}", prior_line(&vae_prior));
+    println!("AE simple {}", prior_line(&plain_prior));
 
-    let vae_grid_img = decode_grid(&model, grid, GRID_HALF_RANGE);
-    let vae_grid = manifold_metrics(&vae_grid_img, grid, &ds, &sep);
+    let vae_grid = manifold_metrics(&decode_grid(&model, grid, GRID_HALF_RANGE), grid, &judge);
     let plain_grid_img = plain.decode(&plain_grid_points(&plain, &ds, grid));
-    let plain_grid = manifold_metrics(&plain_grid_img, grid, &ds, &sep);
+    let plain_grid = manifold_metrics(&plain_grid_img, grid, &plain_judge);
 
     let recon = reconstruction_summary(&model, &ds);
-    let plain_counts = wrong_pixel_counts(&ds.x, &plain.reconstruct(&ds.x));
-    let plain_recon_mean = plain_counts.iter().sum::<usize>() as f64 / plain_counts.len() as f64;
     let contrast = Contrast {
         vae_prior: vae_prior.clone(),
         plain_prior: plain_prior.clone(),
         vae_grid: vae_grid.clone(),
         plain_grid,
         vae_recon_mean: recon.mean_wrong,
-        plain_recon_mean,
+        plain_recon_mean: mean_wrong_pixels(&ds, &plain_recon),
     };
     let control = negative_control(&model, &judge);
     println!("{}", control_line(&control));
@@ -647,7 +647,7 @@ fn vae_baseline(grid: usize, epochs: Option<usize>, seed: u64, out: &Path) -> Re
     export_plain_manifold(&plain_grid_img, grid, out)?;
     println!("contraste: {}/{PLAIN_MANIFOLD_PNG}", out.display());
 
-    let checks = acceptance_checks(&recon, &hist, &vae_grid, &vae_prior, &plain_prior, &control, &sep);
+    let checks = acceptance_checks(&recon, &hist, &vae_grid, &vae_prior, &plain_prior, &control, &judge);
     println!("{}", render_acceptance(&checks));
     if checks.iter().any(|c| !c.pass) {
         bail!("fallaron {} verificaciones de aceptacion", checks.iter().filter(|c| !c.pass).count());
@@ -658,11 +658,11 @@ fn vae_baseline(grid: usize, epochs: Option<usize>, seed: u64, out: &Path) -> Re
 fn ej2(opts: &Ej2Options, out: &Path) -> Result<()> {
     let run = run_ej2(opts)?;
     let ds = &run.ds;
-    println!("== Ej 2: autoencoder variacional (VAE) sobre emojis ==");
+    println!("== Ej 2: autoencoder variacional (VAE) sobre bloques de mena ==");
     println!("{}", dataset_line());
     println!("{}", separation_line(&run.sep));
-    let montage = export_emoji_montage(ds, out)?;
-    println!("emojis.png: {}", montage.display());
+    let montage = export_ore_montage(ds, out)?;
+    println!("ores.png: {}", montage.display());
     println!("{}", config_line(&run.cfg, &run.vae));
 
     println!("{}", render_loss_table(&run.history));
@@ -674,26 +674,22 @@ fn ej2(opts: &Ej2Options, out: &Path) -> Result<()> {
 
     println!("{}", reconstruction_line(&run.recon));
     export_reconstruction(&run.vae, ds, out)?;
-    println!("reconstruccion: {EMOJI_COUNT} emojis -> {}/{RECON_PNG}", out.display());
+    println!("reconstruccion: {ORE_COUNT} bloques -> {}/{RECON_PNG}", out.display());
 
+    println!("{}", judge_line(&run.judge));
     println!("{}", manifold_line(&run.grid, &run.sep));
     export_manifold(&run.grid_decoded, run.grid.side, out)?;
     println!("manifold: {}/{MANIFOLD_PNG}", out.display());
 
-    println!("{}", regions_line(&run.judge));
-    println!("{}", new_emoji_line(&run.search, ds, &run.sep));
+    println!("{}", new_ore_line(&run.search, ds));
     println!("{}", render_gallery(&run.search, ds));
-    if let Some(first) = run.search.accepted.first() {
-        let nearest = ds.x.row(first.judgement.nearest_index).to_owned();
-        let binarized = first.image.mapv(|v| if v >= 0.5 { 1.0 } else { 0.0 });
-        println!("nuevo (izquierda) y {} (derecha):", ds.names[first.judgement.nearest_index]);
-        println!("{}", format_emojis_side_by_side(&[binarized, nearest]));
-        export_new_emoji(&run.search, ds, out)?;
-        println!("nuevo emoji -> {}/{NEW_EMOJI_PNG}", out.display());
+    if !run.search.accepted.is_empty() {
+        export_new_ore(&run.search, out)?;
+        println!("nuevo bloque -> {}/{NEW_ORE_PNG}", out.display());
     }
 
-    println!("VAE {}", prior_line(&run.prior, &run.sep));
-    println!("AE simple {}", prior_line(&run.plain_prior, &run.sep));
+    println!("VAE {}", prior_line(&run.prior));
+    println!("AE simple {}", prior_line(&run.plain_prior));
     println!("{}", control_line(&run.control));
     println!("{}", contrast_line(&run.contrast));
     export_plain_manifold(&run.plain_grid_decoded, run.plain_grid.side, out)?;
@@ -719,7 +715,7 @@ fn main() -> Result<()> {
         Command::Noise { levels, seed, out } => noise(levels, seed, &out),
         Command::Latent { out } => latent(&out),
         Command::Generate { point, steps, out } => generate(point, steps, &out),
-        Command::Emojis { out } => emojis(&out),
+        Command::Ores { out } => ores(&out),
         Command::Vae { epochs, seed, out } => vae(epochs, seed, &out),
         Command::VaeSample { draws, seed, epochs, out } => vae_sample(draws, seed, epochs, &out),
         Command::VaeManifold { grid, epochs, out } => vae_manifold(grid, epochs, &out),

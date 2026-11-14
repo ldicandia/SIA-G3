@@ -12,7 +12,7 @@ use tp5::denoising::DEFAULT_LEVELS;
 use tp5::experiments::STUDIES;
 use tp5::generate::NEW_LETTER_PNG;
 use tp5::vae_figures::{
-    EMOJIS_PNG, LOSS_CSV, LOSS_PNG, MANIFOLD_PNG, NEW_EMOJI_PNG, PLAIN_MANIFOLD_PNG, RECON_PNG,
+    ORES_PNG, LOSS_CSV, LOSS_PNG, MANIFOLD_PNG, NEW_ORE_PNG, PLAIN_MANIFOLD_PNG, RECON_PNG,
 };
 
 /// Subcomandos de la CLI que el README documenta (seccion "Subcomandos").
@@ -26,7 +26,7 @@ const SUBCOMMANDS: [&str; 15] = [
     "noise",
     "latent",
     "generate",
-    "emojis",
+    "ores",
     "vae",
     "vae-sample",
     "vae-manifold",
@@ -112,7 +112,7 @@ fn artifacts() -> Vec<(&'static str, Vec<String>)> {
         .chain(DEFAULT_LEVELS.iter().map(|&l| dae_examples_filename(l)))
         .chain(["salida-dae-sweep.txt", "salida-ej1b.txt"].iter().map(|s| s.to_string()))
         .collect();
-    let ej2: Vec<String> = [EMOJIS_PNG, RECON_PNG, LOSS_CSV, LOSS_PNG, NEW_EMOJI_PNG, MANIFOLD_PNG, PLAIN_MANIFOLD_PNG]
+    let ej2: Vec<String> = [ORES_PNG, RECON_PNG, LOSS_CSV, LOSS_PNG, NEW_ORE_PNG, MANIFOLD_PNG, PLAIN_MANIFOLD_PNG]
         .iter()
         .map(|s| s.to_string())
         .chain(std::iter::once("salida-ej2.txt".to_string()))

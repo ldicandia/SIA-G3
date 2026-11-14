@@ -108,7 +108,7 @@ for requerido in Cargo.toml Cargo.lock src/main.rs docs/font.h scripts/regenerar
         exit 1
     fi
 done
-for prohibido in target output .planning; do
+for prohibido in target output .planning datos; do
     if [ -e "$COPIA/$prohibido" ]; then
         echo "CHECKOUT LIMPIO FALLA: paso copiar: la copia contiene $prohibido" >&2
         exit 1
@@ -117,6 +117,12 @@ done
 echo "copiados $COPIADOS archivos a $COPIA"
 
 SALIDA_TMP="salida-limpia"
+
+# Las texturas del Ej 2 no se versionan (son de Mojang). Si el arbol de trabajo ya las tiene, la copia las
+# usa desde ahi (regenerar.sh verifica su SHA-256 igual que si las bajara); si no, regenerar.sh las baja.
+if [ -z "${TP5_MENAS:-}" ] && [ -d datos/menas ]; then
+    export TP5_MENAS="$PWD/datos/menas"
+fi
 
 if ! (cd "$COPIA" && cargo build --release --locked); then
     echo "CHECKOUT LIMPIO FALLA: paso compilar con cargo build --release --locked" >&2

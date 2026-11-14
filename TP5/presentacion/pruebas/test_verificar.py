@@ -336,11 +336,11 @@ class PruebasVerificar(Base):
 
     def test_each_retracted_phrase_is_reported(self):
         frases = {
-            "no es una copia de ninguno": "El emoji No es una copia de ninguno del dataset.",
+            "no es una copia de ninguno": "El bloque No es una copia de ninguno del dataset.",
             "no es una copia": "Se dice que NO ES UNA COPIA del original.",
             "no es copia": "Entonces no es copia de nada.",
             "no se trata de una copia": "Aqui no se trata de una copia.",
-            "está a al menos": "El emoji Está a al menos tantos pixeles.",
+            "está a al menos": "El bloque Está a al menos tantos pixeles.",
         }
         self.assertEqual(set(frases), set(v.AFIRMACIONES_RETIRADAS))
         for frase, texto in frases.items():
@@ -384,8 +384,8 @@ class PruebasVerificar(Base):
         self.assertProblema(errores, "consigna 1.a.3", "falta la diapositiva")
         errores, _ = self.verificar(self.deck(sin_imagen="output/ej1a/latent.png"))
         self.assertProblema(errores, "consigna 1.a.3", "no incrusta", "latent")
-        errores, _ = self.verificar(self.deck(sin_imagen="output/ej2/vae_new_emoji.png"))
-        self.assertProblema(errores, "consigna 2.c", "vae_new_emoji")
+        errores, _ = self.verificar(self.deck(sin_imagen="output/ej2/vae_new_ore.png"))
+        self.assertProblema(errores, "consigna 2.c", "vae_new_ore")
         errores, _ = self.verificar(self.deck(sin_estudio="noise"))
         self.assertProblema(errores, "consigna 1.b.1", "noise-b", "noise")
 

@@ -909,6 +909,7 @@ dependencies = [
  "clap",
  "ndarray",
  "plotters",
+ "png",
  "rand",
  "rand_chacha",
 ]

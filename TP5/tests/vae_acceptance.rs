@@ -4,18 +4,17 @@
 use std::sync::OnceLock;
 
 use tp5::autoencoder::Autoencoder;
-use tp5::emoji::{build_emojis, separation, EmojiDataset, Separation};
-use tp5::report::wrong_pixel_counts;
+use tp5::ores::{load_ores, OreDataset};
 use tp5::vae::{chosen_vae_config, reconstruction_summary, train_vae, Vae, VaeHistory, SAMPLE_SEED};
 use tp5::vae_eval::{
-    acceptance_checks, contrast_line, control_line, decode_grid, manifold_metrics, negative_control,
-    plain_grid_points, prior_stats, render_acceptance, search_new_emoji, train_plain_ae, AcceptanceCheck, Contrast,
-    PriorStats, CONTROL_POSTERIOR_SAMPLES, DEFAULT_DRAWS, StyleJudge, GRID_HALF_RANGE, GRID_SIDE_DEFAULT, MAX_MEAN_WRONG_PX, MIN_CONTRAST_GAP, MIN_VALID_GAP,
+    acceptance_checks, contrast_line, control_line, decode_grid, manifold_metrics, mean_wrong_pixels,
+    negative_control, plain_grid_points, prior_stats, render_acceptance, search_new_ore, train_plain_ae,
+    AcceptanceCheck, Contrast, OreJudge, PriorStats, CONTROL_POSTERIOR_SAMPLES, DEFAULT_DRAWS, GRID_HALF_RANGE,
+    GRID_SIDE_DEFAULT, MAX_MEAN_WRONG_PX, MIN_VALID_GAP,
 };
 
 struct Trained {
-    ds: EmojiDataset,
-    sep: Separation,
+    ds: OreDataset,
     models: Vec<(Vae, VaeHistory)>,
     plain: Autoencoder,
 }
@@ -23,8 +22,7 @@ struct Trained {
 fn trained() -> &'static Trained {
     static T: OnceLock<Trained> = OnceLock::new();
     T.get_or_init(|| {
-        let ds = build_emojis();
-        let sep = separation(&ds);
+        let ds = ores();
         let (models, plain) = std::thread::scope(|s| {
             let handles: Vec<_> = (0..3u64)
                 .map(|seed| {
@@ -40,26 +38,21 @@ fn trained() -> &'static Trained {
             let models: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
             (models, plain_handle.join().unwrap())
         });
-        Trained { ds, sep, models, plain }
+        Trained { ds, models, plain }
     })
 }
 
-fn plain_judge(t: &Trained) -> StyleJudge {
-    StyleJudge::new(&t.ds, &t.plain.reconstruct(&t.ds.x))
+fn plain_judge(t: &Trained) -> OreJudge {
+    OreJudge::new(&t.ds, &t.plain.reconstruct(&t.ds.x))
 }
 
-fn vae_judge(t: &Trained, seed: usize) -> StyleJudge {
-    StyleJudge::new(&t.ds, &t.models[seed].0.reconstruct_mean(&t.ds.x))
+fn vae_judge(t: &Trained, seed: usize) -> OreJudge {
+    OreJudge::new(&t.ds, &t.models[seed].0.reconstruct_mean(&t.ds.x))
 }
 
 fn plain_prior(t: &Trained) -> PriorStats {
     let decode = |z: &ndarray::Array2<f64>| t.plain.decode(z);
     prior_stats(&decode, 2, &plain_judge(t), SAMPLE_SEED, DEFAULT_DRAWS)
-}
-
-fn plain_recon_mean(t: &Trained) -> f64 {
-    let counts = wrong_pixel_counts(&t.ds.x, &t.plain.reconstruct(&t.ds.x));
-    counts.iter().sum::<usize>() as f64 / counts.len() as f64
 }
 
 fn vae_prior(t: &Trained, seed: usize) -> PriorStats {
@@ -75,11 +68,13 @@ fn acceptance_holds_for_seeds_0_1_2() {
     let mut failures = Vec::new();
     for seed in 0..3 {
         let (vae, hist) = &t.models[seed];
+        let judge = vae_judge(t, seed);
         let recon = reconstruction_summary(vae, &t.ds);
-        let grid = manifold_metrics(&decode_grid(vae, GRID_SIDE_DEFAULT, GRID_HALF_RANGE), GRID_SIDE_DEFAULT, &t.ds, &t.sep);
+        let grid =
+            manifold_metrics(&decode_grid(vae, GRID_SIDE_DEFAULT, GRID_HALF_RANGE), GRID_SIDE_DEFAULT, &judge);
         let prior = vae_prior(t, seed);
-        let control = negative_control(vae, &vae_judge(t, seed));
-        let checks = acceptance_checks(&recon, hist, &grid, &prior, &plain, &control, &t.sep);
+        let control = negative_control(vae, &judge);
+        let checks = acceptance_checks(&recon, hist, &grid, &prior, &plain, &control, &judge);
         assert_eq!(checks.len(), 11);
         println!("semilla {seed}:\n{}", render_acceptance(&checks));
         for c in checks.iter().filter(|c| !c.pass) {
@@ -90,15 +85,14 @@ fn acceptance_holds_for_seeds_0_1_2() {
 }
 
 #[test]
-fn negative_control_rejects_every_training_reconstruction_while_the_pixel_band_accepts_some() {
+fn negative_control_recognizes_every_training_reconstruction_with_its_own_combination() {
     let t = trained();
     for seed in 0..3 {
         let c = negative_control(&t.models[seed].0, &vae_judge(t, seed));
         println!("semilla {seed}: {}", control_line(&c));
-        assert_eq!(c.n_mean, 36);
+        assert_eq!(c.n_mean, 18);
         assert_eq!(c.mean_accepted, 0, "semilla {seed}: {c:?}");
-        // la banda de pixeles que se reemplaza si acepta reconstrucciones: el control puede fallar
-        assert!(c.mean_accepted_by_band >= 1, "semilla {seed}: {c:?}");
+        assert_eq!(c.mean_own_combination, 18, "semilla {seed}: {c:?}");
     }
 }
 
@@ -107,9 +101,9 @@ fn posterior_samples_are_accepted_less_often_than_prior_draws() {
     let t = trained();
     for seed in 0..3 {
         let c = negative_control(&t.models[seed].0, &vae_judge(t, seed));
-        assert_eq!(c.n_posterior, 36 * CONTROL_POSTERIOR_SAMPLES);
+        assert_eq!(c.n_posterior, 18 * CONTROL_POSTERIOR_SAMPLES);
         let posterior = c.posterior_accepted as f64 / c.n_posterior as f64;
-        let prior = vae_prior(t, seed).hybrid_frac;
+        let prior = vae_prior(t, seed).new_frac;
         println!("semilla {seed}: posterior {posterior:.3} contra prior {prior:.3}");
         assert!(posterior < prior, "semilla {seed}: posterior {posterior} no es menor que prior {prior}");
     }
@@ -122,8 +116,8 @@ fn predicate_separates_vae_from_plain_through_plausibility() {
     for seed in 0..3 {
         let vae = vae_prior(t, seed);
         println!(
-            "semilla {seed}: plausibles VAE {:.3} contra {:.3} | hibridos VAE {:.3} contra {:.3}",
-            vae.plausible_frac, plain.plausible_frac, vae.hybrid_frac, plain.hybrid_frac
+            "semilla {seed}: plausibles VAE {:.3} contra {:.3} | nuevos VAE {:.3} contra {:.3}",
+            vae.plausible_frac, plain.plausible_frac, vae.new_frac, plain.new_frac
         );
         assert!(
             vae.plausible_frac - plain.plausible_frac >= MIN_VALID_GAP,
@@ -139,40 +133,39 @@ fn control_line_format() {
     let c = negative_control(&t.models[0].0, &vae_judge(t, 0));
     let line = control_line(&c);
     assert!(
-        line.starts_with("CONTROL NEGATIVO: reconstrucciones de los 36 emojis del entrenamiento aceptadas como nuevas: "),
+        line.starts_with("CONTROL NEGATIVO: reconstrucciones de los 18 bloques del entrenamiento aceptadas como nuevas: "),
         "{line}"
     );
-    assert!(line.contains("criterio anterior de banda de pixeles: "), "{line}");
+    assert!(line.contains("(reconocidas con su propia combinacion: 18/18)"), "{line}");
     assert!(line.ends_with(" % aceptadas como nuevas"), "{line}");
 }
 
 #[test]
-fn chosen_seed_finds_a_new_emoji_within_the_default_draws() {
+fn chosen_seed_finds_a_new_ore_within_the_default_draws() {
     let t = trained();
-    let search = search_new_emoji(&t.models[0].0, &t.ds, SAMPLE_SEED, DEFAULT_DRAWS);
-    assert!(!search.accepted.is_empty(), "ningun emoji nuevo en {DEFAULT_DRAWS} sorteos");
+    let search = search_new_ore(&t.models[0].0, &t.ds, SAMPLE_SEED, DEFAULT_DRAWS);
+    assert!(!search.accepted.is_empty(), "ningun bloque nuevo en {DEFAULT_DRAWS} sorteos");
 }
 
 #[test]
 fn plain_autoencoder_reconstructs_but_samples_the_prior_worse() {
     let t = trained();
-    let plain_recon = plain_recon_mean(t);
+    let plain_recon = mean_wrong_pixels(&t.ds, &t.plain.reconstruct(&t.ds.x));
     assert!(plain_recon <= MAX_MEAN_WRONG_PX, "reconstruccion del autoencoder simple {plain_recon}");
     let vae_recon = reconstruction_summary(&t.models[0].0, &t.ds).mean_wrong;
     assert!(vae_recon <= MAX_MEAN_WRONG_PX);
     let (vae, plain) = (vae_prior(t, 0), plain_prior(t));
-    let (v, p) = (vae.recognizable_frac, plain.recognizable_frac);
-    println!("sorteos reconocibles: VAE {v:.3}, autoencoder simple {p:.3}");
-    assert!(v - p >= MIN_CONTRAST_GAP, "ventaja {} menor que {MIN_CONTRAST_GAP}", v - p);
     println!(
-        "sorteos plausibles: VAE {:.3}, autoencoder simple {:.3} | hibridos: VAE {:.3}, autoencoder simple {:.3}",
-        vae.plausible_frac, plain.plausible_frac, vae.hybrid_frac, plain.hybrid_frac
+        "sorteos plausibles: VAE {:.3}, autoencoder simple {:.3} | reconocibles: VAE {:.3}, {:.3} | nuevos: VAE {:.3}, {:.3}",
+        vae.plausible_frac,
+        plain.plausible_frac,
+        vae.recognizable_frac,
+        plain.recognizable_frac,
+        vae.new_frac,
+        plain.new_frac
     );
-    assert!(
-        vae.plausible_frac - plain.plausible_frac >= MIN_VALID_GAP,
-        "ventaja de plausibilidad {} menor que {MIN_VALID_GAP}",
-        vae.plausible_frac - plain.plausible_frac
-    );
+    assert!(vae.recognizable_frac > plain.recognizable_frac);
+    assert!(vae.new_keys > plain.new_keys);
 }
 
 #[test]
@@ -201,20 +194,19 @@ fn plain_grid_covers_the_padded_code_box() {
 fn contrast_line_format() {
     let t = trained();
     let vae = &t.models[0].0;
-    let grid = |decoded: &ndarray::Array2<f64>| manifold_metrics(decoded, 5, &t.ds, &t.sep);
+    let (vj, pj) = (vae_judge(t, 0), plain_judge(t));
     let c = Contrast {
         vae_prior: vae_prior(t, 0),
         plain_prior: plain_prior(t),
-        vae_grid: grid(&decode_grid(vae, 5, GRID_HALF_RANGE)),
-        plain_grid: grid(&t.plain.decode(&plain_grid_points(&t.plain, &t.ds, 5))),
+        vae_grid: manifold_metrics(&decode_grid(vae, 5, GRID_HALF_RANGE), 5, &vj),
+        plain_grid: manifold_metrics(&t.plain.decode(&plain_grid_points(&t.plain, &t.ds, 5)), 5, &pj),
         vae_recon_mean: 5.0,
         plain_recon_mean: 6.0,
     };
     let line = contrast_line(&c);
-    assert!(line.starts_with("CONTRASTE: puntos z ~ N(0, I)"), "{line}");
-    assert!(line.contains("a una cara plausible: VAE "), "{line}");
-    assert!(line.contains("a un hibrido plausible: VAE "), "{line}");
-    assert!(line.contains("reconstruccion media: VAE 5.00 px contra 6.00 px por emoji"), "{line}");
+    assert!(line.starts_with("CONTRASTE: puntos z ~ N(0, I) que decodifican a un bloque plausible: VAE "), "{line}");
+    assert!(line.contains(" | nuevo: VAE "), "{line}");
+    assert!(line.contains("reconstruccion media: VAE 5.00 px contra 6.00 px por bloque"), "{line}");
 }
 
 #[test]
@@ -228,4 +220,9 @@ fn render_acceptance_marks_pass_and_fail() {
     assert_eq!(lines.len(), 2);
     assert!(lines[0].starts_with("ACEPTACION OK:") && lines[0].contains(">="), "{}", lines[0]);
     assert!(lines[1].starts_with("ACEPTACION FALLA:") && lines[1].contains("<="), "{}", lines[1]);
+}
+
+/// El dataset de menas; falta si no se corrio `bash scripts/descargar_menas.sh`.
+fn ores() -> OreDataset {
+    load_ores().expect("dataset de menas: corra `bash scripts/descargar_menas.sh`")
 }

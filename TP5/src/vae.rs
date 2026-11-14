@@ -8,10 +8,9 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use crate::autoencoder::ArchSpec;
-use crate::emoji::{EmojiDataset, EMOJI_PIXELS};
+use crate::ores::{color_distance, wrong_pixel_counts, OreDataset, ORE_VALUES};
 use crate::mlp::{Activation, Grads, Loss, Mlp};
 use crate::optimizer::{Optimizer, OptimizerKind};
-use crate::report::wrong_pixel_counts;
 
 /// Semilla por defecto de la muestra del prior.
 pub const SAMPLE_SEED: u64 = 0x5a3f_0201;
@@ -214,11 +213,11 @@ impl VaeHistory {
     }
 }
 
-/// Entrenamiento full-batch sobre el dataset de emojis (entrada = objetivo). Devuelve Err si algun
+/// Entrenamiento full-batch sobre el dataset de bloques (entrada = objetivo). Devuelve Err si algun
 /// termino de la perdida deja de ser finito.
-pub fn train_vae(ds: &EmojiDataset, cfg: &VaeConfig) -> anyhow::Result<(Vae, VaeHistory)> {
+pub fn train_vae(ds: &OreDataset, cfg: &VaeConfig) -> anyhow::Result<(Vae, VaeHistory)> {
     let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
-    let mut vae = Vae::new(&cfg.spec, EMOJI_PIXELS, &mut rng);
+    let mut vae = Vae::new(&cfg.spec, ORE_VALUES, &mut rng);
     let mut noise_rng = ChaCha8Rng::seed_from_u64(cfg.seed ^ NOISE_STREAM_TAG);
     let mut opt_enc = cfg.optimizer.build(&vae.encoder);
     let mut opt_dec = cfg.optimizer.build(&vae.decoder);
@@ -237,11 +236,6 @@ pub fn train_vae(ds: &EmojiDataset, cfg: &VaeConfig) -> anyhow::Result<(Vae, Vae
         hist.kl.push(t.kl);
     }
     Ok((vae, hist))
-}
-
-/// Entrena `chosen_vae_config()`.
-pub fn train_chosen_vae(ds: &EmojiDataset) -> (Vae, VaeHistory) {
-    train_vae(ds, &chosen_vae_config()).expect("el entrenamiento de la configuracion elegida diverge")
 }
 
 /// Valida el argumento `--epochs`: entre 1 y `MAX_EPOCHS`.
@@ -305,25 +299,31 @@ pub fn loss_summary_line(history: &VaeHistory) -> String {
 
 #[derive(Debug, Clone)]
 pub struct ReconSummary {
-    /// Pixeles incorrectos por emoji (reconstruccion y original binarizados en 0.5).
+    /// Pixeles incorrectos por bloque (algun canal a mas de 32 niveles del original).
     pub counts: Vec<usize>,
     pub mean_wrong: f64,
     pub max_wrong: usize,
     pub n_exact: usize,
+    /// Error medio por canal sobre todo el dataset, en niveles de 0 a 255.
+    pub mean_level_error: f64,
 }
 
 /// Calidad de la reconstruccion desde la media del codificador sobre todo el dataset.
-pub fn reconstruction_summary(vae: &Vae, ds: &EmojiDataset) -> ReconSummary {
-    let counts = wrong_pixel_counts(&ds.x, &vae.reconstruct_mean(&ds.x));
+pub fn reconstruction_summary(vae: &Vae, ds: &OreDataset) -> ReconSummary {
+    let recon = vae.reconstruct_mean(&ds.x);
+    let counts = wrong_pixel_counts(&ds.x, &recon);
     let mean_wrong = counts.iter().sum::<usize>() as f64 / counts.len() as f64;
     let max_wrong = counts.iter().copied().max().unwrap_or(0);
     let n_exact = counts.iter().filter(|&&c| c == 0).count();
-    ReconSummary { counts, mean_wrong, max_wrong, n_exact }
+    let mean_level_error = ds.x.rows().into_iter().zip(recon.rows()).map(|(a, b)| color_distance(a, b)).sum::<f64>()
+        / ds.x.nrows() as f64;
+    ReconSummary { counts, mean_wrong, max_wrong, n_exact, mean_level_error }
 }
 
 pub fn reconstruction_line(s: &ReconSummary) -> String {
     format!(
-        "RECONSTRUCCION: media {:.2} px, maximo {} px por emoji; {}/{} emojis sin pixeles incorrectos",
+        "RECONSTRUCCION: error medio {:.2} niveles por canal | pixeles incorrectos (algun canal a mas de 32 niveles): media {:.2}, maximo {} de 256 por bloque; {}/{} bloques sin pixeles incorrectos",
+        s.mean_level_error,
         s.mean_wrong,
         s.max_wrong,
         s.n_exact,

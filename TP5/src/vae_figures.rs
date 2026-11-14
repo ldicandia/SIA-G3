@@ -6,88 +6,87 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use ndarray::{Array1, Array2};
 
-use crate::emoji::{EmojiDataset, EMOJI_COUNT, EMOJI_SIDE};
-use crate::plots::{plot_gray_tiles, plot_series, Series};
-use crate::report::wrong_pixel_counts;
+use crate::ores::{wrong_pixel_counts, OreDataset, ORE_COUNT, ORE_MINERALS, ORE_SIDE};
+use crate::plots::{plot_color_tiles, plot_series, Series};
 use crate::vae::{Vae, VaeHistory};
 use crate::vae_eval::SampleSearch;
 
 /// Nombres fijos de los archivos (no se interpola texto del usuario en la ruta).
-pub const EMOJIS_PNG: &str = "emojis.png";
+pub const ORES_PNG: &str = "ores.png";
 pub const RECON_PNG: &str = "vae_reconstruction.png";
 pub const LOSS_CSV: &str = "vae_loss.csv";
 pub const LOSS_PNG: &str = "vae_loss.png";
 
-pub const NEW_EMOJI_PNG: &str = "vae_new_emoji.png";
+pub const NEW_ORE_PNG: &str = "vae_new_ore.png";
 
-/// Emojis por banda de `build_reconstruction_tiles` (columnas de la figura).
-const RECON_COLS: usize = 12;
+/// Bloques por banda de `build_reconstruction_tiles` (columnas de la figura).
+const RECON_COLS: usize = 9;
 
-/// Con k muestras aceptadas: 2k imagenes en dos bandas de k. Primero las imagenes decodificadas con el
-/// pie `{i}: {d} px` (orden de la galeria y distancia al emoji mas cercano) y despues el emoji del
-/// dataset mas cercano de cada una con su nombre.
-pub fn build_new_emoji_tiles(search: &SampleSearch, ds: &EmojiDataset) -> Vec<(String, Array1<f64>)> {
-    let mut tiles: Vec<(String, Array1<f64>)> = search
+/// Columnas de `vae_new_ore.png`.
+pub const NEW_ORE_COLS: usize = 4;
+/// Columnas de `ores.png`.
+const MONTAGE_COLS: usize = 6;
+
+/// Una imagen por muestra aceptada, en el orden de la galeria, con el pie `{i}: {minerales}` (la roca
+/// se ve en el fondo de la propia imagen).
+pub fn build_new_ore_tiles(search: &SampleSearch) -> Vec<(String, Array1<f64>)> {
+    search
         .accepted
         .iter()
         .enumerate()
-        .map(|(i, s)| (format!("{}: {} px", i + 1, s.judgement.distance), s.image.clone()))
-        .collect();
-    tiles.extend(
-        search
-            .accepted
-            .iter()
-            .map(|s| (ds.names[s.judgement.nearest_index].clone(), ds.x.row(s.judgement.nearest_index).to_owned())),
-    );
-    tiles
+        .map(|(i, s)| {
+            let minerals: Vec<&str> = s.verdict.minerals.iter().map(|&m| ORE_MINERALS[m]).collect();
+            (format!("{}: {}", i + 1, minerals.join("+")), s.image.clone())
+        })
+        .collect()
 }
 
-/// Escribe `vae_new_emoji.png`: los emojis nuevos arriba y el emoji del dataset mas cercano abajo.
-pub fn export_new_emoji(search: &SampleSearch, ds: &EmojiDataset, out_dir: &Path) -> Result<PathBuf> {
+/// Escribe `vae_new_ore.png`: los bloques nuevos de la galeria con sus minerales.
+pub fn export_new_ore(search: &SampleSearch, out_dir: &Path) -> Result<PathBuf> {
     if search.accepted.is_empty() {
         return Err(anyhow!(
-            "no se encontro ningun emoji nuevo y plausible en {} sorteos; no se escribe {NEW_EMOJI_PNG}",
+            "no se encontro ningun bloque nuevo y plausible en {} sorteos; no se escribe {NEW_ORE_PNG}",
             search.examined
         ));
     }
-    let path = out_dir.join(NEW_EMOJI_PNG);
-    plot_gray_tiles(
+    let path = out_dir.join(NEW_ORE_PNG);
+    plot_color_tiles(
         &path,
-        "Arriba: emojis nuevos y su distancia al más cercano. Abajo: el más cercano",
-        &build_new_emoji_tiles(search, ds),
-        EMOJI_SIDE,
-        search.accepted.len(),
-        4,
-    )?;
-    Ok(path)
-}
-
-/// Escribe `emojis.png`: tabla de 6 x 6 con un estilo de ojos por fila y un estilo de boca por columna,
-/// sin pie por emoji (con el tamano minimo de letra de las figuras los 36 nombres achicarian los emojis).
-pub fn export_emoji_montage(ds: &EmojiDataset, out_dir: &Path) -> Result<PathBuf> {
-    let tiles: Vec<(String, Array1<f64>)> =
-        ds.x.rows().into_iter().map(|r| (String::new(), r.to_owned())).collect();
-    let path = out_dir.join(EMOJIS_PNG);
-    plot_gray_tiles(
-        &path,
-        "Dataset: 36 emojis de 24 x 24",
-        &tiles,
-        EMOJI_SIDE,
+        "Bloques nuevos generados por el VAE y sus minerales",
+        &build_new_ore_tiles(search),
+        ORE_SIDE,
+        search.accepted.len().min(NEW_ORE_COLS),
         6,
-        4,
     )?;
     Ok(path)
 }
 
-/// 72 imagenes en bandas de 12 originales seguidas de 12 reconstrucciones. Las reconstrucciones son
-/// la decodificacion de la media del codificador (probabilidades en gris, sin binarizar) y su pie es
-/// `{k} px`, con k los pixeles que difieren del original tras binarizar en 0.5.
-pub fn build_reconstruction_tiles(vae: &Vae, ds: &EmojiDataset) -> Vec<(String, Array1<f64>)> {
+/// Escribe `ores.png`: los 18 bloques en el orden del dataset (piedra, pizarra y Nether), cada uno con
+/// su nombre `{mineral}-{roca}` como pie.
+pub fn export_ore_montage(ds: &OreDataset, out_dir: &Path) -> Result<PathBuf> {
+    let tiles: Vec<(String, Array1<f64>)> =
+        ds.x.rows().into_iter().zip(&ds.names).map(|(r, n)| (n.clone(), r.to_owned())).collect();
+    let path = out_dir.join(ORES_PNG);
+    plot_color_tiles(
+        &path,
+        &format!("Dataset: {ORE_COUNT} bloques de mena de Minecraft, {ORE_SIDE} x {ORE_SIDE} RGB"),
+        &tiles,
+        ORE_SIDE,
+        MONTAGE_COLS,
+        5,
+    )?;
+    Ok(path)
+}
+
+/// 36 imagenes en bandas de 9 originales seguidas de 9 reconstrucciones. Las reconstrucciones son
+/// la decodificacion de la media del codificador (RGB en [0, 1]) y su pie es
+/// `{k} px`, con k los pixeles con algun canal a mas de 32 niveles del original.
+pub fn build_reconstruction_tiles(vae: &Vae, ds: &OreDataset) -> Vec<(String, Array1<f64>)> {
     let recon = vae.reconstruct_mean(&ds.x);
     let counts = wrong_pixel_counts(&ds.x, &recon);
-    let mut tiles = Vec::with_capacity(2 * EMOJI_COUNT);
-    for band in (0..EMOJI_COUNT).step_by(RECON_COLS) {
-        let end = (band + RECON_COLS).min(EMOJI_COUNT);
+    let mut tiles = Vec::with_capacity(2 * ORE_COUNT);
+    for band in (0..ORE_COUNT).step_by(RECON_COLS) {
+        let end = (band + RECON_COLS).min(ORE_COUNT);
         for i in band..end {
             tiles.push((ds.names[i].clone(), ds.x.row(i).to_owned()));
         }
@@ -100,20 +99,20 @@ pub fn build_reconstruction_tiles(vae: &Vae, ds: &EmojiDataset) -> Vec<(String, 
 
 /// Escribe `vae_reconstruction.png` con originales (filas impares, sin pie) y reconstrucciones (filas
 /// pares, con sus pixeles incorrectos como pie).
-pub fn export_reconstruction(vae: &Vae, ds: &EmojiDataset, out_dir: &Path) -> Result<PathBuf> {
+pub fn export_reconstruction(vae: &Vae, ds: &OreDataset, out_dir: &Path) -> Result<PathBuf> {
     let path = out_dir.join(RECON_PNG);
     let tiles: Vec<(String, Array1<f64>)> = build_reconstruction_tiles(vae, ds)
         .into_iter()
         .enumerate()
         .map(|(k, (caption, tile))| (if (k / RECON_COLS) % 2 == 0 { String::new() } else { caption }, tile))
         .collect();
-    plot_gray_tiles(
+    plot_color_tiles(
         &path,
         "Originales y, debajo, reconstrucciones con sus píxeles incorrectos",
         &tiles,
-        EMOJI_SIDE,
+        ORE_SIDE,
         RECON_COLS,
-        3,
+        4,
     )?;
     Ok(path)
 }
@@ -170,7 +169,7 @@ fn write_grid_png(decoded: &Array2<f64>, side: usize, path: &Path, title: &str) 
             decoded.nrows()
         ));
     }
-    plot_gray_tiles(path, title, &build_manifold_tiles(decoded), EMOJI_SIDE, side, 2)
+    plot_color_tiles(path, title, &build_manifold_tiles(decoded), ORE_SIDE, side, 3)
 }
 
 /// Escribe `vae_manifold.png`: una sola imagen continua con la grilla decodificada del plano latente.

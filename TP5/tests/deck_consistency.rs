@@ -24,7 +24,7 @@ use tp5::experiments::{chosen_config, render_comparison_md, run_sweep, sweep_gri
 use tp5::generate::{pick_new_letter, scan_novel};
 use tp5::vae::{config_line, loss_summary_line, reconstruction_line, render_loss_table};
 use tp5::vae_eval::{
-    contrast_line, control_line, manifold_line, new_emoji_line, prior_line, regions_line, render_acceptance,
+    contrast_line, control_line, manifold_line, new_ore_line, prior_line, judge_line, render_acceptance,
     render_gallery,
 };
 
@@ -467,10 +467,10 @@ fn ej2_texts() -> &'static Vec<(&'static str, String)> {
             ("linea RECONSTRUCCION", reconstruction_line(&run.recon)),
             ("linea MANIFOLD", manifold_line(&run.grid, &run.sep)),
             ("linea CONTRASTE", contrast_line(&run.contrast)),
-            ("linea PRIOR del VAE", format!("VAE {}", prior_line(&run.prior, &run.sep))),
-            ("linea PRIOR del autoencoder simple", format!("AE simple {}", prior_line(&run.plain_prior, &run.sep))),
-            ("linea EMOJI NUEVO", new_emoji_line(&run.search, &run.ds, &run.sep)),
-            ("linea REGIONES", regions_line(&run.judge)),
+            ("linea PRIOR del VAE", format!("VAE {}", prior_line(&run.prior))),
+            ("linea PRIOR del autoencoder simple", format!("AE simple {}", prior_line(&run.plain_prior))),
+            ("linea BLOQUE NUEVO", new_ore_line(&run.search, &run.ds)),
+            ("linea JUEZ", judge_line(&run.judge)),
             ("linea CONTROL NEGATIVO", control_line(&run.control)),
             ("lineas de aceptacion", render_acceptance(&run.checks)),
             ("linea RESULTADO EJ2", result_line(run)),
@@ -626,11 +626,11 @@ fn deck_embeds_the_exercise_figures() {
         "output/ej1b/noise_examples.png",
         "output/ej1b/dae_error_vs_noise.png",
         "output/ej1b/dae_within_vs_noise.png",
-        "output/ej2/emojis.png",
+        "output/ej2/ores.png",
         "output/ej2/vae_loss.png",
         "output/ej2/vae_reconstruction.png",
         "output/ej2/vae_manifold.png",
-        "output/ej2/vae_new_emoji.png",
+        "output/ej2/vae_new_ore.png",
         "output/ej2/plain_manifold.png",
     ] {
         assert!(pictures.contains(path), "ninguna diapositiva incrusta la imagen {path}");
